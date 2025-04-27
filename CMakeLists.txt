@@ -4,3 +4,6 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(ayame_sys)
+
+# TinyUSBのコンポーネントディレクトリを指定
+set(EXTRA_COMPONENT_DIRS $ENV{IDF_PATH}/components/tinyusb/additions)

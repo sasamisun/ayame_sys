@@ -1,4 +1,4 @@
-// SDcard.hpp
+// main/SDcard.hpp
 #ifndef _SDCARD_HPP_
 #define _SDCARD_HPP_
 
@@ -7,13 +7,16 @@
 #include "driver/sdspi_host.h"
 #include "driver/spi_common.h"
 #include "sdmmc_cmd.h"
+#include "esp_log.h"
 
 // DataWrapperを継承した独自クラス
 class SDCardWrapper : public lgfx::v1::DataWrapper {
 private:
+    static const char* TAG;
     FILE* _file;
     bool _initialized;
     sdmmc_card_t* _card;
+    bool _usbMscEnabled;  // USB MSC有効フラグ
     
     // 初期化時のSPI設定用パラメータ
     struct SDConfig {
@@ -23,9 +26,13 @@ private:
         int pin_cs;
         int max_files;
         bool format_if_failed;
+        const char* mount_point;
     };
     
     SDConfig _config;
+    
+    // MSC関連の内部関数
+    bool initMSC(const char* vendor_str, const char* product_str, const char* serial_str);
     
 public:
     SDCardWrapper();
@@ -33,10 +40,11 @@ public:
     
     // 初期化メソッド（デフォルト設定）
     bool init();
+    bool begin() { return init(); }  // Arduino互換の名前を追加
     
     // カスタム設定での初期化メソッド
     bool init(int pin_miso, int pin_mosi, int pin_sck, int pin_cs, 
-             int max_files = 5, bool format_if_failed = false);
+              int max_files = 5, bool format_if_failed = false);
     
     // DataWrapperの抽象メソッドを実装
     int read(uint8_t *buf, uint32_t len) override;
@@ -57,6 +65,46 @@ public:
     
     // 状態チェック
     bool isInitialized() { return _initialized; }
+    
+    // USBマスストレージ関連の機能
+    /**
+     * @brief USB MSCを初期化して有効化する
+     * 
+     * @param vendor_str ベンダー名
+     * @param product_str 製品名
+     * @param serial_str シリアル番号
+     * @return 初期化が成功したかどうか
+     */
+    bool enableUSBMSC(const char* vendor_str = "M5Stack", 
+                      const char* product_str = "M5Paper S3", 
+                      const char* serial_str = "123456789");
+    
+    /**
+     * @brief USB MSCを無効化する
+     * 
+     * @return 無効化が成功したかどうか
+     */
+    bool disableUSBMSC();
+    
+    /**
+     * @brief USB MSCが有効かどうかを取得する
+     * 
+     * @return 有効ならtrue、そうでなければfalse
+     */
+    bool isUSBMSCEnabled() const { return _usbMscEnabled; }
+    
+    /**
+     * @brief USB MSCの接続状態をチェックする
+     * 
+     * @return 接続されていればtrue、そうでなければfalse
+     */
+    bool isUSBMSCConnected();
+    
+    // SDカードのハンドラを取得（USB MSC用）
+    sdmmc_card_t* getCard() { return _card; }
+    
+    // operator overload for Arduino compatibility
+    operator bool() { return _initialized; }
 };
 
 // グローバルインスタンス
