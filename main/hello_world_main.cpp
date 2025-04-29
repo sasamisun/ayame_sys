@@ -15,7 +15,52 @@ M5GFX display;
 TaskHandle_t g_handle = nullptr;
 
 // 画像ファイルの定数定義
-const char *IMAGE_FILE = "card.png";
+const char *IMAGE_FILE = "tes.png";
+
+// ファイルフォルダ一覧表示
+void listAndDisplayFiles()
+{
+    // SDカードのルートディレクトリを読み込み
+    DirInfo* rootDir = SD.listDir("/");
+    if (rootDir) {
+        //display.fillScreen(TFT_BLACK);
+        display.setTextColor(TFT_WHITE);
+        display.setTextSize(1);
+        display.setCursor(10, 10);
+        display.println("SD Card Files:");
+        
+        int y = 30;
+        for (size_t i = 0; i < rootDir->count; i++) {
+            FileInfo* file = &rootDir->files[i];
+            
+            // ディレクトリには[DIR]マークを付ける
+            if (file->isDirectory) {
+                display.printf("[DIR] %s\n", file->name);
+            } else {
+                // ファイルサイズを表示（KB単位）
+                float size_kb = file->size / 1024.0f;
+                display.printf("%s (%.1f KB)\n", file->name, size_kb);
+            }
+            
+            y += 20;
+            if (y > display.height() - 20) {
+                // 画面の下部に達したら表示を止める
+                display.println("... and more files");
+                break;
+            }
+        }
+        
+        // メモリ解放を忘れずに
+        SD.freeDirInfo(rootDir);
+    } else {
+        display.fillScreen(TFT_BLACK);
+        display.setTextColor(TFT_RED);
+        display.setTextSize(1);
+        display.setCursor(10, 10);
+        display.println("Failed to read SD card directory");
+    }
+}
+
 
 void setup()
 {
@@ -36,6 +81,7 @@ void setup()
 
       // 3. 画像を読み込んで表示
       display.drawPngFile(&SD, IMAGE_FILE, 0, 0);
+//      display.drawBmpFile(&SD, IMAGE_FILE, 0, 0);
       ESP_LOGI(TAG, "Image displayed successfully");
     }
     else
@@ -48,6 +94,8 @@ void setup()
       display.setCursor(10, 10);
       display.printf("File not found: %s", IMAGE_FILE);
     }
+
+    listAndDisplayFiles();
 
     // 4. ファイルアクセスが完了したので、ファイルをクローズ
     SD.close();

@@ -9,6 +9,21 @@
 #include "sdmmc_cmd.h"
 #include "esp_log.h"
 
+// ファイルとフォルダを表す構造体 - クラス宣言の前に配置
+struct FileInfo {
+    char name[256];      // ファイル/フォルダ名
+    bool isDirectory;    // ディレクトリかどうか
+    uint32_t size;       // ファイルサイズ（バイト）
+    time_t lastModified; // 最終更新日時
+};
+
+// ディレクトリ内のファイル一覧を表す構造体 - クラス宣言の前に配置
+struct DirInfo {
+    FileInfo* files;     // ファイル・フォルダ情報の配列
+    size_t count;        // ファイル・フォルダの数
+    char path[256];      // 現在のパス
+};
+
 // DataWrapperを継承した独自クラス
 class SDCardWrapper : public lgfx::v1::DataWrapper {
 private:
@@ -102,6 +117,12 @@ public:
     
     // SDカードのハンドラを取得（USB MSC用）
     sdmmc_card_t* getCard() { return _card; }
+    
+    // 新しく追加したメソッド: ディレクトリ内のファイル一覧を取得
+    DirInfo* listDir(const char* path);
+    
+    // 新しく追加したメソッド: DirInfo構造体のメモリを解放
+    void freeDirInfo(DirInfo* dirInfo);
     
     // operator overload for Arduino compatibility
     operator bool() { return _initialized; }

@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include "tinyusb.h"
 #include "tusb_msc_storage.h"
+#include <dirent.h>
 
 // ログタグ
 const char* SDCardWrapper::TAG = "SD_CARD";
@@ -17,15 +18,12 @@ static bool onMscIsReady(void);
 static uint32_t onMscGetBlockCount(void);
 static uint16_t onMscGetBlockSize(void);
 
-// TinyUSB MSC設定
-static const tusb_msc_callback_t msc_callbacks = {
-    .inquiry_cb = NULL,
-    .read_cb = onMscRead,
-    .write_cb = onMscWrite,
-    .is_ready_cb = onMscIsReady,
-    .get_block_count_cb = onMscGetBlockCount,
-    .get_block_size_cb = onMscGetBlockSize,
-};
+// 各イベント用のコールバック関数を定義
+static void onMscMountChanged(tinyusb_msc_event_t *event)
+{
+    // マウント状態が変更された時のイベント処理
+    ESP_LOGI("SD_CARD", "MSC Mount state changed: mounted = %d", event->mount_changed_data.is_mounted);
+}
 
 // メイン処理
 SDCardWrapper::SDCardWrapper()
@@ -147,6 +145,8 @@ bool SDCardWrapper::init(int pin_miso, int pin_mosi, int pin_sck, int pin_cs,
 
     return _initialized;
 }
+
+
 
 bool SDCardWrapper::open(const char *path)
 {
@@ -360,14 +360,13 @@ uint32_t SDCardWrapper::size(const char *path)
     struct stat st;
     if (stat(full_path, &st) == 0)
     {
-        ESP_LOGI(TAG, "File size: %u bytes", (uint32_t)st.st_size);
+        ESP_LOGI(TAG, "File size: %lu bytes", (uint32_t)st.st_size);
         return st.st_size;
     }
     ESP_LOGE(TAG, "Failed to get file size: %s", full_path);
     return 0;
 }
 
-// USB MSC関連の実装
 bool SDCardWrapper::initMSC(const char* vendor_str, const char* product_str, const char* serial_str)
 {
     if (!_initialized) {
@@ -381,7 +380,6 @@ bool SDCardWrapper::initMSC(const char* vendor_str, const char* product_str, con
         .string_descriptor = NULL, // デフォルトの文字列記述子を使用
         .string_descriptor_count = 0,
         .external_phy = false,     // 内部PHYを使用
-        .configuration_descriptor = NULL, // デフォルトのコンフィグ記述子を使用
     };
 
     // TinyUSBスタックの初期化
@@ -392,20 +390,17 @@ bool SDCardWrapper::initMSC(const char* vendor_str, const char* product_str, con
         return false;
     }
 
-    // USB製品情報設定
-    if (vendor_str && product_str && serial_str) {
-        ESP_LOGI(TAG, "Setting USB device descriptor strings: %s, %s, %s", vendor_str, product_str, serial_str);
-        tinyusb_set_str_descriptor(vendor_str, product_str, serial_str);
-    }
-
-    // MSC SDカード設定
+    // MSC SDカード設定 - 新しいAPIを使用
     const tinyusb_msc_sdmmc_config_t config_sdmmc = {
         .card = _card,  // SDカードハンドル
-        .callback_mount_changed = NULL,  // マウント変更コールバック
-        .mount_config.max_files = _config.max_files,  // 最大ファイル数
+        .callback_mount_changed = onMscMountChanged,  // マウント変更コールバック
+        .mount_config = {
+            .format_if_mount_failed = false,
+            .max_files = _config.max_files
+        }
     };
 
-    // MSC設定
+    // MSC設定 - 新しいAPIを使用
     ret = tinyusb_msc_storage_init_sdmmc(&config_sdmmc);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize MSC storage: %s", esp_err_to_name(ret));
@@ -441,20 +436,18 @@ bool SDCardWrapper::enableUSBMSC(const char* vendor_str, const char* product_str
         return false;
     }
     
-    // TinyUSBタスクを開始
+    // TinyUSBタスクを開始 - 新APIを使用
     ESP_LOGI(TAG, "Starting TinyUSB task");
-    esp_err_t ret = tinyusb_enable();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to enable TinyUSB: %s", esp_err_to_name(ret));
-        return false;
-    }
+    // 最新バージョンではtud_init()関数を使用
+    tud_init(TUD_OPT_RHPORT);
     
     // アプリケーションからのSDカードアクセスを無効化するためアンマウント
     ESP_LOGI(TAG, "Unmounting SD card from application to allow USB host access");
-    ret = tinyusb_msc_storage_unmount();
+    esp_err_t ret = tinyusb_msc_storage_unmount();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to unmount storage: %s", esp_err_to_name(ret));
-        tinyusb_disable();
+        // tinyusb_disableの代わりにデバイスを停止
+        tud_disconnect();
         return false;
     }
     
@@ -479,13 +472,10 @@ bool SDCardWrapper::disableUSBMSC()
         // 続行する
     }
     
-    // TinyUSBタスクを停止
+    // TinyUSBタスクを停止 - 新APIを使用
     ESP_LOGI(TAG, "Stopping TinyUSB task");
-    ret = tinyusb_disable();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to disable TinyUSB: %s", esp_err_to_name(ret));
-        return false;
-    }
+    // tinyusb_disableの代わりにデバイスを停止
+    tud_disconnect();
     
     _usbMscEnabled = false;
     ESP_LOGI(TAG, "USB MSC disabled successfully");
@@ -532,14 +522,14 @@ static int32_t onMscRead(uint32_t lba, uint32_t offset, void* buffer, uint32_t b
 {
     sdmmc_card_t* card = SD.getCard();
     if (card == NULL) {
-        ESP_LOGE(SD.TAG, "Card not available for read operation");
+        ESP_LOGE("SD on Read", "Card not available for read operation");
         return -1;
     }
 
     // SDカードからの読み込み
-    ESP_LOGD(SD.TAG, "Reading %d bytes from SD at LBA %d", bufsize, lba);
+    ESP_LOGD("SD on Read", "Reading %lu bytes from SD at LBA %lu", bufsize, lba);
     if (ESP_OK != sdmmc_read_sectors(card, buffer, lba, bufsize / card->csd.sector_size)) {
-        ESP_LOGE(SD.TAG, "Failed to read from SD card");
+        ESP_LOGE("SD on Read", "Failed to read from SD card");
         return -1;
     }
     return bufsize;
@@ -549,15 +539,114 @@ static int32_t onMscWrite(uint32_t lba, uint32_t offset, const void* buffer, uin
 {
     sdmmc_card_t* card = SD.getCard();
     if (card == NULL) {
-        ESP_LOGE(SD.TAG, "Card not available for write operation");
+        ESP_LOGE("SD on write", "Card not available for write operation");
         return -1;
     }
 
     // SDカードへの書き込み
-    ESP_LOGD(SD.TAG, "Writing %d bytes to SD at LBA %d", bufsize, lba);
+    ESP_LOGD("SD on write", "Writing %lu bytes to SD at LBA %lu", bufsize, lba);
     if (ESP_OK != sdmmc_write_sectors(card, buffer, lba, bufsize / card->csd.sector_size)) {
-        ESP_LOGE(SD.TAG, "Failed to write to SD card");
+        ESP_LOGE("SD on write", "Failed to write to SD card");
         return -1;
     }
     return bufsize;
+}
+
+DirInfo* SDCardWrapper::listDir(const char* path)
+{
+    // USB MSCが有効な場合はファイルアクセスできない
+    if (_usbMscEnabled) {
+        ESP_LOGE(TAG, "Cannot list directory while USB MSC is enabled");
+        return nullptr;
+    }
+
+    if (!_initialized) {
+        ESP_LOGE(TAG, "SD card not initialized");
+        return nullptr;
+    }
+
+    // 完全なパスを構築（/sdcardプレフィックスが無い場合は追加）
+    char full_path[256];
+    if (strncmp(path, _config.mount_point, strlen(_config.mount_point)) != 0) {
+        snprintf(full_path, sizeof(full_path), "%s/%s", _config.mount_point, path);
+    } else {
+        strncpy(full_path, path, sizeof(full_path));
+    }
+
+    // ディレクトリを開く
+    DIR* dir = opendir(full_path);
+    if (!dir) {
+        ESP_LOGE(TAG, "Failed to open directory: %s", full_path);
+        return nullptr;
+    }
+
+    // ファイル数をカウントする（事前に配列サイズを決めるため）
+    size_t file_count = 0;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        file_count++;
+    }
+    // ディレクトリを閉じて再度開く（最初から読み直す）
+    closedir(dir);
+    dir = opendir(full_path);
+
+    // DirInfo構造体を確保
+    DirInfo* dirInfo = (DirInfo*)malloc(sizeof(DirInfo));
+    if (!dirInfo) {
+        ESP_LOGE(TAG, "Failed to allocate memory for DirInfo");
+        closedir(dir);
+        return nullptr;
+    }
+    
+    // ファイル情報の配列を確保
+    dirInfo->files = (FileInfo*)malloc(file_count * sizeof(FileInfo));
+    if (!dirInfo->files) {
+        ESP_LOGE(TAG, "Failed to allocate memory for FileInfo array");
+        free(dirInfo);
+        closedir(dir);
+        return nullptr;
+    }
+    
+    // パスを保存
+    strncpy(dirInfo->path, path, sizeof(dirInfo->path));
+    dirInfo->count = file_count;
+    
+    // ファイル情報を取得
+    size_t index = 0;
+    char entry_path[512];
+    struct stat st;
+    
+    while ((entry = readdir(dir)) != nullptr && index < file_count) {
+        // ファイル名をコピー
+        strncpy(dirInfo->files[index].name, entry->d_name, sizeof(dirInfo->files[index].name));
+        
+        // ファイルの詳細情報を取得
+        snprintf(entry_path, sizeof(entry_path), "%s/%s", full_path, entry->d_name);
+        if (stat(entry_path, &st) == 0) {
+            dirInfo->files[index].isDirectory = S_ISDIR(st.st_mode);
+            dirInfo->files[index].size = st.st_size;
+            dirInfo->files[index].lastModified = st.st_mtime;
+        } else {
+            // stat取得失敗時はデフォルト値を設定
+            dirInfo->files[index].isDirectory = false;
+            dirInfo->files[index].size = 0;
+            dirInfo->files[index].lastModified = 0;
+        }
+        
+        index++;
+    }
+    
+    closedir(dir);
+    ESP_LOGI(TAG, "Directory listing completed: %s, %d files found", path, dirInfo->count);
+    return dirInfo;
+}
+
+void SDCardWrapper::freeDirInfo(DirInfo* dirInfo)
+{
+    if (dirInfo) {
+        if (dirInfo->files) {
+            free(dirInfo->files);
+        }
+        free(dirInfo);
+    }
 }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2020-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2020-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -9,10 +9,7 @@
 #include <stdbool.h>
 #include "esp_err.h"
 #include "tusb.h"
-#include "tusb_option.h"
-#include "tusb_config.h"
 #include "tinyusb_types.h"
-
 
 #ifdef __cplusplus
 extern "C" {
@@ -31,9 +28,23 @@ typedef struct {
         const tusb_desc_device_t *device_descriptor; /*!< Pointer to a device descriptor. If set to NULL, the TinyUSB device will use a default device descriptor whose values are set in Kconfig */
         const tusb_desc_device_t *descriptor  __attribute__((deprecated)); /*!< Alias to `device_descriptor` for backward compatibility */
     };
-    const char **string_descriptor;            /*!< Pointer to an array of string descriptors */
+    const char **string_descriptor;            /*!< Pointer to array of string descriptors. If set to NULL, TinyUSB device will use a default string descriptors whose values are set in Kconfig */
+    int string_descriptor_count;               /*!< Number of descriptors in above array */
     bool external_phy;                         /*!< Should USB use an external PHY */
-    const uint8_t *configuration_descriptor;   /*!< Pointer to a configuration descriptor. If set to NULL, TinyUSB device will use a default configuration descriptor whose values are set in Kconfig */
+    union {
+        struct {
+            const uint8_t *configuration_descriptor;            /*!< Pointer to a configuration descriptor. If set to NULL, TinyUSB device will use a default configuration descriptor whose values are set in Kconfig */
+        };
+#if (TUD_OPT_HIGH_SPEED)
+        struct {
+            const uint8_t *fs_configuration_descriptor;         /*!< Pointer to a FullSpeed configuration descriptor. If set to NULL, TinyUSB device will use a default configuration descriptor whose values are set in Kconfig */
+        };
+    };
+    const uint8_t *hs_configuration_descriptor;                 /*!< Pointer to a HighSpeed configuration descriptor. If set to NULL, TinyUSB device will use a default configuration descriptor whose values are set in Kconfig */
+    const tusb_desc_device_qualifier_t *qualifier_descriptor;   /*!< Pointer to a qualifier descriptor */
+#else
+    };
+#endif // TUD_OPT_HIGH_SPEED
     bool self_powered;                         /*!< This is a self-powered USB device. USB VBUS must be monitored. */
     int vbus_monitor_io;                       /*!< GPIO for VBUS monitoring. Ignored if not self_powered. */
 } tinyusb_config_t;
@@ -57,7 +68,17 @@ typedef struct {
  */
 esp_err_t tinyusb_driver_install(const tinyusb_config_t *config);
 
-// TODO esp_err_t tinyusb_driver_uninstall(void); (IDF-1474)
+/**
+ * @brief This is an all-in-one helper function, including:
+ * 1. Stops the task to handle usb events
+ * 2. TinyUSB stack tearing down
+ * 2. Freeing resources after descriptors preparation
+ * 3. Deletes USB PHY
+ *
+ * @retval ESP_FAIL Uninstall driver or tinyusb stack failed because of internal error
+ * @retval ESP_OK Uninstall driver, tinyusb stack and USB PHY successfully
+ */
+esp_err_t tinyusb_driver_uninstall(void);
 
 #ifdef __cplusplus
 }
