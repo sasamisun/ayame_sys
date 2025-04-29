@@ -7,6 +7,7 @@
 #include "esp_timer.h"
 #include <M5GFX.h>
 #include "SDcard.hpp"
+#include "TouchHandler.hpp"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
@@ -17,50 +18,59 @@ TaskHandle_t g_handle = nullptr;
 // 画像ファイルの定数定義
 const char *IMAGE_FILE = "tes.png";
 
+TouchHandler touchHandler;
+
 // ファイルフォルダ一覧表示
 void listAndDisplayFiles()
 {
-    // SDカードのルートディレクトリを読み込み
-    DirInfo* rootDir = SD.listDir("/");
-    if (rootDir) {
-        //display.fillScreen(TFT_BLACK);
-        display.setTextColor(TFT_WHITE);
-        display.setTextSize(1);
-        display.setCursor(10, 10);
-        display.println("SD Card Files:");
-        
-        int y = 30;
-        for (size_t i = 0; i < rootDir->count; i++) {
-            FileInfo* file = &rootDir->files[i];
-            
-            // ディレクトリには[DIR]マークを付ける
-            if (file->isDirectory) {
-                display.printf("[DIR] %s\n", file->name);
-            } else {
-                // ファイルサイズを表示（KB単位）
-                float size_kb = file->size / 1024.0f;
-                display.printf("%s (%.1f KB)\n", file->name, size_kb);
-            }
-            
-            y += 20;
-            if (y > display.height() - 20) {
-                // 画面の下部に達したら表示を止める
-                display.println("... and more files");
-                break;
-            }
-        }
-        
-        // メモリ解放を忘れずに
-        SD.freeDirInfo(rootDir);
-    } else {
-        display.fillScreen(TFT_BLACK);
-        display.setTextColor(TFT_RED);
-        display.setTextSize(1);
-        display.setCursor(10, 10);
-        display.println("Failed to read SD card directory");
-    }
-}
+  // SDカードのルートディレクトリを読み込み
+  DirInfo *rootDir = SD.listDir("/");
+  if (rootDir)
+  {
+    // display.fillScreen(TFT_BLACK);
+    display.setTextColor(TFT_WHITE);
+    display.setTextSize(1);
+    display.setCursor(10, 10);
+    display.println("SD Card Files:");
 
+    int y = 30;
+    for (size_t i = 0; i < rootDir->count; i++)
+    {
+      FileInfo *file = &rootDir->files[i];
+
+      // ディレクトリには[DIR]マークを付ける
+      if (file->isDirectory)
+      {
+        display.printf("[DIR] %s\n", file->name);
+      }
+      else
+      {
+        // ファイルサイズを表示（KB単位）
+        float size_kb = file->size / 1024.0f;
+        display.printf("%s (%.1f KB)\n", file->name, size_kb);
+      }
+
+      y += 20;
+      if (y > display.height() - 20)
+      {
+        // 画面の下部に達したら表示を止める
+        display.println("... and more files");
+        break;
+      }
+    }
+
+    // メモリ解放を忘れずに
+    SD.freeDirInfo(rootDir);
+  }
+  else
+  {
+    display.fillScreen(TFT_BLACK);
+    display.setTextColor(TFT_RED);
+    display.setTextSize(1);
+    display.setCursor(10, 10);
+    display.println("Failed to read SD card directory");
+  }
+}
 
 void setup()
 {
@@ -81,7 +91,7 @@ void setup()
 
       // 3. 画像を読み込んで表示
       display.drawPngFile(&SD, IMAGE_FILE, 0, 0);
-//      display.drawBmpFile(&SD, IMAGE_FILE, 0, 0);
+      //      display.drawBmpFile(&SD, IMAGE_FILE, 0, 0);
       ESP_LOGI(TAG, "Image displayed successfully");
     }
     else
@@ -101,6 +111,7 @@ void setup()
     SD.close();
 
     // 5. USB MSCを有効化
+    /*
     ESP_LOGI(TAG, "Enabling USB MSC...");
     if (SD.enableUSBMSC())
     {
@@ -123,6 +134,7 @@ void setup()
       display.setCursor(10, display.height() - 60);
       display.println("USB MSC Failed");
     }
+    //*/
   }
   else
   {
@@ -133,6 +145,21 @@ void setup()
     display.setTextSize(2);
     display.setCursor(10, 10);
     display.println("SD Card Init Failed");
+  }
+
+  // タッチハンドラの初期化を追加
+  ESP_LOGI(TAG, "Initializing touch handler...");
+  if (touchHandler.init(&display))
+  {
+    ESP_LOGI(TAG, "Touch handler initialized successfully");
+
+    // タッチキャリブレーションを実行
+    //ESP_LOGI(TAG, "Running touch calibration...");
+    //touchHandler.calibrate(TFT_BLACK, TFT_WHITE);
+  }
+  else
+  {
+    ESP_LOGE(TAG, "Touch handler initialization failed");
   }
 }
 
@@ -158,6 +185,23 @@ void loop(void)
       display.setCursor(10, display.height() - 20);
       display.printf("USB Status: %s    ", connected ? "Connected" : "Disconnected");
     }
+  }
+  // タッチ処理を追加
+  if (touchHandler.update() && touchHandler.isTouched())
+  {
+    const TouchPoint &point = touchHandler.getLastPoint();
+
+    // タッチされた位置に円を描画
+    touchHandler.drawCircleAtTouch(10, TFT_RED);
+
+    // タッチ情報をログに出力
+    ESP_LOGI(TAG, "Touch at (%d, %d)", point.x, point.y);
+
+    // タッチ座標を画面に表示
+    display.setTextColor(TFT_GREEN, TFT_BLACK);
+    display.setTextSize(1);
+    display.setCursor(10, display.height() - 40);
+    display.printf("Touch: (%d, %d)     ", point.x, point.y);
   }
 }
 
