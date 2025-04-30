@@ -1,4 +1,5 @@
-// main/hello_world_main.cpp
+// main/hello_world_main.cpp の修正版（関連部分のみ）
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/idf_additions.h"
@@ -8,6 +9,7 @@
 #include <M5GFX.h>
 #include "SDcard.hpp"
 #include "TouchHandler.hpp"
+#include "Button.hpp"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
@@ -19,6 +21,9 @@ TaskHandle_t g_handle = nullptr;
 const char *IMAGE_FILE = "tes.png";
 
 TouchHandler touchHandler;
+ButtonManager *buttonManager = nullptr;
+Button *btnTest = nullptr;
+Button *btnUSBMSC = nullptr;
 
 // ファイルフォルダ一覧表示
 void listAndDisplayFiles()
@@ -72,6 +77,120 @@ void listAndDisplayFiles()
   }
 }
 
+// タッチイベントのコールバック関数
+void onTouchStart(const ExtendedTouchPoint &point)
+{
+  ESP_LOGI(TAG, "Touch started at (%d, %d)", point.x, point.y);
+
+  // タッチ開始時の処理
+  display.setTextColor(TFT_GREEN, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 100);
+  display.printf("Touch started at (%d, %d)   ", point.x, point.y);
+}
+
+void onTouchEnd(const ExtendedTouchPoint &point)
+{
+  ESP_LOGI(TAG, "Touch ended at (%d, %d)", point.x, point.y);
+
+  // タッチ終了時の処理
+  display.setTextColor(TFT_RED, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 120);
+  display.printf("Touch ended at (%d, %d)   ", point.x, point.y);
+}
+
+void onSwipe(SwipeDirection direction, const ExtendedTouchPoint &start, const ExtendedTouchPoint &end)
+{
+  // スワイプ方向を文字列に変換
+  const char *dirStr = "Unknown";
+  switch (direction)
+  {
+  case SwipeDirection::Up:
+    dirStr = "Up";
+    break;
+  case SwipeDirection::Down:
+    dirStr = "Down";
+    break;
+  case SwipeDirection::Left:
+    dirStr = "Left";
+    break;
+  case SwipeDirection::Right:
+    dirStr = "Right";
+    break;
+  default:
+    break;
+  }
+
+  ESP_LOGI(TAG, "Swipe detected: %s", dirStr);
+
+  // スワイプ情報を表示
+  display.setTextColor(TFT_YELLOW, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 140);
+  display.printf("Swipe: %s   ", dirStr);
+}
+
+// ボタンコールバック関数
+void onTestButtonPressed(Button *btn)
+{
+  ESP_LOGI(TAG, "Test button pressed");
+
+  // テキスト表示例
+  display.setTextColor(TFT_YELLOW, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 80);
+  display.println("テストボタンが押されました");
+}
+
+void onTestButtonReleased(Button *btn)
+{
+  ESP_LOGI(TAG, "Test button released");
+}
+
+// USB MSCボタンコールバック
+void onUSBMSCButtonPressed(Button *btn)
+{
+  ESP_LOGI(TAG, "USB MSC button pressed");
+}
+
+void onUSBMSCButtonReleased(Button *btn)
+{
+  ESP_LOGI(TAG, "USB MSC button released");
+
+  // USB MSCの切り替え
+  if (SD.isUSBMSCEnabled())
+  {
+    // USB MSCを無効化
+    if (SD.disableUSBMSC())
+    {
+      ESP_LOGI(TAG, "USB MSC disabled");
+      btn->setLabel("Enable USB MSC");
+
+      // 再度ファイル一覧を表示
+      listAndDisplayFiles();
+    }
+  }
+  else
+  {
+    // USB MSCを有効化
+    if (SD.enableUSBMSC())
+    {
+      ESP_LOGI(TAG, "USB MSC enabled");
+      btn->setLabel("Disable USB MSC");
+
+      // 情報表示
+      display.setTextColor(TFT_WHITE, TFT_BLACK);
+      display.setTextSize(1.5);
+      display.setCursor(10, 100);
+      display.println("USB MSC Enabled");
+      display.println("Connect to PC to access SD card");
+    }
+  }
+}
+
+
+
 void setup()
 {
   ESP_LOGI(TAG, "Initializing M5Paper S3...");
@@ -91,7 +210,6 @@ void setup()
 
       // 3. 画像を読み込んで表示
       display.drawPngFile(&SD, IMAGE_FILE, 0, 0);
-      //      display.drawBmpFile(&SD, IMAGE_FILE, 0, 0);
       ESP_LOGI(TAG, "Image displayed successfully");
     }
     else
@@ -109,38 +227,11 @@ void setup()
 
     // 4. ファイルアクセスが完了したので、ファイルをクローズ
     SD.close();
-
-    // 5. USB MSCを有効化
-    /*
-    ESP_LOGI(TAG, "Enabling USB MSC...");
-    if (SD.enableUSBMSC())
-    {
-      ESP_LOGI(TAG, "USB MSC enabled successfully");
-
-      // 情報をディスプレイに表示
-      display.setTextColor(TFT_WHITE, TFT_BLACK);
-      display.setTextSize(2);
-      display.setCursor(10, display.height() - 60);
-      display.println("USB MSC Enabled");
-      display.println("Connect to PC to access SD card");
-    }
-    else
-    {
-      ESP_LOGE(TAG, "Failed to enable USB MSC");
-
-      // エラーメッセージを表示
-      display.setTextColor(TFT_RED, TFT_BLACK);
-      display.setTextSize(2);
-      display.setCursor(10, display.height() - 60);
-      display.println("USB MSC Failed");
-    }
-    //*/
   }
   else
   {
     ESP_LOGE(TAG, "SD card initialization failed");
 
-    // main/hello_world_main.cpp (続き)
     display.setTextColor(TFT_RED);
     display.setTextSize(2);
     display.setCursor(10, 10);
@@ -153,9 +244,43 @@ void setup()
   {
     ESP_LOGI(TAG, "Touch handler initialized successfully");
 
-    // タッチキャリブレーションを実行
-    //ESP_LOGI(TAG, "Running touch calibration...");
-    //touchHandler.calibrate(TFT_BLACK, TFT_WHITE);
+    // タッチイベントのコールバックを設定
+    touchHandler.setOnTouchStart(onTouchStart);
+    touchHandler.setOnTouchEnd(onTouchEnd);
+    touchHandler.setOnSwipe(onSwipe);
+
+    // スワイプの最小距離を設定（ピクセル単位）
+    touchHandler.setMinSwipeDistance(50);
+
+    // タッチキャリブレーションを実行（必要な場合）
+    // ESP_LOGI(TAG, "Running touch calibration...");
+    // touchHandler.calibrate(TFT_BLACK, TFT_WHITE);
+
+    // ButtonManagerの初期化
+    buttonManager = new ButtonManager(&display, &touchHandler);
+
+    // テストボタンの作成
+    btnTest = new Button(&display, 10, 350, 150, 50, "テストボタン");
+    btnTest->setOnPressed(onTestButtonPressed);
+    btnTest->setOnReleased(onTestButtonReleased);
+
+    // カスタムスタイルの設定
+    ButtonStyle testStyle = ButtonStyle::defaultStyle();
+    testStyle.bgColor = TFT_BLUE;
+    testStyle.textColor = TFT_WHITE;
+    btnTest->setStyle(testStyle);
+
+    // USB MSCボタンの作成
+    btnUSBMSC = new Button(&display, 170, 350, 150, 50, "Enable USB MSC");
+    btnUSBMSC->setOnPressed(onUSBMSCButtonPressed);
+    btnUSBMSC->setOnReleased(onUSBMSCButtonReleased);
+
+    // ボタンマネージャーに追加
+    buttonManager->addButton(btnTest);
+    buttonManager->addButton(btnUSBMSC);
+
+    // ボタンを描画
+    buttonManager->drawButtons();
   }
   else
   {
@@ -186,10 +311,20 @@ void loop(void)
       display.printf("USB Status: %s    ", connected ? "Connected" : "Disconnected");
     }
   }
-  // タッチ処理を追加
-  if (touchHandler.update() && touchHandler.isTouched())
+
+  // ボタン更新処理
+  if (buttonManager)
   {
-    const TouchPoint &point = touchHandler.getLastPoint();
+    buttonManager->update();
+  }
+
+  // 既存のタッチ処理部分を修正（拡張機能を使用）
+  // ※以下の部分はbuttonManager->update()が行うので、重複する場合は削除または条件分岐で処理
+  if (touchHandler.update() && touchHandler.isTouched() &&
+      !buttonManager)
+  { // ボタンマネージャーがない場合のみ実行
+
+    const ExtendedTouchPoint &point = touchHandler.getLastPoint();
 
     // タッチされた位置に円を描画
     touchHandler.drawCircleAtTouch(10, TFT_RED);

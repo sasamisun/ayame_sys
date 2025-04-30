@@ -367,7 +367,7 @@ uint32_t SDCardWrapper::size(const char *path)
     return 0;
 }
 
-bool SDCardWrapper::initMSC(const char* vendor_str, const char* product_str, const char* serial_str)
+bool SDCardWrapper::initMSC()
 {
     if (!_initialized) {
         ESP_LOGE(TAG, "SD card must be initialized before initializing USB MSC");
@@ -411,7 +411,7 @@ bool SDCardWrapper::initMSC(const char* vendor_str, const char* product_str, con
     return true;
 }
 
-bool SDCardWrapper::enableUSBMSC(const char* vendor_str, const char* product_str, const char* serial_str)
+bool SDCardWrapper::enableUSBMSC()
 {
     if (!_initialized) {
         ESP_LOGE(TAG, "SD card must be initialized before enabling USB MSC");
@@ -431,7 +431,7 @@ bool SDCardWrapper::enableUSBMSC(const char* vendor_str, const char* product_str
     }
     
     // USB MSCを初期化
-    if (!initMSC(vendor_str, product_str, serial_str)) {
+    if (!initMSC()) {
         ESP_LOGE(TAG, "Failed to initialize USB MSC");
         return false;
     }

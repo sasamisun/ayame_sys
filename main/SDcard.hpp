@@ -47,7 +47,7 @@ private:
     SDConfig _config;
     
     // MSC関連の内部関数
-    bool initMSC(const char* vendor_str, const char* product_str, const char* serial_str);
+    bool initMSC();
     
 public:
     SDCardWrapper();
@@ -90,9 +90,7 @@ public:
      * @param serial_str シリアル番号
      * @return 初期化が成功したかどうか
      */
-    bool enableUSBMSC(const char* vendor_str = "M5Stack", 
-                      const char* product_str = "M5Paper S3", 
-                      const char* serial_str = "123456789");
+    bool enableUSBMSC();
     
     /**
      * @brief USB MSCを無効化する

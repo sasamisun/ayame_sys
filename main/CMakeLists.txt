@@ -3,6 +3,7 @@ idf_component_register(
         "hello_world_main.cpp"
         "SDcard.cpp"
         "TouchHandler.cpp"
+        "Button.cpp"
     PRIV_REQUIRES
         M5GFX
     REQUIRES
