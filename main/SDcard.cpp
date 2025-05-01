@@ -374,12 +374,15 @@ bool SDCardWrapper::initMSC()
         return false;
     }
 
-    // USBデバイス設定
+    // USBデバイス設定 - すべてのフィールドを初期化
     const tinyusb_config_t tusb_cfg = {
-        .device_descriptor = NULL, // デフォルトのデバイス記述子を使用
-        .string_descriptor = NULL, // デフォルトの文字列記述子を使用
+        .device_descriptor = NULL,          // デフォルトのデバイス記述子を使用
+        .string_descriptor = NULL,          // デフォルトの文字列記述子を使用
         .string_descriptor_count = 0,
-        .external_phy = false,     // 内部PHYを使用
+        .external_phy = false,              // 内部PHYを使用
+        .configuration_descriptor = NULL,   // デフォルトのコンフィグ記述子を使用
+        .self_powered = false,              // バスパワー
+        .vbus_monitor_io = -1               // VBUSモニターなし
     };
 
     // TinyUSBスタックの初期化
@@ -390,13 +393,17 @@ bool SDCardWrapper::initMSC()
         return false;
     }
 
-    // MSC SDカード設定 - 新しいAPIを使用
+    // MSC SDカード設定 - すべてのフィールドを初期化
     const tinyusb_msc_sdmmc_config_t config_sdmmc = {
-        .card = _card,  // SDカードハンドル
+        .card = _card,                      // SDカードハンドル
         .callback_mount_changed = onMscMountChanged,  // マウント変更コールバック
+        .callback_premount_changed = NULL,  // プレマウント変更コールバック（使用しない）
         .mount_config = {
             .format_if_mount_failed = false,
-            .max_files = _config.max_files
+            .max_files = _config.max_files,
+            .allocation_unit_size = 16 * 1024,
+            .disk_status_check_enable = false,
+            .use_one_fat = false
         }
     };
 

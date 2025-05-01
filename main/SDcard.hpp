@@ -48,6 +48,7 @@ private:
     
     // MSC関連の内部関数
     bool initMSC();
+    //bool initMSC(const char*, const char*, const char*);
     
 public:
     SDCardWrapper();
