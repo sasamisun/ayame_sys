@@ -189,7 +189,46 @@ void onUSBMSCButtonReleased(Button *btn)
   }
 }
 
+// スワイプイベントのコールバック関数を定義
+void onButtonSwipeUp(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped up: %s", btn->getLabel());
 
+  display.setTextColor(TFT_CYAN, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped up: %s   ", btn->getLabel());
+}
+
+void onButtonSwipeDown(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped down: %s", btn->getLabel());
+
+  display.setTextColor(TFT_MAGENTA, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped down: %s   ", btn->getLabel());
+}
+
+void onButtonSwipeLeft(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped left: %s", btn->getLabel());
+
+  display.setTextColor(TFT_ORANGE, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped left: %s   ", btn->getLabel());
+}
+
+void onButtonSwipeRight(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped right: %s", btn->getLabel());
+
+  display.setTextColor(TFT_PINK, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped right: %s   ", btn->getLabel());
+}
 
 void setup()
 {
@@ -263,6 +302,10 @@ void setup()
     btnTest = new Button(&display, 10, 350, 150, 50, "テストボタン");
     btnTest->setOnPressed(onTestButtonPressed);
     btnTest->setOnReleased(onTestButtonReleased);
+    btnTest->setOnSwipeUp(onButtonSwipeUp);
+    btnTest->setOnSwipeDown(onButtonSwipeDown);
+    btnTest->setOnSwipeLeft(onButtonSwipeLeft);
+    btnTest->setOnSwipeRight(onButtonSwipeRight);
 
     // カスタムスタイルの設定
     ButtonStyle testStyle = ButtonStyle::defaultStyle();

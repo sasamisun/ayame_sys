@@ -8,7 +8,9 @@ static const char* TAG = "BUTTON";
 // Button クラスの実装
 Button::Button(M5GFX* display, int x, int y, int width, int height, const char* label)
     : _x(x), _y(y), _width(width), _height(height), _state(ButtonState::Normal), 
-      _display(display), _font(nullptr), _textSize(1.0f), _visible(true) {
+      _display(display), _font(nullptr), _textSize(1.0f), _visible(true),
+      _onPressed(nullptr), _onReleased(nullptr),
+      _onSwipeUp(nullptr), _onSwipeDown(nullptr), _onSwipeLeft(nullptr), _onSwipeRight(nullptr) {
     
     // ラベルの設定
     setLabel(label);
@@ -138,6 +140,45 @@ bool Button::update(const ExtendedTouchPoint& touchPoint, bool isTouched) {
     return false;
 }
 
+// スワイプイベントを処理
+bool Button::handleSwipe(SwipeDirection direction) {
+    if (!_visible || _state == ButtonState::Disabled) return false;
+    
+    bool handled = false;
+    
+    // 方向に応じたコールバックを実行
+    switch (direction) {
+        case SwipeDirection::Up:
+            if (_onSwipeUp) {
+                _onSwipeUp(this, direction);
+                handled = true;
+            }
+            break;
+        case SwipeDirection::Down:
+            if (_onSwipeDown) {
+                _onSwipeDown(this, direction);
+                handled = true;
+            }
+            break;
+        case SwipeDirection::Left:
+            if (_onSwipeLeft) {
+                _onSwipeLeft(this, direction);
+                handled = true;
+            }
+            break;
+        case SwipeDirection::Right:
+            if (_onSwipeRight) {
+                _onSwipeRight(this, direction);
+                handled = true;
+            }
+            break;
+        default:
+            break;
+    }
+    
+    return handled;
+}
+
 // ButtonManager クラスの実装
 ButtonManager::ButtonManager(M5GFX* display, TouchHandler* touchHandler)
     : _buttonCount(0), _display(display), _touchHandler(touchHandler) {
@@ -229,16 +270,75 @@ void ButtonManager::handleTouch() {
 
 void ButtonManager::update() {
     // タッチハンドラの更新
-    if (_touchHandler) {
-        if (_touchHandler->update()) {
-            // タッチイベント時の処理
-            if (_touchHandler->isTouchEvent() || _touchHandler->isReleaseEvent()) {
-                // タッチが検出されたらボタンのタッチイベントを処理
-                handleTouch();
+    if (!_touchHandler) return;
+    
+    // タッチハンドラを更新
+    if (_touchHandler->update()) {
+        // タッチイベントが発生した場合
+        
+        if (_touchHandler->isTouchEvent()) {
+            // タッチ開始イベント
+            const ExtendedTouchPoint& point = _touchHandler->getLastPoint();
+            
+            // タッチ位置を含むボタンを探す
+            for (int i = 0; i < _buttonCount; i++) {
+                if (_buttons[i] && _buttons[i]->isVisible() && _buttons[i]->isEnabled() &&
+                    _buttons[i]->containsPoint(point.x, point.y)) {
+                    
+                    // ボタンを押下状態に更新
+                    _buttons[i]->setState(ButtonState::Pressed);
+                    
+                    // ボタンを再描画
+                    _buttons[i]->draw();
+                    
+                    // ボタンのPressedイベントを発火
+                    if (_buttons[i]->getOnPressed()) {
+                        _buttons[i]->getOnPressed()(_buttons[i]);
+                    }
+                }
             }
-        } else {
-            // タッチがなくても、ボタンの状態更新のために定期的にチェック
-            handleTouch();
+        }
+        else if (_touchHandler->isReleaseEvent()) {
+            // タッチ終了イベント
+            const ExtendedTouchPoint& point = _touchHandler->getLastPoint();
+            
+            // 押下状態のボタンを探して、リリース処理を行う
+            for (int i = 0; i < _buttonCount; i++) {
+                if (_buttons[i] && _buttons[i]->isVisible() && 
+                    _buttons[i]->getState() == ButtonState::Pressed) {
+                    
+                    // ボタンを通常状態に戻す
+                    _buttons[i]->setState(ButtonState::Normal);
+                    
+                    // ボタンを再描画
+                    _buttons[i]->draw();
+                    
+                    // タッチ終了位置がボタン内ならReleasedイベントを発火
+                    if (_buttons[i]->containsPoint(point.x, point.y)) {
+                        if (_buttons[i]->getOnReleased()) {
+                            _buttons[i]->getOnReleased()(_buttons[i]);
+                        }
+                    }
+                }
+            }
+        }
+        else if (_touchHandler->isSwipeEvent()) {
+            // スワイプイベント
+            const ExtendedTouchPoint& startPoint = _touchHandler->getTouchStartPoint();
+            SwipeDirection direction = _touchHandler->getLastSwipe();
+            
+            // スワイプ開始位置を含むボタンを探す
+            for (int i = 0; i < _buttonCount; i++) {
+                if (_buttons[i] && _buttons[i]->isVisible() && _buttons[i]->isEnabled() &&
+                    _buttons[i]->containsPoint(startPoint.x, startPoint.y)) {
+                    
+                    // ボタンのスワイプイベントを処理
+                    if (_buttons[i]->handleSwipe(direction)) {
+                        // イベントが処理された場合は終了
+                        break;
+                    }
+                }
+            }
         }
     }
 }
