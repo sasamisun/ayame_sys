@@ -4,6 +4,7 @@ idf_component_register(
         "SDcard.cpp"
         "TouchHandler.cpp"
         "Button.cpp"
+        "VerticalFont.cpp"
     PRIV_REQUIRES
         M5GFX
     REQUIRES
