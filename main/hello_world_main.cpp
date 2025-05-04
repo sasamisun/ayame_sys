@@ -10,6 +10,7 @@
 #include "SDcard.hpp"
 #include "TouchHandler.hpp"
 #include "Button.hpp"
+#include "TypoWrite.hpp"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
@@ -24,6 +25,41 @@ TouchHandler touchHandler;
 ButtonManager *buttonManager = nullptr;
 Button *btnTest = nullptr;
 Button *btnUSBMSC = nullptr;
+
+// 縦書きと横書きテキスト表示のデモ
+void textDisplayDemo()
+{
+  ESP_LOGI(TAG, "Running text display demo...");
+
+  // 背景をクリア
+  // display.fillScreen(TFT_BLACK);
+
+  // 横書きテキスト表示
+  TypoWrite horizontalWriter(&display);
+  horizontalWriter.setPosition(10, 100);
+  horizontalWriter.setArea(400, 200);
+  horizontalWriter.setColor(TFT_WHITE);
+  horizontalWriter.setBackgroundColor(TFT_BLACK);
+  horizontalWriter.setDirection(TextDirection::HORIZONTAL);
+  horizontalWriter.setFont(&fonts::lgfxJapanGothic_24);
+  horizontalWriter.setFontSize(1.0);
+
+  // 横書きテキスト描画
+  horizontalWriter.drawText("これは横書きテキストのデモです。\nM5Paper S3でアドベンチャーゲームを作ります。");
+
+  // 縦書きテキスト表示
+  TypoWrite verticalWriter(&display);
+  verticalWriter.setPosition(450, 100);
+  verticalWriter.setArea(200, 700);
+  verticalWriter.setDirection(TextDirection::VERTICAL);
+  verticalWriter.setFont(&fonts::lgfxJapanGothic_24);
+  verticalWriter.setFontSize(1.0);
+
+  // 縦書きテキスト描画
+  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号()「」{}[]【】『』（）-=~!?<>_―――");
+
+  ESP_LOGI(TAG, "Text display demo completed");
+}
 
 // ファイルフォルダ一覧表示
 void listAndDisplayFiles()
@@ -189,7 +225,46 @@ void onUSBMSCButtonReleased(Button *btn)
   }
 }
 
+// スワイプイベントのコールバック関数を定義
+void onButtonSwipeUp(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped up: %s", btn->getLabel());
 
+  display.setTextColor(TFT_CYAN, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped up: %s   ", btn->getLabel());
+}
+
+void onButtonSwipeDown(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped down: %s", btn->getLabel());
+
+  display.setTextColor(TFT_MAGENTA, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped down: %s   ", btn->getLabel());
+}
+
+void onButtonSwipeLeft(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped left: %s", btn->getLabel());
+
+  display.setTextColor(TFT_ORANGE, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped left: %s   ", btn->getLabel());
+}
+
+void onButtonSwipeRight(Button *btn, SwipeDirection dir)
+{
+  ESP_LOGI(TAG, "Button swiped right: %s", btn->getLabel());
+
+  display.setTextColor(TFT_PINK, TFT_BLACK);
+  display.setTextSize(1);
+  display.setCursor(10, display.height() - 160);
+  display.printf("Button swiped right: %s   ", btn->getLabel());
+}
 
 void setup()
 {
@@ -263,6 +338,10 @@ void setup()
     btnTest = new Button(&display, 10, 350, 150, 50, "テストボタン");
     btnTest->setOnPressed(onTestButtonPressed);
     btnTest->setOnReleased(onTestButtonReleased);
+    btnTest->setOnSwipeUp(onButtonSwipeUp);
+    btnTest->setOnSwipeDown(onButtonSwipeDown);
+    btnTest->setOnSwipeLeft(onButtonSwipeLeft);
+    btnTest->setOnSwipeRight(onButtonSwipeRight);
 
     // カスタムスタイルの設定
     ButtonStyle testStyle = ButtonStyle::defaultStyle();
@@ -286,6 +365,8 @@ void setup()
   {
     ESP_LOGE(TAG, "Touch handler initialization failed");
   }
+
+  textDisplayDemo();
 }
 
 void loop(void)
