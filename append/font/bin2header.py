@@ -17,7 +17,7 @@ def convert_bin_to_header(bin_file, header_file, var_name):
         f.write('// 元ファイル: %s\n' % bin_file)
         f.write('// データサイズ: %d バイト\n\n' % len(data))
         
-        f.write('static const uint8_t %s[] = {\n' % var_name)
+        f.write('static const uint8_t %s[]  __attribute__((section(".rodata.font"))) = {\n' % var_name)
         
         # バイナリデータを16進数形式で出力
         for i in range(0, len(data), 16):
