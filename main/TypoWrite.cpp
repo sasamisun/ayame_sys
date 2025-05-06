@@ -14,12 +14,13 @@ TypoWrite::TypoWrite(M5GFX *display) : _display(display),
                                        _width(display ? display->width() : 0),
                                        _height(display ? display->height() : 0),
                                        _color(TFT_WHITE),
-                                       _bgColor(TFT_BLACK),
+                                       _bgColor(0),
                                        _fontSize(1.0f),
                                        _font(nullptr),
                                        _lineSpacing(4),
                                        _charSpacing(2),
-                                       _wrap(true)
+                                       _wrap(true),
+                                       _transparentBg(true)
 {
     // デフォルトフォントを設定
     if (display)
@@ -156,7 +157,15 @@ void TypoWrite::drawHorizontalText(const std::string &text, int x, int y, bool m
     if (!measure_only)
     {
         _display->setFont(_font);
-        _display->setTextColor(_color, _bgColor);
+        // 背景色を透明にするか設定に応じて切り替え
+        if (_transparentBg)
+        {
+            _display->setTextColor(_color); // 背景色省略で透明に
+        }
+        else
+        {
+            _display->setTextColor(_color, _bgColor);
+        }
         _display->setTextSize(_fontSize);
     }
 
@@ -240,16 +249,24 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
     if (!measure_only)
     {
         _display->setFont(_font);
-        _display->setTextColor(_color, _bgColor);
+        // 背景色を透明にするか設定に応じて切り替え
+        if (_transparentBg)
+        {
+            _display->setTextColor(_color); // 背景色省略で透明に
+        }
+        else
+        {
+            _display->setTextColor(_color, _bgColor);
+        }
         _display->setTextSize(_fontSize);
     }
 
     // UTF-8文字列をUnicodeコードポイントに変換
     std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
 
-    int current_x = x;
-    int current_y = y;
     int column_width = getFontWidth() + _lineSpacing;
+    int current_x = x + _width - column_width;
+    int current_y = y;
 
     for (size_t i = 0; i < unicode_chars.size(); i++)
     {
@@ -258,7 +275,7 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
         // 改行文字の処理（縦書きの場合は次の列に移動）
         if (unicode_char == '\n')
         {
-            current_x += column_width;
+            current_x -= column_width;
             current_y = y;
             continue;
         }
@@ -269,7 +286,7 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
         // 折り返しの処理
         if (_wrap && current_y + char_height > y + _height)
         {
-            current_x += column_width;
+            current_x -= column_width;
             current_y = y;
         }
 
@@ -440,13 +457,13 @@ bool TypoWrite::isSpecialChar(uint16_t unicode_char)
     // 括弧、句読点、記号など
     static const uint16_t special_chars[] = {
         '(', ')', '[', ']', '{', '}',
-        0x300C, 0x300D,              // 「」
-        0x300E, 0x300F,              // 『』
-        0x3010, 0x3011,              // 【】
+        0x300C, 0x300D,                      // 「」
+        0x300E, 0x300F,                      // 『』
+        0x3010, 0x3011,                      // 【】
         '-', 0x2014, 0x2015, 0xFF0D, 0x30FC, // ハイフン、ダッシュ、全角ハイフン、長音記号
-        0x3001, 0x3002,              // 読点、句点
-        '!', '?', 0xFF01, 0xFF1F,    // 感嘆符、疑問符
-        ':', ';', 0xFF1A, 0xFF1B     // コロン、セミコロン
+        0x3001, 0x3002,                      // 読点、句点
+        '!', '?', 0xFF01, 0xFF1F,            // 感嘆符、疑問符
+        ':', ';', 0xFF1A, 0xFF1B             // コロン、セミコロン
     };
 
     const size_t special_char_count = sizeof(special_chars) / sizeof(special_chars[0]);
@@ -478,8 +495,18 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
         lgfx::LGFX_Sprite *charSprite = new lgfx::LGFX_Sprite(_display);
         if (charSprite->createSprite(char_width, char_height))
         {
-            charSprite->fillScreen(_bgColor);
-            charSprite->setTextColor(_color, _bgColor);
+            // スプライトの背景を透明にする場合は、透明色を設定
+            if (_transparentBg)
+            {
+                // スプライトの透明色を設定
+                charSprite->fillScreen(0);        // 透明色として扱う背景色
+                charSprite->setTextColor(_color); // 背景色省略で透明に
+            }
+            else
+            {
+                charSprite->fillScreen(_bgColor);
+                charSprite->setTextColor(_color, _bgColor);
+            }
             charSprite->setFont(_font);
             charSprite->setTextSize(_fontSize);
 
@@ -525,7 +552,7 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
             }
             break;
 
-            case '-':    // ハイフン
+            case '-': // ハイフン
             case 0x2015:
             case 0x2014: // ダッシュ
             case 0xFF0D: // 全角ハイフン

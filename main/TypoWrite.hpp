@@ -39,6 +39,7 @@ private:
     int _lineSpacing;         // 行間（ピクセル）
     int _charSpacing;         // 文字間（ピクセル）
     bool _wrap;               // テキストを折り返すか
+    bool _transparentBg;      // 背景色透明
 
     // 内部メソッド
     void drawHorizontalText(const std::string &text, int x, int y, bool measure_only = false);

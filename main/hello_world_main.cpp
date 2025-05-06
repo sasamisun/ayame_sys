@@ -49,14 +49,14 @@ void textDisplayDemo()
 
   // 縦書きテキスト表示
   TypoWrite verticalWriter(&display);
-  verticalWriter.setPosition(450, 100);
-  verticalWriter.setArea(200, 700);
+  verticalWriter.setPosition(400, 100);
+  verticalWriter.setArea(140, 700);
   verticalWriter.setDirection(TextDirection::VERTICAL);
   verticalWriter.setFont(&fonts::lgfxJapanGothic_24);
   verticalWriter.setFontSize(1.0);
 
   // 縦書きテキスト描画
-  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号()「」{}[]【】『』（）-=~!?<>_―――");
+  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号\n()「」{}[]【】『』（）-=~!?<>_―――");
 
   ESP_LOGI(TAG, "Text display demo completed");
 }
@@ -297,7 +297,7 @@ void setup()
       display.setCursor(10, 10);
       display.printf("File not found: %s", IMAGE_FILE);
     }
-
+    display.fillScreen(TFT_BLACK);
     listAndDisplayFiles();
 
     // 4. ファイルアクセスが完了したので、ファイルをクローズ
