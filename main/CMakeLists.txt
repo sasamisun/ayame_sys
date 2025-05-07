@@ -16,6 +16,7 @@ idf_component_register(
         "esp_tinyusb"
     INCLUDE_DIRS
         "."
+        "fonts"
 )
 
 

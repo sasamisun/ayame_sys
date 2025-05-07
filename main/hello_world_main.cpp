@@ -11,6 +11,7 @@
 #include "TouchHandler.hpp"
 #include "Button.hpp"
 #include "TypoWrite.hpp"
+#include "fonts/mplus2_18.h"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
@@ -40,6 +41,7 @@ void textDisplayDemo()
   horizontalWriter.setArea(400, 200);
   horizontalWriter.setColor(TFT_WHITE);
   horizontalWriter.setBackgroundColor(TFT_BLACK);
+  horizontalWriter.setTransparentBg(false);
   horizontalWriter.setDirection(TextDirection::HORIZONTAL);
   horizontalWriter.setFont(&fonts::lgfxJapanGothic_24);
   horizontalWriter.setFontSize(1.0);
@@ -51,13 +53,55 @@ void textDisplayDemo()
   TypoWrite verticalWriter(&display);
   verticalWriter.setPosition(400, 100);
   verticalWriter.setArea(140, 700);
+  verticalWriter.setColor(TFT_WHITE);
+  verticalWriter.setBackgroundColor(TFT_BLACK);
+  verticalWriter.setTransparentBg(false);
   verticalWriter.setDirection(TextDirection::VERTICAL);
   verticalWriter.setFont(&fonts::lgfxJapanGothic_24);
   verticalWriter.setFontSize(1.0);
 
   // 縦書きテキスト描画
-  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号\n()「」{}[]【】『』（）-=~!?<>_―――");
+  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号\n()「」{}[]【】『』（）-=~!?<>_―――\n「やっほー」");
 
+  // カスタムVLWフォントの読み込み
+  if (verticalWriter.loadFontFromArray(mplus2))
+  {
+    ESP_LOGI(TAG, "Custom font loaded successfully");
+
+    // フォントを設定（読み込みで自動設定されるので省略可能）
+    verticalWriter.setDirection(TextDirection::VERTICAL);
+    verticalWriter.setPosition(100, 500);
+    verticalWriter.setArea(250, 400);
+    verticalWriter.setColor(TFT_WHITE);
+    verticalWriter.setBackgroundColor(TFT_BLACK);
+
+    // テキスト描画
+    verticalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――");
+  }
+  else
+  {
+    ESP_LOGE(TAG, "Failed to load custom font");
+  }
+
+  // カスタムVLWフォントの読み込み
+  if (horizontalWriter.loadFontFromArray(mplus2))
+  {
+    ESP_LOGI(TAG, "Custom font loaded successfully");
+
+    // フォントを設定（読み込みで自動設定されるので省略可能）
+    horizontalWriter.setDirection(TextDirection::HORIZONTAL);
+    horizontalWriter.setPosition(0, 500);
+    horizontalWriter.setArea(250, 400);
+    horizontalWriter.setColor(TFT_WHITE);
+    horizontalWriter.setBackgroundColor(TFT_BLACK);
+
+    // テキスト描画
+    horizontalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――");
+  }
+  else
+  {
+    ESP_LOGE(TAG, "Failed to load custom font");
+  }
   ESP_LOGI(TAG, "Text display demo completed");
 }
 

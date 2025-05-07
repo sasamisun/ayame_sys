@@ -40,6 +40,7 @@ private:
     int _charSpacing;         // 文字間（ピクセル）
     bool _wrap;               // テキストを折り返すか
     bool _transparentBg;      // 背景色透明
+    bool _isCustomFont;       // 現在のフォントがカスタムフォントかどうか
 
     // 内部メソッド
     void drawHorizontalText(const std::string &text, int x, int y, bool measure_only = false);
@@ -64,6 +65,7 @@ private:
 
     // テキスト描画サイズの計算
     void calculateTextSize(const std::string &text, int &width, int &height);
+
 public:
     // コンストラクタ
     TypoWrite(M5GFX *display);
@@ -80,6 +82,7 @@ public:
     void setLineSpacing(int spacing);
     void setCharSpacing(int spacing);
     void setWrap(bool wrap);
+    void setTransparentBg(bool transparent);
 
     // テキスト描画メソッド
     void drawText(const std::string &text);
@@ -92,6 +95,24 @@ public:
     // 描画位置取得メソッド
     int getCurrentX() const { return _x; }
     int getCurrentY() const { return _y; }
+
+    /**
+     * @brief 配列データからVLWフォントを読み込みます
+     * @param font_data VLWフォントのバイナリデータ配列
+     * @return 読み込みが成功したかどうか
+     */
+    bool loadFontFromArray(const uint8_t *font_data);
+
+    /**
+     * @brief 現在読み込まれているカスタムフォントをアンロードします
+     */
+    void unloadCustomFont();
+
+    /**
+     * @brief 現在のフォントがカスタムフォントかどうかを取得
+     * @return カスタムフォントならtrue、デフォルトフォントならfalse
+     */
+    bool isCustomFont() const { return _isCustomFont; }
 };
 
 #endif // _TYPO_WRITE_HPP_

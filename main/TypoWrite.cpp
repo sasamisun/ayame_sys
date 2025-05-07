@@ -20,12 +20,14 @@ TypoWrite::TypoWrite(M5GFX *display) : _display(display),
                                        _lineSpacing(4),
                                        _charSpacing(2),
                                        _wrap(true),
-                                       _transparentBg(true)
+                                       _transparentBg(true),
+                                       _isCustomFont(false)
 {
     // デフォルトフォントを設定
     if (display)
     {
         _font = display->getFont();
+        _isCustomFont = false;
     }
 }
 
@@ -97,6 +99,11 @@ void TypoWrite::setWrap(bool wrap)
     _wrap = wrap;
 }
 
+// 背景色透明？
+void TypoWrite::setTransparentBg(bool transparent)
+{
+    _transparentBg = transparent;
+}
 // テキスト描画（メイン関数）
 void TypoWrite::drawText(const std::string &text)
 {
@@ -404,12 +411,14 @@ int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char)
         return 0;
 
     // 特殊文字の場合は個別に幅を計算
+    /*
     if (isSpecialChar(unicode_char))
     {
         // 特殊文字の幅を返す実装
         // 仮の実装として標準的な文字幅を返す
         return getFontWidth();
     }
+    //*/
 
     // フォントから文字の幅を取得
     _display->setFont(_font);
@@ -505,7 +514,7 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
             else
             {
                 charSprite->fillScreen(_bgColor);
-                charSprite->setTextColor(_color, _bgColor);
+                charSprite->setTextColor(_color);
             }
             charSprite->setFont(_font);
             charSprite->setTextSize(_fontSize);
@@ -513,14 +522,13 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
             // 文字コードに応じて回転や位置調整を行う
             switch (unicode_char)
             {
+
             case '(':    // 左括弧 → 上括弧
             case ')':    // 右括弧 → 下括弧
             case '[':    // 左角括弧 → 上角括弧
             case ']':    // 右角括弧 → 下角括弧
             case '{':    // 左波括弧 → 上波括弧
             case '}':    // 右波括弧 → 下波括弧
-            case 0x300C: // 「
-            case 0x300D: // 」
             case 0x300E: // 『
             case 0x300F: // 』
             case 0x3010: // 【
@@ -545,10 +553,89 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
                     utf8_buf[2] = 0x80 | (unicode_char & 0x3F);
                 }
 
-                charSprite->drawString(utf8_buf, 0, 0);
-                // 90度回転して描画
-                charSprite->pushRotateZoom(_display, x + char_height / 2, y + char_height / 2,
-                                           90, 1.0, 1.0, _bgColor);
+                // 文字の正確なサイズを取得
+                int32_t actual_char_width = getCharacterWidth(unicode_char);
+                int32_t actual_char_height = getCharacterHeight(unicode_char);
+
+                // スプライトサイズを文字サイズより大きく設定
+                int sprite_size = std::max(actual_char_width, actual_char_height);
+
+                int32_t baseline = (sprite_size) / 4; // 75%の位置
+                int32_t baseline_offset = _isCustomFont ? baseline : 0;
+
+                lgfx::LGFX_Sprite *charSprite = new lgfx::LGFX_Sprite(_display);
+                if (charSprite->createSprite(sprite_size, sprite_size))
+                {
+                    // スプライトの背景を透明にする場合は、透明色を設定
+                    if (_transparentBg)
+                    {
+                        charSprite->fillScreen(0);        // 透明色として扱う背景色
+                        charSprite->setTextColor(_color); // 背景色省略で透明に
+                    }
+                    else
+                    {
+                        charSprite->fillScreen(_bgColor);
+                        charSprite->setTextColor(_color);
+                    }
+                    charSprite->setFont(_font);
+                    charSprite->setTextSize(_fontSize);
+
+                    // 文字の実際のバウンディングボックスを考慮した描画位置
+                    // 文字をスプライト中央に配置
+                    int start_x = (sprite_size - actual_char_width) / 2;
+                    int start_y = (sprite_size - actual_char_height) / 2;
+
+                    // 文字によってはベースライン以下に描画される部分があるので、
+                    // より安全な位置に描画する
+                    // start_x = 0<start_x ? start_x:0;
+                    // start_y = 0<start_y ? start_y:0;
+
+                    // start_x+=10;
+                    // start_y+=10;
+                    // 文字を描画
+                    charSprite->drawString(utf8_buf, start_x, start_y);
+
+                    // スプライトを90度回転して描画
+                    // 回転中心を文字の中心に設定
+                    int dest_x = x + actual_char_height / 2;
+                    int dest_y = y + actual_char_height / 2;
+                    charSprite->setPivot(actual_char_height / 2, actual_char_height / 2);
+                    charSprite->pushRotateZoom(_display, x, y,
+                                               0, 1.0, 1.0, _bgColor);
+
+                    // スプライトを解放
+                    charSprite->deleteSprite();
+                }
+                delete charSprite;
+            }
+            break;
+
+            case 0x300C: // 「
+            case 0x300D: // 」
+            {
+                uint16_t vertical_code = 0;
+                if (unicode_char == 0x300C)
+                    vertical_code = 0xFE41;
+                if (unicode_char == 0x300D)
+                    vertical_code = 0xFE42;
+                // UTF-8文字列に変換
+                char utf8_buf[4] = {0};
+                if (vertical_code < 0x80)
+                {
+                    utf8_buf[0] = (char)vertical_code;
+                }
+                else if (vertical_code < 0x800)
+                {
+                    utf8_buf[0] = 0xC0 | ((vertical_code >> 6) & 0x1F);
+                    utf8_buf[1] = 0x80 | (vertical_code & 0x3F);
+                }
+                else
+                {
+                    utf8_buf[0] = 0xE0 | ((vertical_code >> 12) & 0x0F);
+                    utf8_buf[1] = 0x80 | ((vertical_code >> 6) & 0x3F);
+                    utf8_buf[2] = 0x80 | (vertical_code & 0x3F);
+                }
+                _display->drawString(utf8_buf, x + char_width / 4, y);
             }
             break;
 
@@ -826,4 +913,44 @@ int TypoWrite::getTextHeight(const std::string &text)
     int height = 0;
     calculateTextSize(text, width, height);
     return height;
+}
+
+// TypoWrite.cpp に追加する実装
+bool TypoWrite::loadFontFromArray(const uint8_t *font_data)
+{
+    if (!_display || !font_data)
+    {
+        ESP_LOGE(TAG, "Display or font data is null");
+        return false;
+    }
+
+    // M5GFXのloadFontメソッドを使用してフォントを読み込む
+    if (!_display->loadFont(font_data))
+    {
+        ESP_LOGE(TAG, "Failed to load font from array");
+        return false;
+    }
+
+    // 読み込み成功したら、現在のフォントとして設定
+    _font = _display->getFont();
+    _isCustomFont = true; // カスタムフォントフラグを設定
+
+    ESP_LOGI(TAG, "Custom font loaded successfully from array");
+    return true;
+}
+
+void TypoWrite::unloadCustomFont()
+{
+    if (!_display)
+    {
+        return;
+    }
+
+    // M5GFXのunloadFontメソッドを使用してフォントをアンロードし、
+    // デフォルトフォントに戻す
+    _display->unloadFont();
+    _font = _display->getFont();
+    _isCustomFont = false; // デフォルトフォントに戻した
+
+    ESP_LOGI(TAG, "Custom font unloaded, back to default font");
 }
