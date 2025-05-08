@@ -5,6 +5,7 @@
 #include <M5GFX.h>
 #include <vector>
 #include <string>
+#include <functional>
 
 // テキスト方向の列挙型
 enum class TextDirection
@@ -19,6 +20,16 @@ enum class TextAlignment
     LEFT,   // 左揃え（縦書きの場合は上揃え）
     CENTER, // 中央揃え
     RIGHT   // 右揃え（縦書きの場合は下揃え）
+};
+
+// 文字カテゴリの列挙型
+enum class CharCategory
+{
+    NORMAL,         // 通常文字
+    BRACKET,        // 括弧類
+    HORIZONTAL_BAR, // 横棒・長音記号類
+    PUNCTUATION,    // 句読点類
+    OTHER_SPECIAL   // その他の特殊文字
 };
 
 // TypoWrite - 縦書き/横書き対応テキスト描画クラス
@@ -36,13 +47,14 @@ private:
     uint16_t _bgColor;        // 背景色
     float _fontSize;          // フォントサイズ倍率
     const lgfx::IFont *_font; // 使用フォント
+    bool _isCustomFont;       // カスタムフォントを使用しているかどうか
     int _lineSpacing;         // 行間（ピクセル）
     int _charSpacing;         // 文字間（ピクセル）
     bool _wrap;               // テキストを折り返すか
     bool _transparentBg;      // 背景色透明
-    bool _isCustomFont;       // 現在のフォントがカスタムフォントかどうか
 
     // 内部メソッド
+    void setupDisplay();
     void drawHorizontalText(const std::string &text, int x, int y, bool measure_only = false);
     void drawVerticalText(const std::string &text, int x, int y, bool measure_only = false);
 
@@ -54,17 +66,25 @@ private:
     int32_t getFontWidth();
     int32_t getFontHeight();
 
-    // 特殊文字の処理（回転や位置調整が必要な記号など）
-    bool isSpecialChar(uint16_t unicode_char);
+    // 文字変換ヘルパーメソッド
+    std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
+    std::string unicodeToUtf8(uint16_t unicode_char);
+
+    // スプライト操作ヘルパー
+    void withSprite(int width, int height, std::function<void(lgfx::LGFX_Sprite *)> operation);
+
+    // 特殊文字の処理
+    CharCategory getCharCategory(uint16_t unicode_char);
     void drawSpecialChar(uint16_t unicode_char, int x, int y);
+
     // 縦書きで回転が必要な文字かどうかを判定
     bool shouldRotateInVertical(uint16_t unicode_char);
 
-    // UTF-8文字列をUnicodeコードポイントに変換
-    std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
-
     // テキスト描画サイズの計算
     void calculateTextSize(const std::string &text, int &width, int &height);
+
+    // 縦書きで回転が必要な文字を描画するヘルパーメソッド
+    void drawRotatedCharacter(const std::string &utf8_str, int x, int y, int char_height);
 
 public:
     // コンストラクタ
@@ -82,7 +102,12 @@ public:
     void setLineSpacing(int spacing);
     void setCharSpacing(int spacing);
     void setWrap(bool wrap);
-    void setTransparentBg(bool transparent);
+    void setTransparentBg(bool transparent) { _transparentBg = transparent; }
+    void setTransparentBackground(bool transparent) { _transparentBg = transparent; }
+    void setIsCustomFont(bool isCustom) { _isCustomFont = isCustom; }
+
+    // フォント読み込みメソッド
+    bool loadFontFromArray(const uint8_t *fontArray);
 
     // テキスト描画メソッド
     void drawText(const std::string &text);
@@ -96,22 +121,7 @@ public:
     int getCurrentX() const { return _x; }
     int getCurrentY() const { return _y; }
 
-    /**
-     * @brief 配列データからVLWフォントを読み込みます
-     * @param font_data VLWフォントのバイナリデータ配列
-     * @return 読み込みが成功したかどうか
-     */
-    bool loadFontFromArray(const uint8_t *font_data);
-
-    /**
-     * @brief 現在読み込まれているカスタムフォントをアンロードします
-     */
-    void unloadCustomFont();
-
-    /**
-     * @brief 現在のフォントがカスタムフォントかどうかを取得
-     * @return カスタムフォントならtrue、デフォルトフォントならfalse
-     */
+    // フォント情報取得メソッド
     bool isCustomFont() const { return _isCustomFont; }
 };
 
