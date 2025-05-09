@@ -697,6 +697,9 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
         case 0x2025: // ‥（2ドットリーダー）
             vertical_code = 0xFE30;
             break;
+        case 0x2026: // …
+        vertical_code = 0xFE19;
+        break;
 
         // 全角ダッシュ・記号
         case 0xFF0D:                // －（全角ハイフンマイナス）

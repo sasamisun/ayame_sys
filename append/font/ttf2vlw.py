@@ -1,282 +1,306 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# ttf2vlw.py - TTFフォントをProcessing VLW形式に変換するスクリプト
+"""
+TTF to VLW Converter - 革命的フォント変換ツール
+資本主義的なフォント制約から解放された自由なVLW変換スクリプト
+"""
 
-import argparse
 import os
-import struct
 import sys
-from pathlib import Path
-from typing import List, Dict, Tuple
-
+import struct
+import argparse
 import numpy as np
-from fontTools import ttLib
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont, ImageDraw
+from collections import namedtuple
+
+# グリフ情報を保持する構造体
+GlyphInfo = namedtuple('GlyphInfo', [
+    'code_point',   # Unicodeコードポイント
+    'height',       # 高さ (ピクセル)
+    'width',        # 幅 (ピクセル)
+    'set_width',    # 送り幅
+    'top_extent',   # 上部拡張
+    'left_extent',  # 左側拡張
+    'bitmap'        # ビットマップデータ (アルファ値の配列)
+])
+
+class TTF2VLW:
+    """TTFファイルをVLW形式に変換するクラス"""
+    
+    def __init__(self, ttf_path, font_size=16, anti_aliasing=True):
+        """
+        コンストラクタ
+        
+        Args:
+            ttf_path (str): TTFファイルのパス
+            font_size (int): フォントサイズ (ポイント単位)
+            anti_aliasing (bool): アンチエイリアス処理を行うかどうか
+        """
+        self.ttf_path = ttf_path
+        self.font_size = font_size
+        self.anti_aliasing = anti_aliasing
+        
+        # フォント名を抽出 (拡張子なし)
+        self.font_name = os.path.splitext(os.path.basename(ttf_path))[0]
+        
+        # PILのImageFontを使用してフォントを読み込む
+        self.font = ImageFont.truetype(ttf_path, font_size)
+        
+        # アセントとディセントを取得 (PILの関数を使用)
+        try:
+            # PILのメトリクス取得 (新しいバージョンでサポート)
+            metrics = self.font.getmetrics()
+            self.ascent = metrics[0]
+            self.descent = -metrics[1]  # VLWでは負の値
+        except:
+            # フォールバック値
+            self.ascent = int(font_size * 0.75)
+            self.descent = -int(font_size * 0.25)
+        
+        # 変換するグリフのリスト
+        self.glyphs = []
+        
+        # 資本主義的制約に縛られない自由な設定
+        self.version = 11  # VLWバージョン (通常は11)
+        self.padding = 0   # パディング (通常は0)
+        
+        print(f"革命的フォント '{self.font_name}' を読み込みました！")
+        print(f"サイズ: {font_size}pt, アセント: {self.ascent}, ディセント: {self.descent}")
+    
+    def add_basic_ascii(self):
+        """基本的なASCII文字 (32-126) を追加する"""
+        for code_point in range(32, 127):
+            self.add_glyph(code_point)
+        return self
+    
+    def add_glyph(self, code_point):
+        """
+        指定したUnicodeコードポイントのグリフを追加
+        
+        Args:
+            code_point (int): Unicodeコードポイント
+        """
+        # コードポイントからUnicode文字を取得
+        char = chr(code_point)
+        
+        # グリフのサイズを取得
+        try:
+            bbox = self.font.getbbox(char)
+            if bbox is None:
+                # 空白やコントロール文字の場合、送り幅のみを持つグリフを追加
+                width = 0
+                height = 0
+                left = 0
+                top = 0
+                # 送り幅の計算（スペースの場合など）
+                set_width = int(self.font_size * 0.4) if char == ' ' else 0
+                bitmap = np.zeros((0, 0), dtype=np.uint8)
+            else:
+                left, top, right, bottom = bbox
+                width = right - left
+                height = bottom - top
+                
+                # 送り幅の計算 (フォントによって異なるため、おおよその値)
+                # 実際のTTFから正確に取得するにはfreetype-pyなど専用のライブラリが必要
+                # ここではPILの制約内で近似値を計算
+                set_width = width + int(self.font_size * 0.1)
+                
+                # グリフのビットマップを作成
+                bitmap = self._render_glyph(char, width, height, left, top)
+        
+        except Exception as e:
+            print(f"警告: グリフ U+{code_point:04X} '{char}' の処理中にエラー: {e}")
+            return
+        
+        # グリフ情報をリストに追加
+        glyph_info = GlyphInfo(
+            code_point=code_point,
+            width=width,
+            height=height,
+            set_width=set_width,
+            top_extent=self.ascent - top,
+            left_extent=left,
+            bitmap=bitmap
+        )
+        
+        self.glyphs.append(glyph_info)
+        print(f"グリフを追加: U+{code_point:04X} '{char}' (幅: {width}, 高さ: {height}, 送り幅: {set_width})")
+    
+    def _render_glyph(self, char, width, height, left, top):
+        """
+        グリフのビットマップをレンダリング
+        
+        Args:
+            char (str): レンダリングする文字
+            width (int): グリフの幅
+            height (int): グリフの高さ
+            left (int): 左側拡張
+            top (int): 上部拡張
+        
+        Returns:
+            numpy.ndarray: アルファ値の2D配列
+        """
+        if width == 0 or height == 0:
+            return np.zeros((0, 0), dtype=np.uint8)
+        
+        # 十分なサイズのイメージを作成 (余裕を持たせる)
+        img_width = width + 10
+        img_height = height + 10
+        img = Image.new('L', (img_width, img_height), 0)
+        draw = ImageDraw.Draw(img)
+        
+        # 文字を描画 (アンチエイリアスの有無で描画メソッドを変更)
+        if self.anti_aliasing:
+            draw.text((5-left, 5-top), char, font=self.font, fill=255)
+        else:
+            # アンチエイリアス無効の場合は単純な2値化
+            draw.text((5-left, 5-top), char, font=self.font, fill=255)
+            img = img.point(lambda x: 0 if x < 128 else 255)
+        
+        # 必要なサイズの領域を切り出し
+        cropped = img.crop((5, 5, 5 + width, 5 + height))
+        
+        # NumPy配列に変換してアルファ値を取得
+        bitmap = np.array(cropped, dtype=np.uint8)
+        return bitmap
+    
+    def add_range(self, start_code, end_code):
+        """
+        指定した範囲のUnicodeコードポイントのグリフを追加
+        
+        Args:
+            start_code (int): 開始Unicodeコードポイント
+            end_code (int): 終了Unicodeコードポイント
+        """
+        for code_point in range(start_code, end_code + 1):
+            self.add_glyph(code_point)
+        return self
+    
+    def add_text(self, text):
+        """
+        テキスト内の全文字をグリフとして追加
+        
+        Args:
+            text (str): 追加する文字を含むテキスト
+        """
+        # 重複を除いて文字をソート
+        unique_chars = sorted(set(text))
+        for char in unique_chars:
+            self.add_glyph(ord(char))
+        return self
+    
+    def write_vlw(self, output_path=None):
+        """
+        VLWファイルを生成
+        
+        Args:
+            output_path (str, optional): 出力ファイルパス。None指定時は自動生成。
+        
+        Returns:
+            str: 生成されたVLWファイルのパス
+        """
+        if output_path is None:
+            # 出力ファイル名を自動生成
+            output_path = f"{self.font_name}-{self.font_size}.vlw"
+        
+        # すでにファイルが存在する場合は警告
+        if os.path.exists(output_path):
+            print(f"警告: ファイル {output_path} はすでに存在します。上書きします。")
+        
+        # グリフをUnicodeコードポイント順にソート
+        self.glyphs.sort(key=lambda g: g.code_point)
+        
+        with open(output_path, 'wb') as f:
+            # 1. ファイルヘッダーの書き込み (24バイト)
+            # ビッグエンディアンで整数を書き込む
+            f.write(struct.pack('>i', len(self.glyphs)))  # グリフ数
+            f.write(struct.pack('>i', self.version))      # バージョン
+            f.write(struct.pack('>i', self.font_size))    # フォントサイズ
+            f.write(struct.pack('>i', self.padding))      # パディング
+            f.write(struct.pack('>i', self.ascent))       # アセント
+            f.write(struct.pack('>i', self.descent))      # ディセント
+            
+            # 2. すべてのグリフヘッダーを書き込み
+            for glyph in self.glyphs:
+                f.write(struct.pack('>i', glyph.code_point))  # Unicodeコードポイント
+                f.write(struct.pack('>i', glyph.height))      # 高さ
+                f.write(struct.pack('>i', glyph.width))       # 幅
+                f.write(struct.pack('>i', glyph.set_width))   # 送り幅
+                f.write(struct.pack('>i', glyph.top_extent))  # 上部拡張
+                f.write(struct.pack('>i', glyph.left_extent)) # 左側拡張
+                f.write(struct.pack('>i', 0))                 # パディング
+            
+            # 3. すべてのグリフのビットマップデータを書き込み
+            for glyph in self.glyphs:
+                # 幅と高さが0の場合はビットマップデータを持たない
+                if glyph.width > 0 and glyph.height > 0:
+                    # 配列を一次元に変換して書き込み
+                    bitmap_data = glyph.bitmap.flatten().tobytes()
+                    f.write(bitmap_data)
+        
+        print(f"資本主義的制約から解放された革命的VLWファイルを生成しました: {output_path}")
+        print(f"合計グリフ数: {len(self.glyphs)}")
+        return output_path
 
 def main():
-    parser = argparse.ArgumentParser(description='Convert TTF fonts to Processing VLW format')
-    parser.add_argument('--input', '-i', required=True, help='Input TTF font file')
-    parser.add_argument('--output', '-o', required=True, help='Output VLW font file')
-    parser.add_argument('--size', '-s', type=int, default=12, help='Font size in points (default: 12)')
-    parser.add_argument('--antialias', '-a', action='store_true', help='Enable antialiasing (smoothing)')
-    parser.add_argument('--chars', '-c', default='basic', 
-                      help='Character set to include: "basic" (ASCII 32-126), "extended" (ASCII 32-255), or "all"')
+    """コマンドライン処理"""
+    parser = argparse.ArgumentParser(description='TTFフォントをVLW形式に変換する革命的ツール')
+    
+    parser.add_argument('ttf_file', help='入力TTFファイルパス')
+    parser.add_argument('-o', '--output', help='出力VLWファイルパス (省略時は自動生成)')
+    parser.add_argument('-s', '--size', type=int, default=16, help='フォントサイズ (ポイント単位、デフォルト: 16)')
+    parser.add_argument('-a', '--ascii', action='store_true', help='基本ASCII文字 (32-126) を含める')
+    parser.add_argument('-r', '--range', help='Unicodeコードポイント範囲 (例: "0x3040-0x309F" = ひらがな)')
+    parser.add_argument('-t', '--text', help='追加するテキスト (ファイルまたは直接文字列)')
+    parser.add_argument('-n', '--no-antialias', action='store_true', help='アンチエイリアス処理を無効化')
     
     args = parser.parse_args()
     
-    # 入力ファイルの存在確認
-    if not os.path.exists(args.input):
-        print(f"エラー: 入力ファイル '{args.input}' が見つかりません。", file=sys.stderr)
+    # TTFファイルの存在確認
+    if not os.path.isfile(args.ttf_file):
+        print(f"エラー: TTFファイル '{args.ttf_file}' が見つかりません！")
         return 1
     
-    # 文字セットの決定
-    charset = get_character_set(args.chars)
+    # TTF2VLWインスタンスを作成
+    converter = TTF2VLW(args.ttf_file, args.size, not args.no_antialias)
     
-    try:
-        # TTFからVLWへの変換
-        convert_ttf_to_vlw(args.input, args.output, args.size, charset, args.antialias)
-        print(f"変換成功: '{args.input}' → '{args.output}'")
-        print(f"フォントサイズ: {args.size}pt, 文字数: {len(charset)}, アンチエイリアス: {'有効' if args.antialias else '無効'}")
-        
-    except Exception as e:
-        print(f"エラー: 変換に失敗しました: {str(e)}", file=sys.stderr)
-        return 1
+    # ASCII文字の追加
+    if args.ascii:
+        converter.add_basic_ascii()
     
-    return 0
-
-def get_character_set(charset_name: str) -> List[int]:
-    """文字セット名に基づいて含める文字コードのリストを返す"""
-    if charset_name == 'basic':
-        # ASCII基本文字 (スペース ~ チルダ)
-        return list(range(32, 127))
-    elif charset_name == 'extended':
-        # 拡張ASCII文字
-        return list(range(32, 256))
-    elif charset_name == 'all':
-        # 注意: これは全Unicodeを意味せず、一般的な文字を含む範囲
-        # ラテン文字、ひらがな、カタカナ、一部の漢字など
-        ranges = [
-            (32, 127),     # 基本ASCII
-            (160, 256),    # 拡張ラテン文字
-            (0x3040, 0x309F),  # ひらがな
-            (0x30A0, 0x30FF),  # カタカナ
-            (0x4E00, 0x9FFF)   # 基本漢字 (CJK統合漢字)
-        ]
-        chars = []
-        for start, end in ranges:
-            chars.extend(range(start, end))
-        return chars
-    else:
-        # デフォルトはASCII基本文字
-        return list(range(32, 127))
-
-def convert_ttf_to_vlw(ttf_path: str, vlw_path: str, font_size: int, 
-                      char_codes: List[int], antialias: bool = True) -> None:
-    """TTFフォントをVLW形式に変換する"""
-    # TTFファイルを開く
-    ttf = ttLib.TTFont(ttf_path)
-    
-    # フォント名を取得
-    font_name = get_font_name(ttf)
-    
-    # PILのImageFont作成
-    pil_font = ImageFont.truetype(ttf_path, font_size)
-    
-    # フォントのメトリクス取得
-    ascent, descent = get_font_metrics(ttf, font_size)
-    
-    # 各文字のビットマップとメトリクスを生成
-    glyph_data = {}
-    valid_chars = []
-    
-    for char_code in char_codes:
+    # Unicode範囲の追加
+    if args.range:
         try:
-            char = chr(char_code)
-            # 文字がフォント内に存在するか確認
-            if not has_glyph(ttf, char_code):
-                # 文字がない場合はスキップ
-                continue
-                
-            bitmap, width, height, advance, bearing_x, bearing_y = render_glyph(
-                pil_font, char, antialias)
-            
-            if bitmap is not None:
-                glyph_data[char_code] = {
-                    'bitmap': bitmap,
-                    'width': width,
-                    'height': height,
-                    'advance': advance,
-                    'bearing_x': bearing_x,
-                    'bearing_y': bearing_y
-                }
-                valid_chars.append(char_code)
+            range_parts = args.range.split('-')
+            start_code = int(range_parts[0], 0)  # 0xで始まる場合も正しく解析
+            end_code = int(range_parts[1], 0) if len(range_parts) > 1 else start_code
+            converter.add_range(start_code, end_code)
         except Exception as e:
-            # 問題のある文字はスキップ
-            print(f"警告: 文字 U+{char_code:04X} ({chr(char_code) if char_code < 0x10000 else '?'}) をスキップしました: {e}")
+            print(f"エラー: Unicode範囲の指定が無効です: {e}")
+            return 1
     
-    # VLWファイルを作成
-    write_vlw_file(vlw_path, glyph_data, valid_chars, font_size, ascent, descent, font_name, antialias)
-
-def get_font_name(ttf: ttLib.TTFont) -> str:
-    """TTFからフォント名を取得"""
-    name_record = None
+    # テキストの追加
+    if args.text:
+        # ファイルかどうかを確認
+        if os.path.isfile(args.text):
+            try:
+                with open(args.text, 'r', encoding='utf-8') as f:
+                    converter.add_text(f.read())
+            except Exception as e:
+                print(f"エラー: テキストファイルの読み込みに失敗しました: {e}")
+                return 1
+        else:
+            # 直接テキストとして処理
+            converter.add_text(args.text)
     
-    # 'name'テーブルからフォント名を取得
-    if 'name' in ttf:
-        for record in ttf['name'].names:
-            if record.nameID == 4:  # Full font name
-                try:
-                    if record.isUnicode():
-                        name_record = record.toUnicode()
-                    else:
-                        name_record = record.string.decode('latin-1')
-                    break
-                except:
-                    pass
+    # グリフが追加されなかった場合はデフォルトでASCIIを追加
+    if not converter.glyphs:
+        print("警告: グリフが指定されていません。基本ASCII文字を追加します。")
+        converter.add_basic_ascii()
     
-    if name_record:
-        return name_record
-    else:
-        # フォント名が見つからない場合はファイル名を使用
-        return os.path.basename(ttf.reader.file.name)
-
-def get_font_metrics(ttf: ttLib.TTFont, font_size: int) -> Tuple[float, float]:
-    """フォントのアセントとディセントを取得"""
-    ascent = 0
-    descent = 0
-    
-    # 'hhea'テーブルからメトリクスを取得
-    if 'hhea' in ttf:
-        units_per_em = ttf['head'].unitsPerEm
-        ascent = ttf['hhea'].ascent * font_size / units_per_em
-        descent = -ttf['hhea'].descent * font_size / units_per_em  # デセントは通常負の値
-    
-    return ascent, descent
-
-def has_glyph(ttf: ttLib.TTFont, char_code: int) -> bool:
-    """フォントに指定された文字のグリフが含まれているか確認"""
-    cmap = ttf.getBestCmap()
-    return char_code in cmap
-
-def render_glyph(font: ImageFont.FreeTypeFont, char: str, antialias: bool) -> Tuple:
-    """文字をレンダリングしてビットマップとメトリクスを返す"""
-    # 文字の大きさを取得
-    try:
-        left, top, right, bottom = font.getbbox(char)
-        width = right - left
-        height = bottom - top
-    except:
-        # PILのフォントメトリクス互換性のための代替手段
-        width, height = font.getsize(char)
-        left, top = 0, 0
-    
-    # サイズが0の場合（スペースなど）
-    if width == 0 or height == 0:
-        width = max(width, 1)
-        height = max(height, 1)
-    
-    # 余白を追加
-    pad = 2
-    width += pad * 2
-    height += pad * 2
-    
-    # ビットマップ作成
-    img = Image.new('L', (width, height), 0)
-    draw = ImageDraw.Draw(img)
-    
-    # 文字描画
-    draw.text((pad - left, pad - top), char, font=font, fill=255)
-    
-    # アンチエイリアスが無効な場合は2値化
-    if not antialias:
-        img = img.point(lambda x: 0 if x < 128 else 255, '1')
-    
-    # ビットマップデータ取得
-    bitmap = np.array(img)
-    
-    # フォントメトリクス取得
-    try:
-        metrics = font.getmetrics()
-        ascent, descent = metrics
-    except:
-        ascent, descent = height, 0
-    
-    # アドバンス（次の文字までの幅）
-    try:
-        advance = font.getlength(char)
-    except:
-        # 代替手段
-        advance = width - pad * 2
-    
-    # ベアリング（文字の位置調整）
-    bearing_x = left
-    bearing_y = ascent - top
-    
-    return bitmap, width, height, advance, bearing_x, bearing_y
-
-def write_vlw_file(vlw_path: str, glyph_data: Dict, char_codes: List[int], 
-                 font_size: float, ascent: float, descent: float, 
-                 font_name: str, antialias: bool) -> None:
-    """VLWファイルを作成する"""
-    with open(vlw_path, 'wb') as f:
-        # ヘッダーの書き込み
-        glyph_count = len(char_codes)
-        version = 11  # VLWのバージョン
-        reserved = 0  # 予約値
-        
-        # ヘッダー書き込み
-        f.write(struct.pack('>H', glyph_count))  # グリフ数 (2バイト、big endian)
-        f.write(struct.pack('>B', version))      # バージョン (1バイト)
-        f.write(struct.pack('>f', font_size))    # フォントサイズ (4バイト、float)
-        f.write(struct.pack('>B', reserved))     # 予約値 (1バイト)
-        f.write(struct.pack('>f', ascent))       # アセント (4バイト、float)
-        f.write(struct.pack('>f', descent))      # ディセント (4バイト、float)
-        
-        # 各グリフのヘッダー書き込み
-        glyph_offsets = []
-        current_offset = f.tell() + (8 * glyph_count)  # グリフヘッダーの後の位置
-        
-        for char_code in char_codes:
-            glyph = glyph_data[char_code]
-            width = glyph['width']
-            height = glyph['height']
-            
-            # グリフヘッダー
-            f.write(struct.pack('>I', char_code))     # 文字コード (4バイト)
-            f.write(struct.pack('>I', current_offset))  # ビットマップデータへのオフセット (4バイト)
-            
-            bitmap_size = width * height
-            current_offset += bitmap_size + 20  # ビットマップ + メタデータ
-        
-        # 各グリフのビットマップデータ書き込み
-        for char_code in char_codes:
-            glyph = glyph_data[char_code]
-            bitmap = glyph['bitmap']
-            width = glyph['width']
-            height = glyph['height']
-            advance = glyph['advance']
-            bearing_x = glyph['bearing_x']
-            bearing_y = glyph['bearing_y']
-            
-            # グリフメタデータ
-            f.write(struct.pack('>H', width))        # 幅 (2バイト)
-            f.write(struct.pack('>H', height))       # 高さ (2バイト)
-            f.write(struct.pack('>f', advance))      # アドバンス (4バイト、float)
-            f.write(struct.pack('>f', bearing_x))    # X方向ベアリング (4バイト、float)
-            f.write(struct.pack('>f', bearing_y))    # Y方向ベアリング (4バイト、float)
-            
-            # ビットマップデータ
-            for y in range(height):
-                for x in range(width):
-                    f.write(struct.pack('>B', bitmap[y, x]))  # ピクセル値 (1バイト)
-        
-        # フォント名
-        font_name_bytes = font_name.encode('utf-8')
-        f.write(struct.pack('>H', len(font_name_bytes)))  # 文字列長 (2バイト)
-        f.write(font_name_bytes)  # フォント名
-        
-        # スムージングフラグ
-        f.write(struct.pack('>?', antialias))  # ブール値 (1バイト)
+    # VLWファイルを生成
+    converter.write_vlw(args.output)
+    return 0
 
 if __name__ == "__main__":
     sys.exit(main())
