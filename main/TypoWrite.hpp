@@ -52,6 +52,7 @@ private:
     int _charSpacing;         // 文字間（ピクセル）
     bool _wrap;               // テキストを折り返すか
     bool _transparentBg;      // 背景色透明
+    mutable lgfx::FontMetrics _metrics; // メトリクス情報をキャッシュするための変数
 
     // 内部メソッド
     void setupDisplay();
@@ -59,7 +60,20 @@ private:
     void drawVerticalText(const std::string &text, int x, int y, bool measure_only = false);
 
     // 文字サイズ計算
+    /**
+     * 特定の文字の幅を取得する
+     * @param display 表示デバイス
+     * @param font フォント
+     * @param unicode_char Unicodeコードポイント
+     * @return 文字の幅（ピクセル）
+     */
     int32_t getCharacterWidth(uint16_t unicode_char);
+    /**
+     * 特定の文字の高さを取得する
+     * @param display 表示デバイス
+     * @param font フォント
+     * @return 文字の高さ（ピクセル）
+     */
     int32_t getCharacterHeight(uint16_t unicode_char);
 
     // フォント関連のヘルパーメソッド
@@ -85,6 +99,9 @@ private:
 
     // 縦書きで回転が必要な文字を描画するヘルパーメソッド
     void drawRotatedCharacter(const std::string &utf8_str, int x, int y, int char_height);
+
+    // 特定の文字のメトリクス情報を更新するヘルパー関数
+    bool updateMetricsForChar(uint16_t unicode_char) const;
 
 public:
     // コンストラクタ

@@ -29,6 +29,8 @@ TypoWrite::TypoWrite(M5GFX *display) : _display(display),
         _font = display->getFont();
         _isCustomFont = false; // デフォルトフォントなのでfalse
     }
+    // メトリクス初期化（デフォルト値をゼロに）
+    memset(&_metrics, 0, sizeof(_metrics));
 }
 
 // テキスト方向を設定
@@ -481,68 +483,88 @@ std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
     return unicode_chars;
 }
 
-// フォントの標準幅を取得
-int32_t TypoWrite::getFontWidth()
-{
-    if (!_font)
-        return 0;
+// 特定の文字のメトリクス情報を更新するヘルパー関数
+bool TypoWrite::updateMetricsForChar(uint16_t unicode_char) const {
+    if (!_font) return false;
+    
+    // デフォルトのメトリクスを取得
+    _font->getDefaultMetric(&_metrics);
+    
+    // 指定された文字のメトリクスを更新
+    return _font->updateFontMetric(&_metrics, unicode_char);
+}
 
-    // フォントの標準幅を見積もる（実際のフォントによって異なるため近似値）
-    // 漢字の場合は高さと同じくらいの幅になることが多い
+// フォントの標準幅を取得する関数の修正
+int32_t TypoWrite::getFontWidth() {
+    if (!_font) return 0;
+    
+    // 空白文字（スペース）のメトリクスを取得
+    if (updateMetricsForChar(' ')) {
+        return _metrics.width * _fontSize;
+    }
+    
+    // スペースのメトリクスが取得できない場合は高さと同等と仮定
     return getFontHeight();
 }
 
-// フォントの高さを取得
-int32_t TypoWrite::getFontHeight()
-{
-    if (!_font)
-        return 0;
-
-    // M5GFXのフォント高さを取得
-    // テキスト描画前に一時的にディスプレイに設定して高さを取得
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
-    return _display->fontHeight();
+// フォントの高さを取得する関数の修正
+int32_t TypoWrite::getFontHeight() {
+    if (!_font) return 0;
+    
+    // フォントの標準的なメトリクスを取得
+    _font->getDefaultMetric(&_metrics);
+    return _metrics.height * _fontSize;
 }
 
-// 文字の幅を取得
-int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char)
-{
-    if (!_font)
-        return 0;
-
+// 文字の幅を取得する関数の修正
+int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char) {
+    if (!_font) return 0;
+    
     // 改行文字の場合は幅0
-    if (unicode_char == '\n')
-        return 0;
-
+    if (unicode_char == '\n') return 0;
+    
     // 特殊文字の場合は個別に幅を計算
-    if (getCharCategory(unicode_char) != CharCategory::NORMAL)
-    {
-        // 特殊文字の幅を返す実装
-        // 仮の実装として標準的な文字幅を返す
+    /*
+    if (isSpecialChar(unicode_char)) {
+        // 特殊文字も一旦メトリクスを取得してみる
+        if (updateMetricsForChar(unicode_char)) {
+            return _metrics.width * _fontSize;
+        }
+        // 取得できない場合はフォント標準幅を返す
         return getFontWidth();
     }
-
-    // フォントから文字の幅を取得
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
-
-    // UTF-8に変換して幅を取得
-    std::string utf8_str = unicodeToUtf8(unicode_char);
-    return _display->textWidth(utf8_str.c_str()) + 1; // 端数を考慮して+1
+    */
+    
+    // 一般的な文字のメトリクスを取得
+    if (updateMetricsForChar(unicode_char)) {
+        // x_advanceを優先（実際に次の文字が配置される位置）
+        if (_metrics.x_advance > 0) {
+            return _metrics.x_advance * _fontSize;
+        }
+        return _metrics.width * _fontSize;
+    }
+    
+    // メトリクス取得失敗時はフォント標準幅を返す
+    ESP_LOGW(TAG, "Failed to get metrics for character U+%04X", unicode_char);
+    return getFontWidth();
 }
 
-// 文字の高さを取得
-int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char)
-{
-    if (!_font)
-        return 0;
-
+// 文字の高さを取得する関数の修正
+int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char) {
+    if (!_font) return 0;
+    
     // 改行文字の場合は高さ0
-    if (unicode_char == '\n')
-        return 0;
-
-    // フォントから文字の高さを取得
+    if (unicode_char == '\n') return 0;
+    
+    // 文字のメトリクスを取得
+    if (updateMetricsForChar(unicode_char)) {
+        if (_metrics.y_advance > 0) {
+            return _metrics.y_advance * _fontSize;
+        }
+        return _metrics.height * _fontSize;
+    }
+    
+    // メトリクス取得失敗時はフォント標準高さを返す
     return getFontHeight();
 }
 
@@ -822,6 +844,7 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
             }
 
             // 文字の高さを取得
+//            int char_height = getCharacterHeight(unicode_char);
             int char_height = getCharacterHeight(unicode_char);
 
             // 折り返しの処理

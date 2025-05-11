@@ -11,7 +11,8 @@
 #include "TouchHandler.hpp"
 #include "Button.hpp"
 #include "TypoWrite.hpp"
-#include "fonts/mplus2_18.h"
+//#include "fonts/mplus2_18.h"
+#include "fonts/genshin.h"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
@@ -64,7 +65,7 @@ void textDisplayDemo()
   verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号\n()「」{}[]【】『』（）-=~!?<>_―――\n「やっほー」");
 
   // カスタムVLWフォントの読み込み
-  if (verticalWriter.loadFontFromArray(mplus2))
+  if (verticalWriter.loadFontFromArray(genshin))
   {
     ESP_LOGI(TAG, "Custom font loaded successfully");
 
@@ -76,7 +77,7 @@ void textDisplayDemo()
     verticalWriter.setBackgroundColor(TFT_BLACK);
 
     // テキスト描画
-    verticalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――");
+    verticalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――\nIt's my life. It's now or never.");
   }
   else
   {
@@ -84,7 +85,7 @@ void textDisplayDemo()
   }
 
   // カスタムVLWフォントの読み込み
-  if (horizontalWriter.loadFontFromArray(mplus2))
+  if (horizontalWriter.loadFontFromArray(genshin))
   {
     ESP_LOGI(TAG, "Custom font loaded successfully");
 
@@ -96,7 +97,7 @@ void textDisplayDemo()
     horizontalWriter.setBackgroundColor(TFT_BLACK);
 
     // テキスト描画
-    horizontalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――");
+    horizontalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――\nIt's my life. It's now or never.");
   }
   else
   {
