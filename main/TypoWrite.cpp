@@ -336,15 +336,50 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
     // 現在の描画設定を保存
     if (!measure_only)
     {
-        setupDisplay();
+        _display->setFont(_font);
+        if (_transparentBg)
+        {
+            _display->setTextColor(_color); // 背景色省略で透明に
+        }
+        else
+        {
+            _display->setTextColor(_color, _bgColor);
+        }
+        _display->setTextSize(_fontSize);
     }
 
     // UTF-8文字列をUnicodeコードポイントに変換
     std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
 
-    int column_width = getFontWidth() + _lineSpacing;
-    int current_x = x + _width - column_width;
+    // 基本列幅の設定
+    int base_column_width = getFontWidth();
+
+    // 最初の列の文字の幅を先に計算（可能であれば）
+    int first_column_width = base_column_width;
+    if (!unicode_chars.empty())
+    {
+        uint16_t first_char = unicode_chars[0];
+        if (first_char != '\n')
+        {
+            updateMetricsForChar(first_char);
+            if (_metrics.width > 0)
+            {
+                first_column_width = _metrics.width * _fontSize;
+            }
+        }
+    }
+
+    // 描画位置の修正 - 最初の列を描画領域内に収める
+    // 列の中心が描画領域の右端から列間隔/2だけ内側に来るように設定
+    int current_x = x + _width - (first_column_width) - (_lineSpacing);
     int current_y = y;
+
+    // デバッグログ - 描画開始位置の確認
+    ESP_LOGI(TAG, "Vertical text start position: x=%d, y=%d (area: x=%d, width=%d)",
+             current_x, current_y, x, _width);
+
+    // 現在の列で最大の文字幅を追跡
+    int current_column_max_width = first_column_width;
 
     for (size_t i = 0; i < unicode_chars.size(); i++)
     {
@@ -353,19 +388,32 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
         // 改行文字の処理（縦書きの場合は次の列に移動）
         if (unicode_char == '\n')
         {
-            current_x -= column_width;
-            current_y = y;
+            // 現在の列の最大幅 + 行間隔で次の列位置を計算
+            int column_width = current_column_max_width + _lineSpacing;
+            current_x -= column_width;    // 次の列（左側）に移動
+            current_y = y;                // Y座標をリセット
+            current_column_max_width = 0; // 新しい列の最大幅をリセット
             continue;
         }
 
-        // 文字の高さを取得
-        int char_height = getCharacterHeight(unicode_char);
+        // 文字のメトリクスを取得
+        updateMetricsForChar(unicode_char);
+
+        // 文字の幅と高さを取得
+        int char_width = (_metrics.width > 0) ? _metrics.width * _fontSize : base_column_width;
+        int char_height = (_metrics.height > 0) ? _metrics.height * _fontSize : getFontHeight();
+
+        // 現在の列の最大幅を更新
+        current_column_max_width = std::max(current_column_max_width, char_width);
 
         // 折り返しの処理
         if (_wrap && current_y + char_height > y + _height)
         {
-            current_x -= column_width;
-            current_y = y;
+            // 現在の列の最大幅 + 行間隔で次の列位置を計算
+            int column_width = current_column_max_width + _lineSpacing;
+            current_x -= column_width;             // 次の列（左側）に移動
+            current_y = y;                         // Y座標をリセット
+            current_column_max_width = char_width; // 新しい列の最大幅を初期化
         }
 
         // 描画処理（measure_onlyでない場合のみ）
@@ -484,45 +532,55 @@ std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
 }
 
 // 特定の文字のメトリクス情報を更新するヘルパー関数
-bool TypoWrite::updateMetricsForChar(uint16_t unicode_char) const {
-    if (!_font) return false;
-    
+bool TypoWrite::updateMetricsForChar(uint16_t unicode_char) const
+{
+    if (!_font)
+        return false;
+
     // デフォルトのメトリクスを取得
     _font->getDefaultMetric(&_metrics);
-    
+
     // 指定された文字のメトリクスを更新
     return _font->updateFontMetric(&_metrics, unicode_char);
 }
 
 // フォントの標準幅を取得する関数の修正
-int32_t TypoWrite::getFontWidth() {
-    if (!_font) return 0;
-    
+int32_t TypoWrite::getFontWidth()
+{
+    if (!_font)
+        return 0;
+
     // 空白文字（スペース）のメトリクスを取得
-    if (updateMetricsForChar(' ')) {
+    if (updateMetricsForChar(' '))
+    {
         return _metrics.width * _fontSize;
     }
-    
+
     // スペースのメトリクスが取得できない場合は高さと同等と仮定
     return getFontHeight();
 }
 
 // フォントの高さを取得する関数の修正
-int32_t TypoWrite::getFontHeight() {
-    if (!_font) return 0;
-    
+int32_t TypoWrite::getFontHeight()
+{
+    if (!_font)
+        return 0;
+
     // フォントの標準的なメトリクスを取得
     _font->getDefaultMetric(&_metrics);
     return _metrics.height * _fontSize;
 }
 
 // 文字の幅を取得する関数の修正
-int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char) {
-    if (!_font) return 0;
-    
+int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char)
+{
+    if (!_font)
+        return 0;
+
     // 改行文字の場合は幅0
-    if (unicode_char == '\n') return 0;
-    
+    if (unicode_char == '\n')
+        return 0;
+
     // 特殊文字の場合は個別に幅を計算
     /*
     if (isSpecialChar(unicode_char)) {
@@ -534,36 +592,43 @@ int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char) {
         return getFontWidth();
     }
     */
-    
+
     // 一般的な文字のメトリクスを取得
-    if (updateMetricsForChar(unicode_char)) {
+    if (updateMetricsForChar(unicode_char))
+    {
         // x_advanceを優先（実際に次の文字が配置される位置）
-        if (_metrics.x_advance > 0) {
+        if (_metrics.x_advance > 0)
+        {
             return _metrics.x_advance * _fontSize;
         }
         return _metrics.width * _fontSize;
     }
-    
+
     // メトリクス取得失敗時はフォント標準幅を返す
     ESP_LOGW(TAG, "Failed to get metrics for character U+%04X", unicode_char);
     return getFontWidth();
 }
 
 // 文字の高さを取得する関数の修正
-int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char) {
-    if (!_font) return 0;
-    
+int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char)
+{
+    if (!_font)
+        return 0;
+
     // 改行文字の場合は高さ0
-    if (unicode_char == '\n') return 0;
-    
+    if (unicode_char == '\n')
+        return 0;
+
     // 文字のメトリクスを取得
-    if (updateMetricsForChar(unicode_char)) {
-        if (_metrics.y_advance > 0) {
+    if (updateMetricsForChar(unicode_char))
+    {
+        if (_metrics.y_advance > 0)
+        {
             return _metrics.y_advance * _fontSize;
         }
         return _metrics.height * _fontSize;
     }
-    
+
     // メトリクス取得失敗時はフォント標準高さを返す
     return getFontHeight();
 }
@@ -640,7 +705,7 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
         case 0x3002: // 。（句点）
             vertical_code = 0xFE12;
             break;
-            
+
         // 日本語の括弧
         case 0x300C: // 「
             vertical_code = 0xFE41;
@@ -720,8 +785,8 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
             vertical_code = 0xFE30;
             break;
         case 0x2026: // …
-        vertical_code = 0xFE19;
-        break;
+            vertical_code = 0xFE19;
+            break;
 
         // 全角ダッシュ・記号
         case 0xFF0D:                // －（全角ハイフンマイナス）
@@ -844,7 +909,7 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
             }
 
             // 文字の高さを取得
-//            int char_height = getCharacterHeight(unicode_char);
+            //            int char_height = getCharacterHeight(unicode_char);
             int char_height = getCharacterHeight(unicode_char);
 
             // 折り返しの処理

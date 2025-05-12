@@ -36,23 +36,24 @@ enum class CharCategory
 class TypoWrite
 {
 private:
-    M5GFX *_display;          // 描画先のディスプレイ
-    TextDirection _direction; // テキスト方向
-    TextAlignment _alignment; // テキスト揃え
-    int _x;                   // 描画開始X座標
-    int _y;                   // 描画開始Y座標
-    int _width;               // 描画領域の幅
-    int _height;              // 描画領域の高さ
-    uint16_t _color;          // テキスト色
-    uint16_t _bgColor;        // 背景色
-    float _fontSize;          // フォントサイズ倍率
-    const lgfx::IFont *_font; // 使用フォント
-    bool _isCustomFont;       // カスタムフォントを使用しているかどうか
-    int _lineSpacing;         // 行間（ピクセル）
-    int _charSpacing;         // 文字間（ピクセル）
-    bool _wrap;               // テキストを折り返すか
-    bool _transparentBg;      // 背景色透明
+    M5GFX *_display;                    // 描画先のディスプレイ
+    TextDirection _direction;           // テキスト方向
+    TextAlignment _alignment;           // テキスト揃え
+    int _x;                             // 描画開始X座標
+    int _y;                             // 描画開始Y座標
+    int _width;                         // 描画領域の幅
+    int _height;                        // 描画領域の高さ
+    uint16_t _color;                    // テキスト色
+    uint16_t _bgColor;                  // 背景色
+    float _fontSize;                    // フォントサイズ倍率
+    const lgfx::IFont *_font;           // 使用フォント
+    bool _isCustomFont;                 // カスタムフォントを使用しているかどうか
+    int _lineSpacing;                   // 行間（ピクセル）
+    int _charSpacing;                   // 文字間（ピクセル）
+    bool _wrap;                         // テキストを折り返すか
+    bool _transparentBg;                // 背景色透明
     mutable lgfx::FontMetrics _metrics; // メトリクス情報をキャッシュするための変数
+    int _columnSpacing;                 // 縦書き時の列間隔
 
     // 内部メソッド
     void setupDisplay();
@@ -102,6 +103,9 @@ private:
 
     // 特定の文字のメトリクス情報を更新するヘルパー関数
     bool updateMetricsForChar(uint16_t unicode_char) const;
+
+    // 縦書き列間のスペーシングを設定
+    void setColumnSpacing(int spacing) { _columnSpacing = spacing; }
 
 public:
     // コンストラクタ
