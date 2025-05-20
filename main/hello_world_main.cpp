@@ -11,8 +11,9 @@
 #include "TouchHandler.hpp"
 #include "Button.hpp"
 #include "TypoWrite.hpp"
-//#include "fonts/mplus2_18.h"
-#include "fonts/genshin.h"
+//#include "fonts/mplus2_16.h"
+#include "fonts/shippori_16.h"
+//#include "fonts/genshin.h"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
@@ -41,11 +42,13 @@ void textDisplayDemo()
   horizontalWriter.setPosition(10, 100);
   horizontalWriter.setArea(400, 200);
   horizontalWriter.setColor(TFT_WHITE);
-  horizontalWriter.setBackgroundColor(TFT_BLACK);
+  horizontalWriter.setBackgroundColor(TFT_TRANSPARENT);
   horizontalWriter.setTransparentBg(false);
   horizontalWriter.setDirection(TextDirection::HORIZONTAL);
   horizontalWriter.setFont(&fonts::lgfxJapanGothic_24);
   horizontalWriter.setFontSize(1.0);
+  horizontalWriter.setLineSpacing(6);
+  horizontalWriter.setCharSpacing(6);
 
   // 横書きテキスト描画
   horizontalWriter.drawText("これは横書きテキストのデモです。\nM5Paper S3でアドベンチャーゲームを作ります。");
@@ -55,29 +58,31 @@ void textDisplayDemo()
   verticalWriter.setPosition(400, 100);
   verticalWriter.setArea(140, 700);
   verticalWriter.setColor(TFT_WHITE);
-  verticalWriter.setBackgroundColor(TFT_BLACK);
+  verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
   verticalWriter.setTransparentBg(false);
   verticalWriter.setDirection(TextDirection::VERTICAL);
   verticalWriter.setFont(&fonts::lgfxJapanGothic_24);
   verticalWriter.setFontSize(1.0);
+  verticalWriter.setLineSpacing(6);
 
   // 縦書きテキスト描画
-  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号\n()「」{}[]【】『』（）-=~!?<>_―――\n「やっほー」");
+  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号()「」{}[]【】『』（）-=~!?<>_―――\n「It's my life. It's now or never234」");
 
   // カスタムVLWフォントの読み込み
-  if (verticalWriter.loadFontFromArray(genshin))
+  if (verticalWriter.loadFontFromArray(shippori))
   {
     ESP_LOGI(TAG, "Custom font loaded successfully");
 
     // フォントを設定（読み込みで自動設定されるので省略可能）
     verticalWriter.setDirection(TextDirection::VERTICAL);
-    verticalWriter.setPosition(100, 500);
+    verticalWriter.setPosition(150, 500);
     verticalWriter.setArea(250, 400);
     verticalWriter.setColor(TFT_WHITE);
-    verticalWriter.setBackgroundColor(TFT_BLACK);
+    verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
+    verticalWriter.setCharSpacing(12);
 
     // テキスト描画
-    verticalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――\nIt's my life. It's now or never.");
+    verticalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――\nIt's my life. It's now or never.");
   }
   else
   {
@@ -85,7 +90,7 @@ void textDisplayDemo()
   }
 
   // カスタムVLWフォントの読み込み
-  if (horizontalWriter.loadFontFromArray(genshin))
+  if (horizontalWriter.loadFontFromArray(shippori))
   {
     ESP_LOGI(TAG, "Custom font loaded successfully");
 
@@ -94,10 +99,10 @@ void textDisplayDemo()
     horizontalWriter.setPosition(0, 500);
     horizontalWriter.setArea(250, 400);
     horizontalWriter.setColor(TFT_WHITE);
-    horizontalWriter.setBackgroundColor(TFT_BLACK);
+    horizontalWriter.setBackgroundColor(TFT_TRANSPARENT);
 
     // テキスト描画
-    horizontalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n私は叫んだ。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――\nIt's my life. It's now or never.");
+    horizontalWriter.drawText("¿ˆˇ˘˙˛˝ ‐‑‒–—―‖‘’“”†‡•‥…‰′″‼‾℃ℓ№℡℧Å→①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳☀☁☂☃★☆☎☖☗☞♀♂♠♡♢♣♤♥♦♧♨♩♪♫♬♭♮♯　、。倂使侃來ﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ");
   }
   else
   {

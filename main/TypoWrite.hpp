@@ -37,6 +37,8 @@ class TypoWrite
 {
 private:
     M5GFX *_display;                    // 描画先のディスプレイ
+    lgfx::LGFX_Sprite *_sprite;        // 描画用スプライト
+    bool _spriteCreated;               // スプライト作成済みフラグ
     TextDirection _direction;           // テキスト方向
     TextAlignment _alignment;           // テキスト揃え
     int _x;                             // 描画開始X座標
@@ -59,6 +61,12 @@ private:
     void setupDisplay();
     void drawHorizontalText(const std::string &text, int x, int y, bool measure_only = false);
     void drawVerticalText(const std::string &text, int x, int y, bool measure_only = false);
+
+        // スプライト関連の内部メソッド
+    bool createSprite(int width, int height);
+    void deleteSprite();
+    void clearSprite();
+    void updateDisplay();
 
     // 文字サイズ計算
     /**
@@ -110,6 +118,8 @@ private:
 public:
     // コンストラクタ
     TypoWrite(M5GFX *display);
+    // デストラクタ
+    ~TypoWrite();
 
     // 設定メソッド
     void setDirection(TextDirection direction);
@@ -123,7 +133,6 @@ public:
     void setLineSpacing(int spacing);
     void setCharSpacing(int spacing);
     void setWrap(bool wrap);
-    void setTransparentBg(bool transparent) { _transparentBg = transparent; }
     void setTransparentBackground(bool transparent) { _transparentBg = transparent; }
     void setIsCustomFont(bool isCustom) { _isCustomFont = isCustom; }
 

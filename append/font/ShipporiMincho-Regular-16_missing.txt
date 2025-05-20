@@ -1,0 +1,4 @@
+# ShipporiMincho-Regular-16.vlw で見つからなかったグリフの一覧
+# 合計: 1 文字
+
+U+3000 '　'

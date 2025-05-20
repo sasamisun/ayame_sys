@@ -7,6 +7,8 @@ static const char *TAG = "TYPO_WRITE";
 
 // コンストラクタ
 TypoWrite::TypoWrite(M5GFX *display) : _display(display),
+                                       _sprite(nullptr),
+                                       _spriteCreated(false),
                                        _direction(TextDirection::HORIZONTAL),
                                        _alignment(TextAlignment::LEFT),
                                        _x(0),
@@ -31,6 +33,84 @@ TypoWrite::TypoWrite(M5GFX *display) : _display(display),
     }
     // メトリクス初期化（デフォルト値をゼロに）
     memset(&_metrics, 0, sizeof(_metrics));
+        // スプライト作成
+    if (display)
+    {
+        createSprite(_width, _height);
+    }
+}
+
+// デストラクタ
+TypoWrite::~TypoWrite()
+{
+    deleteSprite();
+}
+
+// スプライト作成
+bool TypoWrite::createSprite(int width, int height)
+{
+    // すでに作成されている場合は一旦削除
+    deleteSprite();
+    
+    if (!_display) return false;
+    
+    // スプライト作成
+    _sprite = new lgfx::LGFX_Sprite(_display);
+    if (!_sprite) {
+        ESP_LOGE(TAG, "Failed to allocate sprite");
+        return false;
+    }
+    
+    // スプライト初期化
+    if (!_sprite->createSprite(width, height)) {
+        ESP_LOGE(TAG, "Failed to create sprite with size %dx%d", width, height);
+        delete _sprite;
+        _sprite = nullptr;
+        return false;
+    }
+    
+    // 作成成功
+    _spriteCreated = true;
+    
+    // 背景色で初期化
+    _sprite->fillScreen(_bgColor);
+    
+    // フォント設定を適用
+    _sprite->setFont(_font);
+    _sprite->setTextSize(_fontSize);
+    
+    ESP_LOGI(TAG, "Created sprite with size %dx%d", width, height);
+    return true;
+}
+
+// スプライト削除
+void TypoWrite::deleteSprite()
+{
+    if (_sprite) {
+        _sprite->deleteSprite();
+        delete _sprite;
+        _sprite = nullptr;
+        _spriteCreated = false;
+        ESP_LOGI(TAG, "Deleted sprite");
+    }
+}
+
+// スプライトクリア
+void TypoWrite::clearSprite()
+{
+    if (_sprite) {
+        _sprite->fillScreen(_bgColor);
+        ESP_LOGI(TAG, "Cleared sprite");
+    }
+}
+
+// スプライトをディスプレイに転送
+void TypoWrite::updateDisplay()
+{
+    if (_sprite && _spriteCreated) {
+        _sprite->pushSprite(_display, _x, _y);
+        ESP_LOGI(TAG, "Updated display from sprite at (%d,%d)", _x, _y);
+    }
 }
 
 // テキスト方向を設定
@@ -57,24 +137,59 @@ void TypoWrite::setArea(int width, int height)
 {
     _width = width;
     _height = height;
+    // 描画領域が変わったのでスプライトを再作成
+    if (_display && (width > 0 && height > 0)) {
+        createSprite(width, height);
+    }
+
 }
 
 // テキスト色を設定
 void TypoWrite::setColor(uint16_t color)
 {
     _color = color;
+    if (_sprite) {
+        if (_transparentBg) {
+            _sprite->setTextColor(_color); 
+        } else {
+            _sprite->setTextColor(_color, _bgColor);
+        }
+    }
 }
 
 // 背景色を設定
 void TypoWrite::setBackgroundColor(uint16_t bgColor)
 {
     _bgColor = bgColor;
+    if (_sprite) {
+        if (_transparentBg) {
+            _sprite->setTextColor(_color);
+        } else {
+            _sprite->setTextColor(_color, _bgColor);
+        }
+        // スプライトの背景色も更新
+        clearSprite();
+    }
 }
-
+// 背景の透明設定
+void TypoWrite::setTransparentBackground(bool transparent)
+{
+    _transparentBg = transparent;
+    if (_sprite) {
+        if (transparent) {
+            _sprite->setTextColor(_color);
+        } else {
+            _sprite->setTextColor(_color, _bgColor);
+        }
+    }
+}
 // フォントサイズを設定
 void TypoWrite::setFontSize(float size)
 {
     _fontSize = size;
+    if (_sprite) {
+        _sprite->setTextSize(_fontSize);
+    }
 }
 
 // フォントを設定するメソッドの修正
@@ -318,7 +433,7 @@ void TypoWrite::drawHorizontalText(const std::string &text, int x, int y, bool m
             {
                 // 通常の文字描画
                 std::string utf8_str = unicodeToUtf8(unicode_char);
-                _display->drawString(utf8_str.c_str(), current_x, current_y);
+                _display->drawString(utf8_str.c_str(), current_x, current_y, _font);
             }
         }
 
@@ -401,7 +516,8 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
 
         // 文字の幅と高さを取得
         int char_width = (_metrics.width > 0) ? _metrics.width * _fontSize : base_column_width;
-        int char_height = (_metrics.height > 0) ? _metrics.height * _fontSize : getFontHeight();
+        int char_height = (_metrics.height) * _fontSize;
+        //int char_height = getCharacterHeight(unicode_char) * _fontSize;
 
         // 現在の列の最大幅を更新
         current_column_max_width = std::max(current_column_max_width, char_width);
@@ -437,7 +553,7 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
                 else
                 {
                     // 回転が不要な文字（漢字・ひらがな・カタカナなど）
-                    _display->drawString(utf8_str.c_str(), current_x, current_y);
+                    _display->drawString(utf8_str.c_str(), current_x, current_y, _font);
                 }
             }
             else
@@ -450,7 +566,7 @@ void TypoWrite::drawVerticalText(const std::string &text, int x, int y, bool mea
                 else
                 {
                     // 回転が不要な文字（漢字・ひらがな・カタカナなど）
-                    _display->drawString(utf8_str.c_str(), current_x, current_y);
+                    _display->drawString(utf8_str.c_str(), current_x, current_y, _font);
                 }
             }
         }
@@ -568,7 +684,8 @@ int32_t TypoWrite::getFontHeight()
 
     // フォントの標準的なメトリクスを取得
     _font->getDefaultMetric(&_metrics);
-    return _metrics.height * _fontSize;
+    return (_metrics.height) * _fontSize;
+    //return 2;
 }
 
 // 文字の幅を取得する関数の修正
@@ -599,7 +716,7 @@ int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char)
         // x_advanceを優先（実際に次の文字が配置される位置）
         if (_metrics.x_advance > 0)
         {
-            return _metrics.x_advance * _fontSize;
+            return (_metrics.x_advance + _metrics.x_offset) * _fontSize;
         }
         return _metrics.width * _fontSize;
     }
@@ -624,7 +741,7 @@ int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char)
     {
         if (_metrics.y_advance > 0)
         {
-            return _metrics.y_advance * _fontSize;
+            return (_metrics.y_advance + _metrics.y_offset) * _fontSize;
         }
         return _metrics.height * _fontSize;
     }
@@ -799,12 +916,12 @@ void TypoWrite::drawSpecialChar(uint16_t unicode_char, int x, int y)
         default:
             break;
         }
-        _display->drawString(unicodeToUtf8(vertical_code).c_str(), x, y);
+        _display->drawString(unicodeToUtf8(vertical_code).c_str(), x, y, _font);
     }
     else
     {
         // 横書きモードでは通常描画
-        _display->drawString(unicodeToUtf8(unicode_char).c_str(), x, y);
+        _display->drawString(unicodeToUtf8(unicode_char).c_str(), x, y, _font);
     }
 }
 
@@ -930,24 +1047,6 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
     }
 }
 
-// テキスト幅の取得
-int TypoWrite::getTextWidth(const std::string &text)
-{
-    int width = 0;
-    int height = 0;
-    calculateTextSize(text, width, height);
-    return width;
-}
-
-// テキスト高さの取得
-int TypoWrite::getTextHeight(const std::string &text)
-{
-    int width = 0;
-    int height = 0;
-    calculateTextSize(text, width, height);
-    return height;
-}
-
 // 縦書きで回転が必要な文字を描画する
 void TypoWrite::drawRotatedCharacter(const std::string &utf8_str, int x, int y, int char_height)
 {
@@ -965,7 +1064,8 @@ void TypoWrite::drawRotatedCharacter(const std::string &utf8_str, int x, int y, 
         int cy = (charSize - char_height) / 2;
         sprite->drawString(utf8_str.c_str(), cx, cy);
 
+        //sprite->setPivot(charWidth/2, char_height/2);
         // スプライトを90度回転して描画
-        sprite->pushRotateZoom(_display, x + char_height / 2, y + char_height / 2,
+        sprite->pushRotateZoom(_display, x + char_height/2, y + char_height/2,
                                90, 1.0, 1.0, _bgColor); });
 }
