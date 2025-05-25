@@ -37,8 +37,9 @@ class TypoWrite
 {
 private:
     M5GFX *_display;                    // 描画先のディスプレイ
-    lgfx::LGFX_Sprite *_sprite;        // 描画用スプライト
-    bool _spriteCreated;               // スプライト作成済みフラグ
+    lgfx::LGFX_Sprite *_sprite;         // 描画範囲用スプライト
+    lgfx::LGFX_Sprite *_charSprite;     // 一文字描画用スプライト
+    bool _spriteInitialized;            // スプライトが初期化されたかどうか
     TextDirection _direction;           // テキスト方向
     TextAlignment _alignment;           // テキスト揃え
     int _x;                             // 描画開始X座標
@@ -57,32 +58,34 @@ private:
     mutable lgfx::FontMetrics _metrics; // メトリクス情報をキャッシュするための変数
     int _columnSpacing;                 // 縦書き時の列間隔
 
+    // 一文字用スプライトのサイズ
+    int _charSpriteWidth;
+    int _charSpriteHeight;
+    
+    // 現在の描画位置（スプライト内の相対位置）
+    int _currentX;
+    int _currentY;
+
     // 内部メソッド
     void setupDisplay();
-    void drawHorizontalText(const std::string &text, int x, int y, bool measure_only = false);
-    void drawVerticalText(const std::string &text, int x, int y, bool measure_only = false);
-
-        // スプライト関連の内部メソッド
-    bool createSprite(int width, int height);
-    void deleteSprite();
-    void clearSprite();
-    void updateDisplay();
+    void drawHorizontalText(const std::string &text);
+    void drawVerticalText(const std::string &text);
+    
+    // スプライト関連の内部メソッド
+    bool initMainSprite();
+    bool initCharSprite();
+    void clearMainSprite();
+    void clearCharSprite();
+    
+    // 一文字描画メソッド
+    void drawCharacterHorizontal(uint16_t unicode_char, int x, int y);
+    void drawCharacterVertical(uint16_t unicode_char, int x, int y);
+    
+    // 特殊文字の回転描画
+    void drawRotatedCharacter(uint16_t unicode_char, int x, int y);
 
     // 文字サイズ計算
-    /**
-     * 特定の文字の幅を取得する
-     * @param display 表示デバイス
-     * @param font フォント
-     * @param unicode_char Unicodeコードポイント
-     * @return 文字の幅（ピクセル）
-     */
     int32_t getCharacterWidth(uint16_t unicode_char);
-    /**
-     * 特定の文字の高さを取得する
-     * @param display 表示デバイス
-     * @param font フォント
-     * @return 文字の高さ（ピクセル）
-     */
     int32_t getCharacterHeight(uint16_t unicode_char);
 
     // フォント関連のヘルパーメソッド
@@ -93,27 +96,17 @@ private:
     std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
     std::string unicodeToUtf8(uint16_t unicode_char);
 
-    // スプライト操作ヘルパー
-    void withSprite(int width, int height, std::function<void(lgfx::LGFX_Sprite *)> operation);
-
     // 特殊文字の処理
     CharCategory getCharCategory(uint16_t unicode_char);
-    void drawSpecialChar(uint16_t unicode_char, int x, int y);
-
+    
     // 縦書きで回転が必要な文字かどうかを判定
     bool shouldRotateInVertical(uint16_t unicode_char);
 
-    // テキスト描画サイズの計算
-    void calculateTextSize(const std::string &text, int &width, int &height);
-
-    // 縦書きで回転が必要な文字を描画するヘルパーメソッド
-    void drawRotatedCharacter(const std::string &utf8_str, int x, int y, int char_height);
-
     // 特定の文字のメトリクス情報を更新するヘルパー関数
     bool updateMetricsForChar(uint16_t unicode_char) const;
-
-    // 縦書き列間のスペーシングを設定
-    void setColumnSpacing(int spacing) { _columnSpacing = spacing; }
+    
+    // テキストサイズ計算
+    void calculateTextSize(const std::string &text, int &width, int &height);
 
 public:
     // コンストラクタ
@@ -121,23 +114,26 @@ public:
     // デストラクタ
     ~TypoWrite();
 
-    // 設定メソッド
+    // 設定メソッド - 基本設定
     void setDirection(TextDirection direction);
     void setAlignment(TextAlignment alignment);
     void setPosition(int x, int y);
     void setArea(int width, int height);
     void setColor(uint16_t color);
     void setBackgroundColor(uint16_t bgColor);
+    void setTransparentBg(bool transparent) { _transparentBg = transparent; }
+    
+    // 設定メソッド - フォント関連
     void setFontSize(float size);
     void setFont(const lgfx::IFont *font);
+    void setIsCustomFont(bool isCustom) { _isCustomFont = isCustom; }
+    bool loadFontFromArray(const uint8_t *fontArray);
+    
+    // 設定メソッド - スペーシング
     void setLineSpacing(int spacing);
     void setCharSpacing(int spacing);
+    void setColumnSpacing(int spacing) { _columnSpacing = spacing; }
     void setWrap(bool wrap);
-    void setTransparentBackground(bool transparent) { _transparentBg = transparent; }
-    void setIsCustomFont(bool isCustom) { _isCustomFont = isCustom; }
-
-    // フォント読み込みメソッド
-    bool loadFontFromArray(const uint8_t *fontArray);
 
     // テキスト描画メソッド
     void drawText(const std::string &text);
@@ -153,6 +149,13 @@ public:
 
     // フォント情報取得メソッド
     bool isCustomFont() const { return _isCustomFont; }
+    
+    // スプライト関連のメソッド
+    lgfx::LGFX_Sprite* getSprite() { return _sprite; }
+    void clearSprite(uint16_t color = 0);
+    
+    // スプライトを画面に描画
+    void updateDisplay();
 };
 
 #endif // _TYPO_WRITE_HPP_
