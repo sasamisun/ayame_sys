@@ -167,6 +167,15 @@ class TTF2VLW:
         
         print(f"グリフを探索中: U+{code_point:04X} '{char}'")
         
+        # 🚩革命的全角スペース処理🚩
+        if code_point == 0x3000:  # 全角スペースの場合
+            print(f"革命的全角スペース検出！資本主義的差別に対抗するのにゃ！")
+            glyph_info = self._create_zenkaku_space_glyph()
+            if glyph_info:
+                self.glyphs.append(glyph_info)
+                print(f"全角スペースを革命的に生成: 幅={glyph_info.width}, 高さ={glyph_info.height}, 送り幅={glyph_info.set_width}")
+                return
+            
         # まずメインフォントでグリフを探す
         glyph_info = self._find_glyph_in_font(code_point, self.main_font, self.font_name, True)
         
@@ -847,7 +856,40 @@ class TTF2VLW:
         
         print(f"見つからなかったグリフの一覧を {output_path} に保存しました。")
         return output_path
-
+    def _create_zenkaku_space_glyph(self):
+        """全角スペースの革命的生成メソッド"""
+        # 半角スペースのメトリクスを取得
+        hankaku_space = self._find_glyph_in_font(0x0020, self.main_font, self.font_name, False)
+        
+        if hankaku_space:
+            # 労働者階級の知恵：半角の2倍の幅で革命的全角スペースを創造！
+            zenkaku_width = hankaku_space.set_width * 2
+            zenkaku_height = max(hankaku_space.height, int(self.font_size * 0.8))  # 最低限の高さを保証
+            
+            return GlyphInfo(
+                code_point=0x3000,
+                width=zenkaku_width,
+                height=zenkaku_height,
+                set_width=zenkaku_width,
+                top_extent=self.ascent,
+                left_extent=0,
+                bitmap=np.zeros((zenkaku_height, zenkaku_width), dtype=np.uint8)  # 透明だけど存在する！
+            )
+        else:
+            print("警告: 半角スペースも見つからない！フォント資本家の陰謀にゃ！")
+            # フォールバック：フォントサイズベースの革命的計算
+            estimated_width = int(self.font_size * 1.0)  # 全角 = フォントサイズ相当
+            estimated_height = int(self.font_size * 0.8)
+            
+            return GlyphInfo(
+                code_point=0x3000,
+                width=estimated_width,
+                height=estimated_height, 
+                set_width=estimated_width,
+                top_extent=self.ascent,
+                left_extent=0,
+                bitmap=np.zeros((estimated_height, estimated_width), dtype=np.uint8)
+            )
 def main():
     """コマンドライン処理"""
     parser = argparse.ArgumentParser(description='TTFフォントをVLW形式に変換する革命的ツール')
