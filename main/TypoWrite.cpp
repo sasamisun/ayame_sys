@@ -952,11 +952,318 @@ bool TypoWrite::shouldRotateInVertical(uint16_t unicode_char)
     return false;
 }
 
+<<<<<<< Updated upstream
 // テキスト描画サイズの計算
+=======
+// 文字カテゴリの判定
+CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
+{
+    // 句読点
+    if (unicode_char == 0x3001 || unicode_char == 0x3002) {
+        return CharCategory::PUNCTUATION;
+    }
+    
+    // 括弧類
+    if ((unicode_char >= 0x3008 && unicode_char <= 0x3011) ||
+        (unicode_char >= 0x300C && unicode_char <= 0x300F) ||
+        unicode_char == 0x0028 || unicode_char == 0x0029 ||
+        unicode_char == 0x005B || unicode_char == 0x005D ||
+        unicode_char == 0x007B || unicode_char == 0x007D) {
+        return CharCategory::BRACKET;
+    }
+    
+    // 横棒・長音記号類
+    if (unicode_char == 0x30FC || unicode_char == 0x2014 || 
+        unicode_char == 0x2013 || unicode_char == 0x2015 ||
+        unicode_char == 0xFF0D || unicode_char == 0x005F) {
+        return CharCategory::HORIZONTAL_BAR;
+    }
+    
+    return CharCategory::NORMAL;
+}
+
+// 文字の幅を取得
+int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char)
+{
+    if (!_font) return 0;
+    
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+    
+    // フォントサイズを一時的に設定
+    _display->setFont(_font);
+    _display->setTextSize(_fontSize);
+    
+    // テキスト幅を取得
+    int32_t width = _display->textWidth(utf8_char.c_str());
+    
+    return width;
+}
+
+// 文字の高さを取得
+int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char)
+{
+    if (!_font) return 0;
+    
+    // フォントサイズを一時的に設定
+    _display->setFont(_font);
+    _display->setTextSize(_fontSize);
+    
+    // フォントの高さを取得
+    return _display->fontHeight();
+}
+
+// フォントの幅を取得
+int32_t TypoWrite::getFontWidth()
+{    
+    if (!_font)
+        return 0;
+
+    // 空白文字（スペース）のメトリクスを取得
+    if (updateMetricsForChar(' '))
+    {
+        return _metrics.width * _fontSize;
+    }
+
+    // スペースのメトリクスが取得できない場合は高さと同等と仮定
+    return getFontHeight();
+}
+
+// フォントの高さを取得
+int32_t TypoWrite::getFontHeight()
+{
+    if (!_font)
+        return 0;
+
+    // フォントの標準的なメトリクスを取得
+    _font->getDefaultMetric(&_metrics);
+    return (_metrics.height) * _fontSize;
+}
+
+// 横書き用の一文字描画
+void TypoWrite::drawCharacterHorizontal(uint16_t unicode_char, int x, int y)
+{
+    if (!_charSprite || !_sprite) return;
+    
+    // 一文字用スプライトをクリア
+    clearCharSprite();
+    
+    // フォント設定
+    _charSprite->setFont(_font);
+    _charSprite->setTextSize(_fontSize);
+    _charSprite->setTextColor(_color, _bgColor);
+    
+    // UTF-8に変換して描画
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+    _charSprite->drawString(utf8_char.c_str(), 0, 0);
+    
+    // メインスプライトに転写
+    _charSprite->pushSprite(_sprite, x, y, _transparentBg ? TFT_TRANSPARENT : _bgColor);
+}
+
+// 縦書き用の一文字描画
+void TypoWrite::drawCharacterVertical(uint16_t unicode_char, int x, int y)
+{
+    if (!_charSprite || !_sprite) return;
+    
+    // 縦書き用グリフに変換
+    uint16_t display_char = convertToVerticalGlyph(unicode_char);
+    
+    // 一文字用スプライトをクリア
+    clearCharSprite();
+    
+    // フォント設定
+    _charSprite->setFont(_font);
+    _charSprite->setTextSize(_fontSize);
+    _charSprite->setTextColor(_color, _bgColor);
+    
+    // 回転が必要かチェック
+    if (shouldRotateInVertical(unicode_char)) {
+        // 90度回転して描画
+        drawRotatedCharacter(display_char, x, y);
+    } else {
+        // そのまま描画
+        std::string utf8_char = unicodeToUtf8(display_char);
+        _charSprite->drawString(utf8_char.c_str(), 0, 0);
+        
+        // メインスプライトに転写
+        _charSprite->pushSprite(_sprite, x, y, _transparentBg ? TFT_TRANSPARENT : _bgColor);
+    }
+}
+
+// 回転した文字の描画
+void TypoWrite::drawRotatedCharacter(uint16_t unicode_char, int x, int y)
+{
+    if (!_charSprite || !_sprite) return;
+    
+    // 一時的なスプライトを作成（回転用）
+    lgfx::LGFX_Sprite tempSprite(_display);
+    tempSprite.setColorDepth(_display->getColorDepth());
+    tempSprite.createSprite(_charSpriteHeight, _charSpriteWidth);
+    
+    // 背景をクリア
+    if (_transparentBg) {
+        tempSprite.fillSprite(TFT_TRANSPARENT);
+    } else {
+        tempSprite.fillSprite(_bgColor);
+    }
+    
+    // フォント設定
+    tempSprite.setFont(_font);
+    tempSprite.setTextSize(_fontSize);
+    tempSprite.setTextColor(_color, _bgColor);
+    
+    // 文字を描画
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+    tempSprite.drawString(utf8_char.c_str(), 0, 0);
+    
+    // 90度回転してメインスプライトに描画
+    tempSprite.setPivot(tempSprite.width() / 2, tempSprite.height() / 2);
+    tempSprite.pushRotateZoom(_sprite, x + _charSpriteWidth / 2, y + _charSpriteHeight / 2, 
+                           90, 1.0, 1.0, _transparentBg ? TFT_TRANSPARENT : _bgColor);
+    
+    // 一時スプライトを削除
+    tempSprite.deleteSprite();
+}
+
+// 横書きテキストの描画
+void TypoWrite::drawHorizontalText(const std::string &text)
+{
+    // UTF-8をUnicodeに変換
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    
+    _currentX = 0;
+    _currentY = 0;
+    
+    for (uint16_t ch : unicode_chars) {
+        // 改行処理
+        if (ch == '\n') {
+            _currentX = 0;
+            _currentY += getFontHeight() + _lineSpacing;
+            continue;
+        }
+        
+        // 文字の幅を取得
+        int char_width = getCharacterWidth(ch);
+        
+        // 折り返し処理
+        if (_wrap && (_currentX + char_width > _width)) {
+            _currentX = 0;
+            _currentY += getFontHeight() + _lineSpacing;
+        }
+        
+        // 描画範囲チェック
+        if (_currentY + getFontHeight() > _height) {
+            break;
+        }
+        
+        // 文字を描画
+        drawCharacterHorizontal(ch, _currentX, _currentY);
+        
+        // 次の文字位置へ
+        _currentX += char_width + _charSpacing;
+    }
+}
+
+// 縦書きテキストの描画
+void TypoWrite::drawVerticalText(const std::string &text)
+{
+    // UTF-8をUnicodeに変換
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    
+//    _currentX = _width - getFontWidth()*15; // 右から開始
+    _currentX = 0; // 右から開始
+    _currentY = 0;
+    
+    for (uint16_t ch : unicode_chars) {
+        // 改行処理（縦書きでは左に移動）
+        if (ch == '\n') {
+//            _currentX -= getFontWidth()*15 + _columnSpacing + _lineSpacing;
+            _currentX += getFontHeight() + _columnSpacing + _lineSpacing;
+            _currentY = 0;
+            continue;
+        }
+        
+        // 文字の高さを取得
+        int char_height = getFontHeight();
+        
+        // 折り返し処理
+        if (_wrap && (_currentY + char_height > _height)) {
+//            _currentX -= getFontWidth()*15 + _columnSpacing + _lineSpacing;
+            _currentX += getFontWidth() + _columnSpacing + _lineSpacing;
+            _currentY = 0;
+        }
+        
+        // 描画範囲チェック
+        if (_currentX < 0) {
+            break;
+        }
+        
+        // 文字を描画
+        drawCharacterVertical(ch, _currentX, _currentY);
+        
+        // 次の文字位置へ
+        _currentY += char_height + _charSpacing;
+//            _currentX -= getFontWidth() + _columnSpacing + _lineSpacing;
+    }
+}
+
+// テキストサイズの計算
+>>>>>>> Stashed changes
 void TypoWrite::calculateTextSize(const std::string &text, int &width, int &height)
 {
     width = 0;
     height = 0;
+<<<<<<< Updated upstream
+=======
+    
+    if (_direction == TextDirection::HORIZONTAL) {
+        int current_line_width = 0;
+        int line_count = 1;
+        
+        for (uint16_t ch : unicode_chars) {
+            if (ch == '\n') {
+                width = std::max(width, current_line_width);
+                current_line_width = 0;
+                line_count++;
+            } else {
+                current_line_width += getCharacterWidth(ch) + _charSpacing;
+            }
+        }
+        
+        width = std::max(width, current_line_width);
+        height = line_count * (getFontHeight() + _lineSpacing) - _lineSpacing;
+        
+    } else { // VERTICAL
+        int current_column_height = 0;
+        int column_count = 1;
+        int max_char_width = 0;
+        
+        for (uint16_t ch : unicode_chars) {
+            if (ch == '\n') {
+                height = std::max(height, current_column_height);
+                current_column_height = 0;
+                column_count++;
+            } else {
+                // 縦書きでは文字の高さが縦方向のサイズ
+                int char_height = getFontHeight();
+                int char_width = getCharacterWidth(ch);
+                
+                // 回転する文字は幅と高さが入れ替わる
+                if (shouldRotateInVertical(ch)) {
+                    std::swap(char_width, char_height);
+                }
+                
+                current_column_height += char_height + _charSpacing;
+                max_char_width = std::max(max_char_width, char_width);
+            }
+        }
+        
+        height = std::max(height, current_column_height);
+        // 列数 × (最大文字幅 + 列間隔)
+        width = column_count * (max_char_width + _columnSpacing + _lineSpacing) - _lineSpacing;
+    }
+}
+>>>>>>> Stashed changes
 
     if (_direction == TextDirection::HORIZONTAL)
     {

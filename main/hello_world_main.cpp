@@ -55,8 +55,8 @@ void textDisplayDemo()
 
   // 縦書きテキスト表示
   TypoWrite verticalWriter(&display);
-  verticalWriter.setPosition(400, 100);
-  verticalWriter.setArea(140, 700);
+  verticalWriter.setPosition(400, 0);
+  verticalWriter.setArea(130, 700);
   verticalWriter.setColor(TFT_WHITE);
   verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
   verticalWriter.setTransparentBg(false);
