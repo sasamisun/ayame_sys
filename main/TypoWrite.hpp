@@ -36,10 +36,8 @@ enum class CharCategory
 class TypoWrite
 {
 private:
-    M5GFX *_display;                    // 描画先のディスプレイ
-    lgfx::LGFX_Sprite *_sprite;         // 描画範囲用スプライト
-    lgfx::LGFX_Sprite *_charSprite;     // 一文字描画用スプライト
-    bool _spriteInitialized;            // スプライトが初期化されたかどうか
+    M5GFX *_display;                    // 描画先のディスプレイ（デフォルト）
+    lgfx::LGFX_Sprite *_drawTarget;     // 描画先スプライト（外部から設定可能）
     TextDirection _direction;           // テキスト方向
     TextAlignment _alignment;           // テキスト揃え
     int _x;                             // 描画開始X座標
@@ -50,6 +48,7 @@ private:
     uint16_t _bgColor;                  // 背景色
     float _fontSize;                    // フォントサイズ倍率
     const lgfx::IFont *_font;           // 使用フォント
+    const uint8_t *_vlwFont;            // VLWフォントデータ
     bool _isCustomFont;                 // カスタムフォントを使用しているかどうか
     int _lineSpacing;                   // 行間（ピクセル）
     int _charSpacing;                   // 文字間（ピクセル）
@@ -57,25 +56,14 @@ private:
     bool _transparentBg;                // 背景色透明
     mutable lgfx::FontMetrics _metrics; // メトリクス情報をキャッシュするための変数
     int _columnSpacing;                 // 縦書き時の列間隔
-
-    // 一文字用スプライトのサイズ
-    int _charSpriteWidth;
-    int _charSpriteHeight;
     
-    // 現在の描画位置（スプライト内の相対位置）
+    // 現在の描画位置（描画領域内の相対位置）
     int _currentX;
     int _currentY;
 
     // 内部メソッド
-    void setupDisplay();
     void drawHorizontalText(const std::string &text);
     void drawVerticalText(const std::string &text);
-    
-    // スプライト関連の内部メソッド
-    bool initMainSprite();
-    bool initCharSprite();
-    void clearMainSprite();
-    void clearCharSprite();
     
     // 一文字描画メソッド
     void drawCharacterHorizontal(uint16_t unicode_char, int x, int y);
@@ -114,6 +102,9 @@ public:
     // デストラクタ
     ~TypoWrite();
 
+    // 描画先の設定
+    void setDrawTarget(lgfx::LGFX_Sprite* sprite);  // nullptrでディスプレイに直接描画
+    
     // 設定メソッド - 基本設定
     void setDirection(TextDirection direction);
     void setAlignment(TextAlignment alignment);
@@ -150,12 +141,8 @@ public:
     // フォント情報取得メソッド
     bool isCustomFont() const { return _isCustomFont; }
     
-    // スプライト関連のメソッド
-    lgfx::LGFX_Sprite* getSprite() { return _sprite; }
-    void clearSprite(uint16_t color = 0);
-    
-    // スプライトを画面に描画
-    void updateDisplay();
+    // 描画領域のクリア
+    void clearArea(uint16_t color = 0);
 };
 
 #endif // _TYPO_WRITE_HPP_

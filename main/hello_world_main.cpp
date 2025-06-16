@@ -36,7 +36,7 @@ void textDisplayDemo()
 
   // 背景をクリア
   // display.fillScreen(TFT_BLACK);
-
+/*
   // 横書きテキスト表示
   TypoWrite horizontalWriter(&display);
   horizontalWriter.setPosition(10, 100);
@@ -53,6 +53,7 @@ void textDisplayDemo()
   // 横書きテキスト描画
   horizontalWriter.drawText("これは横書きテキストのデモです。\nM5Paper S3でアドベンチャーゲームを作ります。");
 
+  */
   // 縦書きテキスト表示
   TypoWrite verticalWriter(&display);
   verticalWriter.setPosition(400, 0);
@@ -69,6 +70,7 @@ void textDisplayDemo()
   verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号()「」{}[]【】『』（）-=~!?<>_―――\n「It's my life. It's now or never234」");
 
   // カスタムVLWフォントの読み込み
+  /*
   if (verticalWriter.loadFontFromArray(shippori))
   {
     ESP_LOGI(TAG, "Custom font loaded successfully");
@@ -88,7 +90,9 @@ void textDisplayDemo()
   {
     ESP_LOGE(TAG, "Failed to load custom font");
   }
-
+  */
+ 
+/*
   // カスタムVLWフォントの読み込み
   if (horizontalWriter.loadFontFromArray(shippori))
   {
@@ -108,6 +112,7 @@ void textDisplayDemo()
   {
     ESP_LOGE(TAG, "Failed to load custom font");
   }
+    */
   ESP_LOGI(TAG, "Text display demo completed");
 }
 
