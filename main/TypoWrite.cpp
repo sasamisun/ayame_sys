@@ -28,7 +28,9 @@ TypoWrite::TypoWrite(M5GFX *display)
       _transparentBg(false),
       _columnSpacing(0),
       _currentX(0),
-      _currentY(0)
+      _currentY(0),
+      _vlwParser(nullptr),
+      _useVLWParser(false)
 {
     ESP_LOGI(TAG, "TypoWrite initialized");
 }
@@ -47,6 +49,18 @@ void TypoWrite::setDrawTarget(lgfx::LGFX_Sprite *sprite)
     _drawTarget = sprite;
     ESP_LOGI(TAG, "Draw target set to %s", sprite ? "sprite" : "display");
 }
+
+void TypoWrite::setVLWParser(VLWFontParser* parser) {
+    _vlwParser = parser;
+    _useVLWParser = (parser != nullptr && parser->isInitialized());
+    
+    if (_useVLWParser) {
+        ESP_LOGI(TAG, "VLW parser enabled for font metrics");
+    } else {
+        ESP_LOGI(TAG, "VLW parser disabled, using M5GFX metrics");
+    }
+}
+
 
 // UTF-8文字列をUnicodeコードポイントの配列に変換
 std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
@@ -285,56 +299,110 @@ CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
 }
 
 // 文字の幅を取得
-int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char)
-{
+int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char) {
+    // VLWパーサーが利用可能な場合は優先使用
+    if (_useVLWParser && _vlwParser) {
+        return getCharacterWidthVLW(unicode_char);
+    }
+    
+    // 既存のM5GFX実装
     lgfx::FontMetrics metrics;
-
-    // ディスプレイ側でメトリクスを取得（スプライトでも同じ結果になる）
-
     _display->setFont(_font);
     _display->setTextSize(_fontSize);
     _font->updateFontMetric(&metrics, unicode_char);
-
-    return metrics.x_advance * _fontSize; // フォントサイズを考慮
+    return metrics.x_advance * _fontSize;
 }
 
 // 文字の高さを取得
-int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char)
-{
+int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char) {
+    // VLWパーサーが利用可能な場合は優先使用
+    if (_useVLWParser && _vlwParser) {
+        return getCharacterHeightVLW(unicode_char);
+    }
+    
+    // 既存のM5GFX実装
     lgfx::FontMetrics metrics;
-
-    // ディスプレイ側でメトリクスを取得（スプライトでも同じ結果になる）
-
     _display->setFont(_font);
     _display->setTextSize(_fontSize);
     _font->updateFontMetric(&metrics, unicode_char);
-
-    return metrics.y_advance * _fontSize; // フォントサイズを考慮
+    return metrics.y_advance * _fontSize;
 }
 
 // フォントの幅を取得
-int32_t TypoWrite::getFontWidth()
-{
+int32_t TypoWrite::getFontWidth() {
+    // VLWパーサーが利用可能な場合は優先使用
+    if (_useVLWParser && _vlwParser) {
+        return getFontWidthVLW();
+    }
+    
+    // 既存のM5GFX実装
     lgfx::FontMetrics metrics;
     uint16_t full_width_space = 0x3000; // 全角スペース
-
     _display->setFont(_font);
     _display->setTextSize(_fontSize);
     _font->updateFontMetric(&metrics, full_width_space);
-
     return metrics.x_advance * _fontSize;
 }
 
 // フォントの高さを取得
-int32_t TypoWrite::getFontHeight()
-{
+int32_t TypoWrite::getFontHeight() {
+    // VLWパーサーが利用可能な場合は優先使用
+    if (_useVLWParser && _vlwParser) {
+        return getFontHeightVLW();
+    }
+    
+    // 既存のM5GFX実装
     lgfx::FontMetrics metrics;
     uint16_t full_width_space = 0x3000; // 全角スペース
     _display->setFont(_font);
     _display->setTextSize(_fontSize);
     _font->updateFontMetric(&metrics, full_width_space);
-
     return metrics.y_advance * _fontSize;
+}
+
+int32_t TypoWrite::getFontHeightVLW(){
+    if (_useVLWParser && _vlwParser) {
+        return static_cast<int32_t>(_vlwParser->getFontHeight() * _fontSize);
+    }
+    
+    // フォールバック：既存のM5GFX方式
+    return getFontHeight();
+}
+
+int32_t TypoWrite::getFontWidthVLW(){
+    if (_useVLWParser && _vlwParser) {
+        return static_cast<int32_t>(_vlwParser->getFontWidth() * _fontSize);
+    }
+    
+    // フォールバック：既存のM5GFX方式
+    return getFontWidth();
+}
+
+int32_t TypoWrite::getCharacterWidthVLW(uint16_t unicode_char){
+    if (_useVLWParser && _vlwParser) {
+        return static_cast<int32_t>(_vlwParser->getCharWidth(unicode_char) * _fontSize);
+    }
+    
+    // フォールバック：既存のM5GFX方式
+    return getCharacterWidth(unicode_char);
+}
+
+int32_t TypoWrite::getCharacterHeightVLW(uint16_t unicode_char){
+    if (_useVLWParser && _vlwParser) {
+        return static_cast<int32_t>(_vlwParser->getCharHeight(unicode_char) * _fontSize);
+    }
+    
+    // フォールバック：既存のM5GFX方式
+    return getCharacterHeight(unicode_char);
+}
+
+int32_t TypoWrite::getCharacterSetWidthVLW(uint16_t unicode_char){
+    if (_useVLWParser && _vlwParser) {
+        return static_cast<int32_t>(_vlwParser->getCharSetWidth(unicode_char) * _fontSize);
+    }
+    
+    // フォールバック：既存の方式（通常の文字幅を使用）
+    return getCharacterWidthVLW(unicode_char);
 }
 
 // 横書き用の一文字描画
@@ -540,7 +608,7 @@ void TypoWrite::drawVerticalText(const std::string &text)
 
         // 文字の実際のサイズを取得
         int char_width = getCharacterWidth(ch);
-        int char_height = getCharacterHeight(ch);
+        int char_height = getFontHeight();
 
         // 縦書きでは高さと幅が入れ替わる可能性がある
         if (shouldRotateInVertical(ch))

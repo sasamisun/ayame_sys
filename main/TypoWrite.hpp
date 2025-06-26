@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include "VLWFontParser.hpp"
 
 // テキスト方向の列挙型
 enum class TextDirection
@@ -56,19 +57,24 @@ private:
     bool _transparentBg;                // 背景色透明
     mutable lgfx::FontMetrics _metrics; // メトリクス情報をキャッシュするための変数
     int _columnSpacing;                 // 縦書き時の列間隔
-    
+
+
     // 現在の描画位置（描画領域内の相対位置）
     int _currentX;
     int _currentY;
 
+    VLWFontParser *_vlwParser; // VLWパーサー（独自管理）
+    bool _useVLWParser;                 // VLWパーサーを使用するかどうか
+
+
     // 内部メソッド
     void drawHorizontalText(const std::string &text);
     void drawVerticalText(const std::string &text);
-    
+
     // 一文字描画メソッド
     void drawCharacterHorizontal(uint16_t unicode_char, int x, int y);
     void drawCharacterVertical(uint16_t unicode_char, int x, int y);
-    
+
     // 特殊文字の回転描画
     void drawRotatedCharacter(uint16_t unicode_char, int x, int y);
 
@@ -80,19 +86,16 @@ private:
     int32_t getFontWidth();
     int32_t getFontHeight();
 
-    // 文字変換ヘルパーメソッド
-    std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
-    std::string unicodeToUtf8(uint16_t unicode_char);
 
     // 特殊文字の処理
     CharCategory getCharCategory(uint16_t unicode_char);
-    
+
     // 縦書きで回転が必要な文字かどうかを判定
     bool shouldRotateInVertical(uint16_t unicode_char);
 
     // 特定の文字のメトリクス情報を更新するヘルパー関数
     bool updateMetricsForChar(uint16_t unicode_char) const;
-    
+
     // テキストサイズ計算
     void calculateTextSize(const std::string &text, int &width, int &height);
 
@@ -102,9 +105,13 @@ public:
     // デストラクタ
     ~TypoWrite();
 
-    // 描画先の設定
-    void setDrawTarget(lgfx::LGFX_Sprite* sprite);  // nullptrでディスプレイに直接描画
+    // 文字変換ヘルパーメソッド
+    std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
+    std::string unicodeToUtf8(uint16_t unicode_char);
     
+    // 描画先の設定
+    void setDrawTarget(lgfx::LGFX_Sprite *sprite); // nullptrでディスプレイに直接描画
+
     // 設定メソッド - 基本設定
     void setDirection(TextDirection direction);
     void setAlignment(TextAlignment alignment);
@@ -113,13 +120,13 @@ public:
     void setColor(uint16_t color);
     void setBackgroundColor(uint16_t bgColor);
     void setTransparentBg(bool transparent) { _transparentBg = transparent; }
-    
+
     // 設定メソッド - フォント関連
     void setFontSize(float size);
     void setFont(const lgfx::IFont *font);
     void setIsCustomFont(bool isCustom) { _isCustomFont = isCustom; }
     bool loadFontFromArray(const uint8_t *fontArray);
-    
+
     // 設定メソッド - スペーシング
     void setLineSpacing(int spacing);
     void setCharSpacing(int spacing);
@@ -140,9 +147,48 @@ public:
 
     // フォント情報取得メソッド
     bool isCustomFont() const { return _isCustomFont; }
-    
+
     // 描画領域のクリア
     void clearArea(uint16_t color = 0);
+
+    /**
+     * @brief VLWフォントパーサーを設定する
+     * @param parser VLWフォントパーサーのポインタ
+     */
+    void setVLWParser(VLWFontParser *parser);
+
+    /**
+     * @brief VLWパーサーを使用してフォント高を取得する
+     * @return フォント高（ピクセル）
+     */
+    int32_t getFontHeightVLW();
+
+    /**
+     * @brief VLWパーサーを使用してフォント幅を取得する
+     * @return フォント幅（ピクセル）
+     */
+    int32_t getFontWidthVLW();
+
+    /**
+     * @brief VLWパーサーを使用して指定文字の幅を取得する
+     * @param unicode_char Unicode文字コード
+     * @return 文字幅（ピクセル）
+     */
+    int32_t getCharacterWidthVLW(uint16_t unicode_char);
+
+    /**
+     * @brief VLWパーサーを使用して指定文字の高さを取得する
+     * @param unicode_char Unicode文字コード
+     * @return 文字高さ（ピクセル）
+     */
+    int32_t getCharacterHeightVLW(uint16_t unicode_char);
+
+    /**
+     * @brief VLWパーサーを使用して文字の送り幅を取得する
+     * @param unicode_char Unicode文字コード
+     * @return 送り幅（ピクセル）
+     */
+    int32_t getCharacterSetWidthVLW(uint16_t unicode_char);
 };
 
 #endif // _TYPO_WRITE_HPP_

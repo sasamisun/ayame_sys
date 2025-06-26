@@ -11,6 +11,8 @@
 #include "TouchHandler.hpp"
 #include "Button.hpp"
 #include "TypoWrite.hpp"
+#include "VLWFontParser.hpp"
+
 //#include "fonts/mplus2_16.h"
 #include "fonts/shippori_16.h"
 //#include "fonts/genshin.h"
@@ -29,91 +31,66 @@ ButtonManager *buttonManager = nullptr;
 Button *btnTest = nullptr;
 Button *btnUSBMSC = nullptr;
 
+VLWFontParser vlwParser;
+
 // 縦書きと横書きテキスト表示のデモ
 void textDisplayDemo()
 {
-  ESP_LOGI(TAG, "Running text display demo...");
-
-  // 背景をクリア
-  // display.fillScreen(TFT_BLACK);
-/*
-  // 横書きテキスト表示
-  TypoWrite horizontalWriter(&display);
-  horizontalWriter.setPosition(10, 100);
-  horizontalWriter.setArea(400, 200);
-  horizontalWriter.setColor(TFT_WHITE);
-  horizontalWriter.setBackgroundColor(TFT_TRANSPARENT);
-  horizontalWriter.setTransparentBg(false);
-  horizontalWriter.setDirection(TextDirection::HORIZONTAL);
-  horizontalWriter.setFont(&fonts::lgfxJapanGothic_24);
-  horizontalWriter.setFontSize(1.0);
-  horizontalWriter.setLineSpacing(6);
-  horizontalWriter.setCharSpacing(6);
-
-  // 横書きテキスト描画
-  horizontalWriter.drawText("これは横書きテキストのデモです。\nM5Paper S3でアドベンチャーゲームを作ります。");
-
-  */
-  // 縦書きテキスト表示
-  TypoWrite verticalWriter(&display);
-  verticalWriter.setPosition(400, 0);
-  verticalWriter.setArea(130, 700);
-  verticalWriter.setColor(TFT_WHITE);
-  verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
-  verticalWriter.setTransparentBg(false);
-  verticalWriter.setDirection(TextDirection::VERTICAL);
-  verticalWriter.setFont(&fonts::lgfxJapanGothic_24);
-  verticalWriter.setFontSize(1.0);
-  verticalWriter.setLineSpacing(6);
-
-  // 縦書きテキスト描画
-  verticalWriter.drawText("縦書きの例だよ。いつか、私の夢を叶える。\n特殊記号()「」{}[]【】『』（）-=~!?<>_―――\n「It's my life. It's now or never234」");
-
-  // カスタムVLWフォントの読み込み
-  /*
-  if (verticalWriter.loadFontFromArray(shippori))
-  {
-    ESP_LOGI(TAG, "Custom font loaded successfully");
-
-    // フォントを設定（読み込みで自動設定されるので省略可能）
-    verticalWriter.setDirection(TextDirection::VERTICAL);
-    verticalWriter.setPosition(150, 500);
-    verticalWriter.setArea(250, 400);
-    verticalWriter.setColor(TFT_WHITE);
-    verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
-    verticalWriter.setCharSpacing(12);
-
-    // テキスト描画
-    verticalWriter.drawText("カスタムフォントでの縦書きテキスト。このように表示されます。\n「うわああああー！」\n()「」{}[]【】『』（）-=~!?<>_―――\nIt's my life. It's now or never.");
-  }
-  else
-  {
-    ESP_LOGE(TAG, "Failed to load custom font");
-  }
-  */
- 
-/*
-  // カスタムVLWフォントの読み込み
-  if (horizontalWriter.loadFontFromArray(shippori))
-  {
-    ESP_LOGI(TAG, "Custom font loaded successfully");
-
-    // フォントを設定（読み込みで自動設定されるので省略可能）
-    horizontalWriter.setDirection(TextDirection::HORIZONTAL);
-    horizontalWriter.setPosition(0, 500);
-    horizontalWriter.setArea(250, 400);
-    horizontalWriter.setColor(TFT_WHITE);
-    horizontalWriter.setBackgroundColor(TFT_TRANSPARENT);
-
-    // テキスト描画
-    horizontalWriter.drawText("¿ˆˇ˘˙˛˝ ‐‑‒–—―‖‘’“”†‡•‥…‰′″‼‾℃ℓ№℡℧Å→①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳☀☁☂☃★☆☎☖☗☞♀♂♠♡♢♣♤♥♦♧♨♩♪♫♬♭♮♯　、。倂使侃來ﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝﾞﾟ");
-  }
-  else
-  {
-    ESP_LOGE(TAG, "Failed to load custom font");
-  }
-    */
-  ESP_LOGI(TAG, "Text display demo completed");
+    ESP_LOGI(TAG, "Starting VLW font demo...");
+    
+    // VLWフォントデータの初期化（例：shipporiフォント）
+    if (vlwParser.init(shippori, sizeof(shippori))) {
+        ESP_LOGI(TAG, "VLW font initialized successfully");
+        
+        // フォント情報をデバッグ出力
+        vlwParser.debugPrintFontInfo();
+        
+        // TypoWriteでVLWパーサーを使用
+        TypoWrite verticalWriter(&display);
+        verticalWriter.setVLWParser(&vlwParser);  // VLWパーサーを設定
+        
+        // フォント設定
+        verticalWriter.loadFontFromArray(shippori);  // M5GFXにもフォントを設定
+        verticalWriter.setPosition(400, 0);
+        verticalWriter.setArea(130, 700);
+        verticalWriter.setColor(TFT_WHITE);
+        verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
+        verticalWriter.setTransparentBg(true);
+        verticalWriter.setDirection(TextDirection::VERTICAL);
+        verticalWriter.setFontSize(1.0);
+        verticalWriter.setLineSpacing(6);
+        
+        // VLWパーサーからフォント情報を取得
+        int32_t fontWidth = verticalWriter.getFontWidthVLW();
+        int32_t fontHeight = verticalWriter.getFontHeightVLW();
+        
+        ESP_LOGI(TAG, "VLW Font metrics: %ldx%ld pixels", fontWidth, fontHeight);
+        
+        // 個別文字のメトリクスをテスト
+        const char* testText = "あいうえお";
+        std::vector<uint16_t> unicode_chars = verticalWriter.utf8ToUnicode(testText);
+        
+        for (uint16_t ch : unicode_chars) {
+            int32_t charWidth = verticalWriter.getCharacterWidthVLW(ch);
+            int32_t charHeight = verticalWriter.getCharacterHeightVLW(ch);
+            int32_t setWidth = verticalWriter.getCharacterSetWidthVLW(ch);
+            
+            ESP_LOGI(TAG, "Char U+%04X: size=%ldx%ld, setWidth=%ld", 
+                     ch, charWidth, charHeight, setWidth);
+        }
+        
+        // テキスト描画
+        verticalWriter.drawText("VLWパーサーを使用した\n縦書きテキストです。\n文字メトリクスが正確に\n取得できています。");
+        
+    } else {
+        ESP_LOGE(TAG, "Failed to initialize VLW font");
+        
+        // エラー表示
+        display.setTextColor(TFT_RED);
+        display.setTextSize(1);
+        display.setCursor(10, 100);
+        display.println("VLW Font Load Failed");
+    }
 }
 
 // ファイルフォルダ一覧表示

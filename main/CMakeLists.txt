@@ -5,6 +5,7 @@ idf_component_register(
         "TouchHandler.cpp"
         "Button.cpp"
         "TypoWrite.cpp"
+        "VLWFontParser.cpp"
     PRIV_REQUIRES
         M5GFX
     REQUIRES
