@@ -12,16 +12,18 @@
 #include "Button.hpp"
 #include "TypoWrite.hpp"
 #include "VLWFontParser.hpp"
+#include "ScreenTransition.hpp"
 
-//#include "fonts/mplus2_16.h"
+// #include "fonts/mplus2_16.h"
 #include "fonts/shippori_16.h"
-//#include "fonts/genshin.h"
+// #include "fonts/genshin.h"
 
 // ログタグの定義
 static const char *TAG = "APP_MAIN";
 
 M5GFX display;
 TaskHandle_t g_handle = nullptr;
+ScreenTransition *screenTransition = nullptr;
 
 // 画像ファイルの定数定義
 const char *IMAGE_FILE = "tes.png";
@@ -33,64 +35,189 @@ Button *btnUSBMSC = nullptr;
 
 VLWFontParser vlwParser;
 
+// トランザクション初期化
+void initializeTransition()
+{
+  ESP_LOGI(TAG, "Initializing screen transition...");
+
+  // トランジション機能の初期化
+  screenTransition = new ScreenTransition(&display);
+
+  if (screenTransition->init())
+  {
+    ESP_LOGI(TAG, "Screen transition initialized successfully");
+
+    // E-Ink最適化を有効にする（M5Paper用）
+    screenTransition->setEInkOptimization(true);
+
+    // トランジションイベントのコールバックを設定
+    screenTransition->setOnTransitionStart([]()
+                                           { ESP_LOGI(TAG, "Transition started"); });
+
+    screenTransition->setOnTransitionComplete([]()
+                                              { ESP_LOGI(TAG, "Transition completed"); });
+
+    screenTransition->setOnTransitionStep([]()
+                                          {
+            // ステップごとの処理（必要に応じて）
+            ESP_LOGD(TAG, "Transition step: %.2f%%", screenTransition->getProgress() * 100.0f); });
+  }
+  else
+  {
+    ESP_LOGE(TAG, "Failed to initialize screen transition");
+    delete screenTransition;
+    screenTransition = nullptr;
+  }
+}
+
+// 画面切り替え関数の例
+void switchToGameScreen()
+{
+  if (!screenTransition)
+    return;
+
+  ESP_LOGI(TAG, "Switching to game screen with transition");
+
+  // 現在の画面をキャプチャ
+  screenTransition->captureCurrentScreen();
+
+  // 新しい画面を描画（例：ゲーム画面）
+  display.fillScreen(TFT_BLACK);
+  display.setTextColor(TFT_WHITE);
+  display.setTextSize(2);
+  display.setCursor(50, 100);
+  display.println("ゲーム画面です");
+  display.setCursor(50, 150);
+  display.println("タッチしてメニューに戻る");
+
+  // フェードトランジションで切り替え
+  TransitionConfig config = TransitionConfig::defaultConfig();
+  config.type = TransitionType::FADE;
+  config.duration = 1500; // 1.5秒
+  config.useEasing = true;
+  config.stepDelay = 80; // E-Ink用に遅延を調整
+
+  screenTransition->startTransition(config);
+}
+
+void switchToMenuScreen()
+{
+  if (!screenTransition)
+    return;
+
+  ESP_LOGI(TAG, "Switching to menu screen with slide transition");
+
+  // 現在の画面をキャプチャ
+  screenTransition->captureCurrentScreen();
+
+  // メニュー画面を描画
+  display.fillScreen(TFT_BLACK);
+  display.setTextColor(TFT_WHITE);
+  display.setTextSize(3);
+  display.setCursor(100, 80);
+  display.println("メインメニュー");
+
+  display.setTextSize(1.5);
+  display.setCursor(50, 150);
+  display.println("1. ゲーム開始");
+  display.setCursor(50, 180);
+  display.println("2. 設定");
+  display.setCursor(50, 210);
+  display.println("3. 終了");
+
+  // スライドトランジションで切り替え
+  screenTransition->startTransition(TransitionType::SLIDE_LEFT, 1200);
+}
+
+void switchToSettingsScreen()
+{
+  if (!screenTransition)
+    return;
+
+  ESP_LOGI(TAG, "Switching to settings screen with wipe transition");
+
+  screenTransition->captureCurrentScreen();
+
+  // 設定画面を描画
+  display.fillScreen(TFT_DARKGRAY);
+  display.setTextColor(TFT_WHITE);
+  display.setTextSize(2);
+  display.setCursor(100, 50);
+  display.println("設定画面");
+
+  display.setTextSize(1);
+  display.setCursor(50, 120);
+  display.println("音量: 80%");
+  display.setCursor(50, 150);
+  display.println("明度: 70%");
+  display.setCursor(50, 180);
+  display.println("言語: 日本語");
+
+  // ワイプトランジションで切り替え
+  screenTransition->startTransition(TransitionType::WIPE_DOWN, 1000);
+}
+
 // 縦書きと横書きテキスト表示のデモ
 void textDisplayDemo()
 {
-    ESP_LOGI(TAG, "Starting VLW font demo...");
-    
-    // VLWフォントデータの初期化（例：shipporiフォント）
-    if (vlwParser.init(shippori, sizeof(shippori))) {
-        ESP_LOGI(TAG, "VLW font initialized successfully");
-        
-        // フォント情報をデバッグ出力
-        vlwParser.debugPrintFontInfo();
-        
-        // TypoWriteでVLWパーサーを使用
-        TypoWrite verticalWriter(&display);
-        verticalWriter.setVLWParser(&vlwParser);  // VLWパーサーを設定
-        
-        // フォント設定
-        verticalWriter.loadFontFromArray(shippori);  // M5GFXにもフォントを設定
-        verticalWriter.setPosition(400, 0);
-        verticalWriter.setArea(130, 700);
-        verticalWriter.setColor(TFT_WHITE);
-        verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
-        verticalWriter.setTransparentBg(true);
-        verticalWriter.setDirection(TextDirection::VERTICAL);
-        verticalWriter.setFontSize(1.0);
-        verticalWriter.setLineSpacing(6);
-        
-        // VLWパーサーからフォント情報を取得
-        int32_t fontWidth = verticalWriter.getFontWidthVLW();
-        int32_t fontHeight = verticalWriter.getFontHeightVLW();
-        
-        ESP_LOGI(TAG, "VLW Font metrics: %ldx%ld pixels", fontWidth, fontHeight);
-        
-        // 個別文字のメトリクスをテスト
-        const char* testText = "あいうえお";
-        std::vector<uint16_t> unicode_chars = verticalWriter.utf8ToUnicode(testText);
-        
-        for (uint16_t ch : unicode_chars) {
-            int32_t charWidth = verticalWriter.getCharacterWidthVLW(ch);
-            int32_t charHeight = verticalWriter.getCharacterHeightVLW(ch);
-            int32_t setWidth = verticalWriter.getCharacterSetWidthVLW(ch);
-            
-            ESP_LOGI(TAG, "Char U+%04X: size=%ldx%ld, setWidth=%ld", 
-                     ch, charWidth, charHeight, setWidth);
-        }
-        
-        // テキスト描画
-        verticalWriter.drawText("VLWパーサーを使用した\n縦書きテキストです。\n文字メトリクスが正確に\n取得できています。");
-        
-    } else {
-        ESP_LOGE(TAG, "Failed to initialize VLW font");
-        
-        // エラー表示
-        display.setTextColor(TFT_RED);
-        display.setTextSize(1);
-        display.setCursor(10, 100);
-        display.println("VLW Font Load Failed");
+  ESP_LOGI(TAG, "Starting VLW font demo...");
+
+  // VLWフォントデータの初期化（例：shipporiフォント）
+  if (vlwParser.init(shippori, sizeof(shippori)))
+  {
+    ESP_LOGI(TAG, "VLW font initialized successfully");
+
+    // フォント情報をデバッグ出力
+    vlwParser.debugPrintFontInfo();
+
+    // TypoWriteでVLWパーサーを使用
+    TypoWrite verticalWriter(&display);
+    verticalWriter.setVLWParser(&vlwParser); // VLWパーサーを設定
+
+    // フォント設定
+    verticalWriter.loadFontFromArray(shippori); // M5GFXにもフォントを設定
+    verticalWriter.setPosition(400, 0);
+    verticalWriter.setArea(130, 700);
+    verticalWriter.setColor(TFT_WHITE);
+    verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
+    verticalWriter.setTransparentBg(true);
+    verticalWriter.setDirection(TextDirection::VERTICAL);
+    verticalWriter.setFontSize(1.0);
+    verticalWriter.setLineSpacing(6);
+
+    // VLWパーサーからフォント情報を取得
+    int32_t fontWidth = verticalWriter.getFontWidthVLW();
+    int32_t fontHeight = verticalWriter.getFontHeightVLW();
+
+    ESP_LOGI(TAG, "VLW Font metrics: %ldx%ld pixels", fontWidth, fontHeight);
+
+    // 個別文字のメトリクスをテスト
+    const char *testText = "あいうえお";
+    std::vector<uint16_t> unicode_chars = verticalWriter.utf8ToUnicode(testText);
+
+    for (uint16_t ch : unicode_chars)
+    {
+      int32_t charWidth = verticalWriter.getCharacterWidthVLW(ch);
+      int32_t charHeight = verticalWriter.getCharacterHeightVLW(ch);
+      int32_t setWidth = verticalWriter.getCharacterSetWidthVLW(ch);
+
+      ESP_LOGI(TAG, "Char U+%04X: size=%ldx%ld, setWidth=%ld",
+               ch, charWidth, charHeight, setWidth);
     }
+
+    // テキスト描画
+    verticalWriter.drawText("VLWパーサーを使用した\n縦書きテキストです。\n文字メトリクスが正確に\n取得できています。");
+  }
+  else
+  {
+    ESP_LOGE(TAG, "Failed to initialize VLW font");
+
+    // エラー表示
+    display.setTextColor(TFT_RED);
+    display.setTextSize(1);
+    display.setCursor(10, 100);
+    display.println("VLW Font Load Failed");
+  }
 }
 
 // ファイルフォルダ一覧表示
@@ -170,6 +297,7 @@ void onTouchEnd(const ExtendedTouchPoint &point)
 
 void onSwipe(SwipeDirection direction, const ExtendedTouchPoint &start, const ExtendedTouchPoint &end)
 {
+  /*
   // スワイプ方向を文字列に変換
   const char *dirStr = "Unknown";
   switch (direction)
@@ -196,7 +324,57 @@ void onSwipe(SwipeDirection direction, const ExtendedTouchPoint &start, const Ex
   display.setTextColor(TFT_YELLOW, TFT_BLACK);
   display.setTextSize(1);
   display.setCursor(10, display.height() - 140);
-  display.printf("Swipe: %s   ", dirStr);
+  display.printf("Swipe: %s   ", dirStr);*/
+
+  if (!screenTransition)
+    return;
+
+  const char *dirStr = "Unknown";
+  TransitionType transitionType = TransitionType::FADE;
+
+  switch (direction)
+  {
+  case SwipeDirection::Up:
+    dirStr = "Up";
+    transitionType = TransitionType::SLIDE_UP;
+    break;
+  case SwipeDirection::Down:
+    dirStr = "Down";
+    transitionType = TransitionType::SLIDE_DOWN;
+    break;
+  case SwipeDirection::Left:
+    dirStr = "Left";
+    transitionType = TransitionType::PUSH_LEFT;
+    break;
+  case SwipeDirection::Right:
+    dirStr = "Right";
+    transitionType = TransitionType::PUSH_RIGHT;
+    break;
+  default:
+    break;
+  }
+
+  ESP_LOGI(TAG, "Swipe detected: %s", dirStr);
+
+  // スワイプに応じてトランジションで画面切り替え
+  screenTransition->captureCurrentScreen();
+
+  // 新しい画面を描画（例として色を変える）
+  static uint32_t colors[] = {TFT_RED, TFT_GREEN, TFT_BLUE, TFT_YELLOW, TFT_MAGENTA};
+  static int colorIndex = 0;
+
+  display.fillScreen(colors[colorIndex % 5]);
+  display.setTextColor(TFT_WHITE);
+  display.setTextSize(2);
+  display.setCursor(50, 100);
+  display.printf("スワイプ: %s", dirStr);
+  display.setCursor(50, 150);
+  display.println("画面が切り替わりました");
+
+  colorIndex++;
+
+  // トランジション実行
+  screenTransition->startTransition(transitionType, 800);
 }
 
 // ボタンコールバック関数
@@ -213,7 +391,24 @@ void onTestButtonPressed(Button *btn)
 
 void onTestButtonReleased(Button *btn)
 {
-  ESP_LOGI(TAG, "Test button released");
+  ESP_LOGI(TAG, "Test button released - switching screen");
+
+  static int screenIndex = 0;
+
+  switch (screenIndex % 3)
+  {
+  case 0:
+    switchToGameScreen();
+    break;
+  case 1:
+    switchToMenuScreen();
+    break;
+  case 2:
+    switchToSettingsScreen();
+    break;
+  }
+
+  screenIndex++;
 }
 
 // USB MSCボタンコールバック
@@ -399,6 +594,9 @@ void setup()
   }
 
   textDisplayDemo();
+
+  // トランジション機能の初期化
+  initializeTransition();
 }
 
 void loop(void)
@@ -407,6 +605,18 @@ void loop(void)
   // USB接続状態を定期的にチェックできます
   static int64_t last_check = 0;
   int64_t now = esp_timer_get_time() / 1000; // マイクロ秒からミリ秒に変換
+
+  // トランジション更新処理
+  if (screenTransition)
+  {
+    screenTransition->update();
+
+    // デバッグ用：トランジション中はプログレスバーを表示
+    if (screenTransition->isTransitioning())
+    {
+      screenTransition->debugDrawProgress();
+    }
+  }
 
   if (now - last_check > 5000)
   { // 5秒ごとにチェック

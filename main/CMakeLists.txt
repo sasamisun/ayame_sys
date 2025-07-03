@@ -6,6 +6,7 @@ idf_component_register(
         "Button.cpp"
         "TypoWrite.cpp"
         "VLWFontParser.cpp"
+        "ScreenTransition.cpp"
     PRIV_REQUIRES
         M5GFX
     REQUIRES
@@ -15,6 +16,7 @@ idf_component_register(
         "esp_timer"
         "tinyusb"
         "esp_tinyusb"
+        "esp_psram"
     INCLUDE_DIRS
         "."
         "fonts"
