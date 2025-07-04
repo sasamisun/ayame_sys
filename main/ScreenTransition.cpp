@@ -1,1830 +1,930 @@
 // main/ScreenTransition.cpp
-// main/ScreenTransition.cpp に追加するPSRAM詳細分析コード
-#include "esp_psram.h"      // PSRAM専用関数
-#include "esp_heap_caps.h"  // ヒープ管理
-// 完全版 - 画面トランジション機能の実装
+// アドベンチャーゲーム用画面トランジションシステムの実装
+
 #include "ScreenTransition.hpp"
-#include "esp_log.h"       // ESP-IDFログ機能
-#include "esp_heap_caps.h" // ヒープメモリ情報
-#include "esp_system.h"    // システム情報
-#include <cmath>           // 数学関数
-#include <cstdlib>         // 標準ライブラリ
-#include <ctime>           // 時間関数
-#include <algorithm>       // std::min, std::max
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "esp_heap_caps.h"
+#include "esp_random.h"
+#include <cmath>
 
 // ログタグ
-const char *ScreenTransition::TAG = "SCREEN_TRANSITION";
+static const char* TAG = "TRANSITION";
+
+// 数学定数
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // コンストラクタ
-ScreenTransition::ScreenTransition(M5GFX *display)
-    : _display(display), _oldScreen(nullptr), _newScreen(nullptr), _workBuffer(nullptr),
-      _state(TransitionState::IDLE), _config(TransitionConfig::defaultConfig()),
-      _startTime(0), _lastStepTime(0), _progress(0.0f),
-      _screenWidth(0), _screenHeight(0),
-      _onTransitionStart(nullptr), _onTransitionComplete(nullptr), _onTransitionStep(nullptr)
+ScreenTransition::ScreenTransition(M5GFX* display)
+    : _display(display), _initialized(false), _use_psram(true),
+      _sourceCanvas(nullptr), _targetCanvas(nullptr), _workCanvas(nullptr),
+      _state(TransitionState::IDLE), _startTime(0), _currentTime(0), _progress(0.0f),
+      _onTransitionStart(nullptr), _onTransitionProgress(nullptr), _onTransitionComplete(nullptr)
 {
-    if (_display)
-    {
-        _screenWidth = _display->width();
-        _screenHeight = _display->height();
-    }
-
-    // 乱数の初期化
-    srand(esp_timer_get_time() / 1000);
-
-    ESP_LOGI(TAG, "ScreenTransition initialized with screen size: %dx%d", _screenWidth, _screenHeight);
+    ESP_LOGI(TAG, "ScreenTransition constructor called");
 }
 
 // デストラクタ
 ScreenTransition::~ScreenTransition()
 {
-    cleanupSprites();
-    ESP_LOGI(TAG, "ScreenTransition destroyed");
+    cleanup();
+    ESP_LOGI(TAG, "ScreenTransition destructor called");
 }
 
-// 初期化
-/*
-bool ScreenTransition::init()
+// 初期化処理
+bool ScreenTransition::init(bool use_psram)
 {
-    if (!_display)
-    {
-        ESP_LOGE(TAG, "Display not initialized");
-        return false;
-    }
-
-    // 色深度を8bitに強制設定（E-Ink用最適化）
-    int colorDepth = 8; // 16階調グレースケール用に8bitを使用
-
-    // メモリ使用量の正しい計算
-    size_t spriteSize = static_cast<size_t>(_screenWidth) *
-                        static_cast<size_t>(_screenHeight) *
-                        (colorDepth / 8);
-    size_t totalMemoryNeeded = spriteSize * 3; // 3つのスプライト
-
-    // 利用可能なヒープメモリをチェック
-    size_t freeHeap = esp_get_free_heap_size();
-    size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
-
-    ESP_LOGI(TAG, "Memory check - Screen: %dx%d, ColorDepth: %d bit",
-             _screenWidth, _screenHeight, colorDepth);
-    ESP_LOGI(TAG, "Sprite size: %zu bytes (%.2f MB)",
-             spriteSize, spriteSize / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "Total needed: %zu bytes (%.2f MB), Free heap: %zu bytes (%.2f MB)",
-             totalMemoryNeeded, totalMemoryNeeded / (1024.0f * 1024.0f),
-             freeHeap, freeHeap / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "Largest block: %zu bytes (%.2f MB)",
-             largestBlock, largestBlock / (1024.0f * 1024.0f));
-
-    // メモリ不足の場合は代替案を提示
-    if (totalMemoryNeeded > freeHeap)
-    {
-        ESP_LOGW(TAG, "Insufficient memory for full-screen sprites");
-        ESP_LOGI(TAG, "Trying memory optimization strategies...");
-
-        // 戦略1: 色深度を4bitに削減（16階調グレースケール）
-        colorDepth = 4;
-        spriteSize = static_cast<size_t>(_screenWidth) *
-                     static_cast<size_t>(_screenHeight) *
-                     (colorDepth / 8);
-        totalMemoryNeeded = spriteSize * 3;
-
-        ESP_LOGI(TAG, "Strategy 1 - 4bit color depth: %zu bytes needed", totalMemoryNeeded);
-
-        if (totalMemoryNeeded <= freeHeap)
-        {
-            ESP_LOGI(TAG, "Using 4-bit color depth for E-Ink optimization");
-            _optimizedMode = OptimizationMode::COLOR_DEPTH_4BIT;
-        }
-        else
-        {
-            // 戦略2: 部分トランジション（画面を分割）
-            ESP_LOGI(TAG, "Strategy 2 - Using partial screen transitions");
-            _optimizedMode = OptimizationMode::PARTIAL_SCREEN;
-            return initPartialTransition();
-        }
-    }
-    else
-    {
-        _optimizedMode = OptimizationMode::FULL_SCREEN;
-        ESP_LOGI(TAG, "Using full-screen 8-bit transitions");
-    }
-
-    // スプライトの初期化
-    return initializeSprites(colorDepth);
-}
-// 修正版の初期化関数（デバッグ情報付き）
-bool ScreenTransition::init() {
-    if (!_display) {
-        ESP_LOGE(TAG, "Display not initialized");
-        return false;
-    }
-    
-    // 詳細なメモリ情報を表示
-    debugMemoryInfo();
-    
-    // M5GFXの色深度サポートをテスト
-    testColorDepthSupport();
-    
-    // スプライト割り当て限界をテスト
-    testSpriteAllocation();
-    
-    // 通常の初期化を試行
-    ESP_LOGI(TAG, "Attempting normal sprite initialization...");
-    
-    // 色深度を8bitに設定
-    int colorDepth = 8;
-    size_t spriteSize = static_cast<size_t>(_screenWidth) * 
-                       static_cast<size_t>(_screenHeight) * 
-                       (colorDepth / 8);
-    
-    ESP_LOGI(TAG, "Target sprite size: %dx%d, %d-bit, %zu bytes", 
-             _screenWidth, _screenHeight, colorDepth, spriteSize);
-    
-    // まず1つのスプライトだけで試してみる
-    ESP_LOGI(TAG, "Testing single sprite creation...");
-    
-    _oldScreen = new lgfx::LGFX_Sprite(_display);
-    if (!_oldScreen) {
-        ESP_LOGE(TAG, "Failed to allocate sprite object");
-        return false;
-    }
-    
-    _oldScreen->setColorDepth(colorDepth);
-    
-    ESP_LOGI(TAG, "Sprite object created, attempting createSprite...");
-    size_t free_before = esp_get_free_heap_size();
-    
-    bool success = _oldScreen->createSprite(_screenWidth, _screenHeight);
-    
-    size_t free_after = esp_get_free_heap_size();
-    size_t used_memory = free_before - free_after;
-    
-    ESP_LOGI(TAG, "createSprite result: %s", success ? "SUCCESS" : "FAILED");
-    ESP_LOGI(TAG, "Memory used: %zu bytes (expected: %zu bytes)", used_memory, spriteSize);
-    
-    if (!success) {
-        ESP_LOGE(TAG, "Failed to create sprite - investigating alternatives...");
-        
-        // PSRAMでの作成を試してみる
-        delete _oldScreen;
-        _oldScreen = nullptr;
-        
-        ESP_LOGI(TAG, "Trying PSRAM allocation...");
-        if (createSpriteInPSRAM(&_oldScreen, _screenWidth, _screenHeight, colorDepth)) {
-            ESP_LOGI(TAG, "PSRAM allocation successful!");
-        } else {
-            ESP_LOGE(TAG, "PSRAM allocation also failed");
-            return false;
-        }
-    }
-    
-    // 成功した場合はクリーンアップして終了
-    if (_oldScreen) {
-        _oldScreen->deleteSprite();
-        delete _oldScreen;
-        _oldScreen = nullptr;
-    }
-    
-    ESP_LOGI(TAG, "Debug analysis complete");
-    return false; // とりあえずfalseを返してデバッグ情報だけ見る
-}
-
-
-// 修正版の初期化関数（安全なデバッグ版）
-bool ScreenTransition::init() {
-    if (!_display) {
-        ESP_LOGE(TAG, "Display not initialized");
-        return false;
-    }
-    
-    // 各種分析を実行
-    ESP_LOGI(TAG, "Starting comprehensive memory analysis...");
-    
-    analyzePSRAMUsage();
-    checkCurrentMemoryUsers();
-    checkMemoryFragmentation();
-    testM5GFXPSRAMCompatibility();
-    testDividedSpriteStrategy();
-    
-    ESP_LOGI(TAG, "Analysis complete - no sprite creation attempted");
-    
-    // 実際の初期化は行わず、分析のみ
-    return false;
-}
-*/
-
-bool ScreenTransition::init() {
-    if (!_display) {
-        ESP_LOGE(TAG, "Display not initialized");
-        return false;
-    }
-    
-    ESP_LOGI(TAG, "Initializing transition with tile-based approach");
-    
-    // タイル分割方式で初期化
-    bool success = initTileBasedTransition();
-    
-    if (success) {
-        _optimizedMode = OptimizationMode::PARTIAL_SCREEN;
-        ESP_LOGI(TAG, "Screen transition initialized successfully with tiles");
-    } else {
-        ESP_LOGE(TAG, "Failed to initialize tile-based transition");
-    }
-    
-    return success;
-}
-
-// 最適なタイル分割設定を決定
-TileConfig ScreenTransition::selectOptimalTileConfig() {
-    // ログから分かった実現可能な設定
-    TileConfig candidates[] = {
-        {2, 2, 270, 480, 270*480*1, false},  // 126KB - 一応テスト
-        {3, 2, 180, 480, 180*480*1, false},  // 84KB - VIABLE
-        {2, 3, 270, 320, 270*320*1, false},  // 84KB - VIABLE  
-        {3, 3, 180, 320, 180*320*1, false},  // 56KB - VIABLE
-        {4, 3, 135, 320, 135*320*1, false},  // 42KB - VIABLE
-        {4, 4, 135, 240, 135*240*1, false},  // 31KB - VIABLE
-    };
-    
-    // 各設定の実現可能性をテスト
-    for (auto& config : candidates) {
-        lgfx::LGFX_Sprite* test_sprite = new lgfx::LGFX_Sprite(_display);
-        if (test_sprite) {
-            test_sprite->setColorDepth(8);
-            config.is_viable = test_sprite->createSprite(config.tile_width, config.tile_height);
-            
-            if (config.is_viable) {
-                test_sprite->deleteSprite();
-            }
-            delete test_sprite;
-        }
-    }
-    
-    // 最適な設定を選択（メモリ効率と品質のバランス）
-    for (auto& config : candidates) {
-        if (config.is_viable) {
-            ESP_LOGI(TAG, "Selected tile config: %dx%d tiles (%dx%d each, %lu KB)", 
-                     config.tiles_x, config.tiles_y, 
-                     config.tile_width, config.tile_height,
-                     (unsigned long)(config.tile_memory / 1024));
-            return config;
-        }
-    }
-    
-    // フォールバック設定
-    ESP_LOGW(TAG, "Using fallback tile config");
-    return {4, 4, 135, 240, 135*240*1, true};
-}
-// タイル分割方式での初期化
-bool ScreenTransition::initTileBasedTransition() {
-    ESP_LOGI(TAG, "Initializing tile-based transition system");
-    
-    // 最適なタイル設定を決定
-    _tileConfig = selectOptimalTileConfig();
-    
-    if (!_tileConfig.is_viable) {
-        ESP_LOGE(TAG, "No viable tile configuration found");
-        return false;
-    }
-    
-    // タイル用スプライトを作成（old, new, work の3つ）
-    _oldTile = new lgfx::LGFX_Sprite(_display);
-    _newTile = new lgfx::LGFX_Sprite(_display);
-    _workTile = new lgfx::LGFX_Sprite(_display);
-    
-    if (!_oldTile || !_newTile || !_workTile) {
-        ESP_LOGE(TAG, "Failed to allocate tile sprites");
-        cleanupTileSprites();
-        return false;
-    }
-    
-    // スプライトを設定
-    bool success = true;
-    
-    _oldTile->setColorDepth(8);
-    if (!_oldTile->createSprite(_tileConfig.tile_width, _tileConfig.tile_height)) {
-        ESP_LOGE(TAG, "Failed to create old tile sprite");
-        success = false;
-    }
-    
-    _newTile->setColorDepth(8);
-    if (success && !_newTile->createSprite(_tileConfig.tile_width, _tileConfig.tile_height)) {
-        ESP_LOGE(TAG, "Failed to create new tile sprite");
-        success = false;
-    }
-    
-    _workTile->setColorDepth(8);
-    if (success && !_workTile->createSprite(_tileConfig.tile_width, _tileConfig.tile_height)) {
-        ESP_LOGE(TAG, "Failed to create work tile sprite");
-        success = false;
-    }
-    
-    if (!success) {
-        cleanupTileSprites();
-        return false;
-    }
-    
-    ESP_LOGI(TAG, "Tile-based transition initialized successfully");
-    ESP_LOGI(TAG, "Using %dx%d tiles, each %dx%d pixels", 
-             _tileConfig.tiles_x, _tileConfig.tiles_y,
-             _tileConfig.tile_width, _tileConfig.tile_height);
-    
-    return true;
-}
-
-// タイルスプライトのクリーンアップ
-void ScreenTransition::cleanupTileSprites() {
-    if (_oldTile) {
-        _oldTile->deleteSprite();
-        delete _oldTile;
-        _oldTile = nullptr;
-    }
-    
-    if (_newTile) {
-        _newTile->deleteSprite();
-        delete _newTile;
-        _newTile = nullptr;
-    }
-    
-    if (_workTile) {
-        _workTile->deleteSprite();
-        delete _workTile;
-        _workTile = nullptr;
-    }
-}
-
-// タイル単位でのトランジション実行
-void ScreenTransition::executeTileBasedTransition() {
-    if (!_oldTile || !_newTile || !_workTile) return;
-    
-    float easedProgress = calculateEasing(_progress);
-    
-    // 進行度に応じて更新するタイル数を決定
-    int totalTiles = _tileConfig.tiles_x * _tileConfig.tiles_y;
-    int tilesToUpdate = static_cast<int>(totalTiles * easedProgress);
-    
-    // トランジション効果に応じてタイル更新順序を決定
-    switch (_config.type) {
-        case TransitionType::FADE:
-            executeTileFade(tilesToUpdate, totalTiles);
-            break;
-        case TransitionType::WIPE_LEFT:
-            executeTileWipeLeft(tilesToUpdate);
-            break;
-        case TransitionType::WIPE_RIGHT:
-            executeTileWipeRight(tilesToUpdate);
-            break;
-        case TransitionType::DISSOLVE:
-            executeTileDissolve(tilesToUpdate, totalTiles);
-            break;
-        default:
-            // デフォルトはランダム更新
-            executeTileRandom(tilesToUpdate, totalTiles);
-            break;
-    }
-}
-
-// タイルフェード効果
-void ScreenTransition::executeTileFade(int tilesToUpdate, int totalTiles) {
-    // ランダムな順序でタイルを更新
-    static std::vector<int> tileOrder;
-    
-    if (tileOrder.empty()) {
-        // 初回実行時にランダム順序を生成
-        for (int i = 0; i < totalTiles; i++) {
-            tileOrder.push_back(i);
-        }
-        // ランダムシャッフル
-        for (int i = 0; i < totalTiles; i++) {
-            int j = rand() % totalTiles;
-            std::swap(tileOrder[i], tileOrder[j]);
-        }
-    }
-    
-    for (int i = 0; i < tilesToUpdate && i < totalTiles; i++) {
-        int tileIndex = tileOrder[i];
-        int tile_x = tileIndex % _tileConfig.tiles_x;
-        int tile_y = tileIndex / _tileConfig.tiles_x;
-        
-        updateSingleTile(tile_x, tile_y, true); // 新しい画面で更新
-    }
-    
-    // トランジション完了時にリセット
-    if (tilesToUpdate >= totalTiles) {
-        tileOrder.clear();
-    }
-}
-
-// 左ワイプ効果
-void ScreenTransition::executeTileWipeLeft(int tilesToUpdate) {
-    //int tilesPerRow = _tileConfig.tiles_x;
-    int completedTiles = 0;
-    
-    for (int y = 0; y < _tileConfig.tiles_y && completedTiles < tilesToUpdate; y++) {
-        for (int x = 0; x < _tileConfig.tiles_x && completedTiles < tilesToUpdate; x++) {
-            updateSingleTile(x, y, true);
-            completedTiles++;
-        }
-    }
-}
-
-// 右ワイプ効果
-void ScreenTransition::executeTileWipeRight(int tilesToUpdate) {
-    int completedTiles = 0;
-    
-    for (int y = 0; y < _tileConfig.tiles_y && completedTiles < tilesToUpdate; y++) {
-        for (int x = _tileConfig.tiles_x - 1; x >= 0 && completedTiles < tilesToUpdate; x--) {
-            updateSingleTile(x, y, true);
-            completedTiles++;
-        }
-    }
-}
-
-// ディゾルブ効果
-void ScreenTransition::executeTileDissolve(int tilesToUpdate, int totalTiles) {
-    // ランダムなタイルを選択して更新
-    for (int i = 0; i < tilesToUpdate; i++) {
-        int tile_x = rand() % _tileConfig.tiles_x;
-        int tile_y = rand() % _tileConfig.tiles_y;
-        updateSingleTile(tile_x, tile_y, true);
-    }
-}
-
-// ランダム更新効果
-void ScreenTransition::executeTileRandom(int tilesToUpdate, int totalTiles) {
-    for (int i = 0; i < tilesToUpdate; i++) {
-        int tileIndex = rand() % totalTiles;
-        int tile_x = tileIndex % _tileConfig.tiles_x;
-        int tile_y = tileIndex / _tileConfig.tiles_x;
-        updateSingleTile(tile_x, tile_y, true);
-    }
-}
-
-// 単一タイルの更新
-void ScreenTransition::updateSingleTile(int tile_x, int tile_y, bool useNewScreen) {
-    int pixel_x = tile_x * _tileConfig.tile_width;
-    int pixel_y = tile_y * _tileConfig.tile_height;
-    
-    // タイルサイズを調整（画面端の場合）
-    int actual_width = std::min(_tileConfig.tile_width, _screenWidth - pixel_x);
-    int actual_height = std::min(_tileConfig.tile_height, _screenHeight - pixel_y);
-    
-    if (useNewScreen) {
-        // 新しい画面の内容でタイルを更新
-        // 実際の実装では、新しい画面データからタイル部分を描画
-        _display->fillRect(pixel_x, pixel_y, actual_width, actual_height, TFT_WHITE);
-    } else {
-        // 古い画面の内容でタイルを更新
-        _display->fillRect(pixel_x, pixel_y, actual_width, actual_height, TFT_BLACK);
-    }
-}
-
-// スプライトの初期化
-bool ScreenTransition::initializeSprites(int colorDepth)
-{
-    cleanupSprites();
-
-    bool success = true;
-
-    // 最適化モードに応じてスプライトサイズを調整
-    int spriteWidth = _screenWidth;
-    int spriteHeight = _screenHeight;
-
-    if (_optimizedMode == OptimizationMode::PARTIAL_SCREEN)
-    {
-        // 画面を4分割して処理
-        spriteWidth = _screenWidth / 2;
-        spriteHeight = _screenHeight / 2;
-        ESP_LOGI(TAG, "Using partial screen mode: %dx%d sprites", spriteWidth, spriteHeight);
-    }
-
-    // 古い画面用スプライト
-    _oldScreen = new lgfx::LGFX_Sprite(_display);
-    if (!_oldScreen)
-    {
-        ESP_LOGE(TAG, "Failed to allocate memory for old screen sprite");
-        success = false;
-    }
-    else
-    {
-        _oldScreen->setColorDepth(colorDepth);
-        if (!_oldScreen->createSprite(spriteWidth, spriteHeight))
-        {
-            ESP_LOGE(TAG, "Failed to create old screen sprite");
-            success = false;
-        }
-    }
-
-    // 新しい画面用スプライト
-    if (success)
-    {
-        _newScreen = new lgfx::LGFX_Sprite(_display);
-        if (!_newScreen)
-        {
-            ESP_LOGE(TAG, "Failed to allocate memory for new screen sprite");
-            success = false;
-        }
-        else
-        {
-            _newScreen->setColorDepth(colorDepth);
-            if (!_newScreen->createSprite(spriteWidth, spriteHeight))
-            {
-                ESP_LOGE(TAG, "Failed to create new screen sprite");
-                success = false;
-            }
-        }
-    }
-
-    // 作業用バッファ
-    if (success)
-    {
-        _workBuffer = new lgfx::LGFX_Sprite(_display);
-        if (!_workBuffer)
-        {
-            ESP_LOGE(TAG, "Failed to allocate memory for work buffer sprite");
-            success = false;
-        }
-        else
-        {
-            _workBuffer->setColorDepth(colorDepth);
-            if (!_workBuffer->createSprite(spriteWidth, spriteHeight))
-            {
-                ESP_LOGE(TAG, "Failed to create work buffer sprite");
-                success = false;
-            }
-        }
-    }
-
-    if (success)
-    {
-        size_t actualSpriteSize = spriteWidth * spriteHeight * (colorDepth / 8);
-        ESP_LOGI(TAG, "Sprites initialized successfully");
-        ESP_LOGI(TAG, "Each sprite: %dx%d, %d-bit, %zu bytes",
-                 spriteWidth, spriteHeight, colorDepth, actualSpriteSize);
-        ESP_LOGI(TAG, "Total memory used: %zu bytes", actualSpriteSize * 3);
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to initialize sprites");
-        cleanupSprites();
-    }
-
-    return success;
-}
-
-bool ScreenTransition::initPartialTransition()
-{
-    ESP_LOGI(TAG, "Initializing partial transition mode");
-
-    // 非常に小さなスプライトで部分的なトランジション効果を実現
-    int tileSize = 64; // 64x64ピクセルのタイル
-
-    _oldScreen = new lgfx::LGFX_Sprite(_display);
-    if (_oldScreen)
-    {
-        _oldScreen->setColorDepth(4); // 4bit色深度
-        if (!_oldScreen->createSprite(tileSize, tileSize))
-        {
-            delete _oldScreen;
-            _oldScreen = nullptr;
-        }
-    }
-
-    _newScreen = new lgfx::LGFX_Sprite(_display);
-    if (_newScreen)
-    {
-        _newScreen->setColorDepth(4);
-        if (!_newScreen->createSprite(tileSize, tileSize))
-        {
-            delete _newScreen;
-            _newScreen = nullptr;
-        }
-    }
-
-    // 作業用バッファは使わずに直接描画
-    _workBuffer = nullptr;
-
-    bool success = (_oldScreen != nullptr && _newScreen != nullptr);
-
-    if (success)
-    {
-        ESP_LOGI(TAG, "Partial transition initialized with %dx%d tiles", tileSize, tileSize);
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to initialize even partial transition");
-        cleanupSprites();
-    }
-
-    return success;
-}
-
-// スプライトの解放
-void ScreenTransition::cleanupSprites()
-{
-    if (_oldScreen)
-    {
-        _oldScreen->deleteSprite();
-        delete _oldScreen;
-        _oldScreen = nullptr;
-    }
-
-    if (_newScreen)
-    {
-        _newScreen->deleteSprite();
-        delete _newScreen;
-        _newScreen = nullptr;
-    }
-
-    if (_workBuffer)
-    {
-        _workBuffer->deleteSprite();
-        delete _workBuffer;
-        _workBuffer = nullptr;
-    }
-
-    ESP_LOGD(TAG, "Sprites cleaned up");
-}
-
-// 現在時刻取得（マイクロ秒）
-uint64_t ScreenTransition::getCurrentTime()
-{
-    return esp_timer_get_time();
-}
-
-// イージング計算
-float ScreenTransition::calculateEasing(float t)
-{
-    if (!_config.useEasing)
-    {
-        return t; // リニア
-    }
-
-    // イーズイン・アウト（クアドラティック）
-    if (_config.easingPower == 2.0f)
-    {
-        return t < 0.5f ? 2.0f * t * t : 1.0f - pow(-2.0f * t + 2.0f, 2.0f) / 2.0f;
-    }
-
-    // 汎用パワーイージング
-    float power = _config.easingPower;
-    return t < 0.5f ? pow(2.0f, power - 1.0f) * pow(t, power) : 1.0f - pow(-2.0f * t + 2.0f, power) / 2.0f;
-}
-
-// トランジション開始
-bool ScreenTransition::startTransition(TransitionType type, uint32_t duration)
-{
-    TransitionConfig config = _config;
-    config.type = type;
-    config.duration = duration;
-    return startTransition(config);
-}
-
-bool ScreenTransition::startTransition(const TransitionConfig &config)
-{
-    if (_state == TransitionState::TRANSITIONING)
-    {
-        ESP_LOGW(TAG, "Transition already in progress");
-        return false;
-    }
-
-    if (!_display || !_oldScreen || !_newScreen)
-    {
-        ESP_LOGE(TAG, "Not properly initialized");
-        return false;
-    }
-
-    // 設定を保存
-    _config = config;
-
-    // 現在の画面を古い画面としてキャプチャ
-    if (_config.preserveOldScreen)
-    {
-        captureOldScreen();
-    }
-
-    // 状態初期化
-    _state = TransitionState::TRANSITIONING;
-    _startTime = getCurrentTime();
-    _lastStepTime = _startTime;
-    _progress = 0.0f;
-
-    // コールバック呼び出し
-    if (_onTransitionStart)
-    {
-        _onTransitionStart();
-    }
-
-    ESP_LOGI(TAG, "Transition started: type=%d, duration=%lu ms",
-             static_cast<int>(_config.type), _config.duration);
-
-    return true;
-}
-
-// ステップを実行すべきかどうか
-bool ScreenTransition::shouldStepNow()
-{
-    uint64_t currentTime = getCurrentTime();
-    uint64_t elapsed = (currentTime - _lastStepTime) / 1000; // マイクロ秒からミリ秒に変換
-
-    if (elapsed >= _config.stepDelay)
-    {
-        _lastStepTime = currentTime;
+    if (_initialized) {
+        ESP_LOGW(TAG, "Already initialized");
         return true;
     }
 
-    return false;
-}
-
-// 更新処理
-bool ScreenTransition::update()
-{
-    if (_state != TransitionState::TRANSITIONING)
-    {
+    if (!_display) {
+        ESP_LOGE(TAG, "Display not available");
         return false;
     }
 
-    // E-Ink最適化が有効な場合はステップ遅延をチェック
-    if (_config.stepDelay > 0 && !shouldStepNow())
-    {
-        return true; // まだ実行タイミングではない
+    _use_psram = use_psram;
+
+    ESP_LOGI(TAG, "Initializing ScreenTransition with PSRAM: %s", 
+             _use_psram ? "enabled" : "disabled");
+
+    // PSRAMの使用可能容量をチェック
+    if (_use_psram) {
+        size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        size_t canvas_size = TRANSITION_WIDTH * TRANSITION_HEIGHT * 2; // RGB565
+        size_t total_required = canvas_size * 3; // 3つのキャンバス
+
+        ESP_LOGI(TAG, "PSRAM free: %zu bytes, required: %zu bytes", psram_free, total_required);
+
+        if (psram_free < total_required) {
+            ESP_LOGE(TAG, "Insufficient PSRAM memory. Required: %zu, Available: %zu", 
+                     total_required, psram_free);
+            return false;
+        }
     }
 
-    uint64_t currentTime = getCurrentTime();
-    uint64_t elapsed = (currentTime - _startTime) / 1000; // ミリ秒に変換
+    // キャンバスを作成
+    if (!createCanvases()) {
+        ESP_LOGE(TAG, "Failed to create canvases");
+        cleanup();
+        return false;
+    }
 
-    // 進行度を計算
-    _progress = std::min(1.0f, static_cast<float>(elapsed) / static_cast<float>(_config.duration));
+    _initialized = true;
+    _state = TransitionState::IDLE;
 
-    // トランジション実行
-    executeTransition();
+    ESP_LOGI(TAG, "ScreenTransition initialized successfully");
+    return true;
+}
 
-    // ステップコールバック
-    if (_onTransitionStep)
-    {
-        _onTransitionStep();
+// キャンバス作成
+bool ScreenTransition::createCanvases()
+{
+    ESP_LOGI(TAG, "Creating transition canvases...");
+
+    // ソースキャンバス作成
+    _sourceCanvas = new M5Canvas(_display);
+    if (!_sourceCanvas) {
+        ESP_LOGE(TAG, "Failed to allocate source canvas");
+        return false;
+    }
+
+    if (_use_psram) {
+        _sourceCanvas->setPsram(true);
+    }
+
+    if (!_sourceCanvas->createSprite(TRANSITION_WIDTH, TRANSITION_HEIGHT)) {
+        ESP_LOGE(TAG, "Failed to create source sprite");
+        return false;
+    }
+    ESP_LOGI(TAG, "Source canvas created");
+
+    // ターゲットキャンバス作成
+    _targetCanvas = new M5Canvas(_display);
+    if (!_targetCanvas) {
+        ESP_LOGE(TAG, "Failed to allocate target canvas");
+        return false;
+    }
+
+    if (_use_psram) {
+        _targetCanvas->setPsram(true);
+    }
+
+    if (!_targetCanvas->createSprite(TRANSITION_WIDTH, TRANSITION_HEIGHT)) {
+        ESP_LOGE(TAG, "Failed to create target sprite");
+        return false;
+    }
+    ESP_LOGI(TAG, "Target canvas created");
+
+    // 作業用キャンバス作成
+    _workCanvas = new M5Canvas(_display);
+    if (!_workCanvas) {
+        ESP_LOGE(TAG, "Failed to allocate work canvas");
+        return false;
+    }
+
+    if (_use_psram) {
+        _workCanvas->setPsram(true);
+    }
+
+    if (!_workCanvas->createSprite(TRANSITION_WIDTH, TRANSITION_HEIGHT)) {
+        ESP_LOGE(TAG, "Failed to create work sprite");
+        return false;
+    }
+    ESP_LOGI(TAG, "Work canvas created");
+
+    return true;
+}
+
+// リソース解放
+void ScreenTransition::cleanup()
+{
+    ESP_LOGI(TAG, "Cleaning up transition resources...");
+
+    if (_sourceCanvas) {
+        _sourceCanvas->deleteSprite();
+        delete _sourceCanvas;
+        _sourceCanvas = nullptr;
+    }
+
+    if (_targetCanvas) {
+        _targetCanvas->deleteSprite();
+        delete _targetCanvas;
+        _targetCanvas = nullptr;
+    }
+
+    if (_workCanvas) {
+        _workCanvas->deleteSprite();
+        delete _workCanvas;
+        _workCanvas = nullptr;
+    }
+
+    _initialized = false;
+    _state = TransitionState::IDLE;
+}
+
+// 元画面のキャプチャ
+void ScreenTransition::captureSource()
+{
+    if (!_initialized || !_sourceCanvas) {
+        ESP_LOGE(TAG, "Not initialized or source canvas not available");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Capturing source screen...");
+
+    // 現在の画面をソースキャンバスにコピー
+    // M5GFXでは画面からの読み取りは制限があるため、
+    // 通常は呼び出し元で画面内容を事前に準備してもらう
+    _sourceCanvas->fillSprite(TFT_BLACK);
+    
+    ESP_LOGI(TAG, "Source screen captured");
+}
+
+// 次画面の準備
+void ScreenTransition::prepareTarget(std::function<void(M5Canvas*)> prepare_func)
+{
+    if (!_initialized || !_targetCanvas) {
+        ESP_LOGE(TAG, "Not initialized or target canvas not available");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Preparing target screen...");
+
+    // ターゲットキャンバスをクリア
+    _targetCanvas->fillSprite(TFT_BLACK);
+
+    // 準備関数を実行してターゲット画面を描画
+    if (prepare_func) {
+        prepare_func(_targetCanvas);
+    }
+
+    ESP_LOGI(TAG, "Target screen prepared");
+}
+
+// トランジション開始
+bool ScreenTransition::startTransition(const TransitionConfig& config)
+{
+    if (!_initialized) {
+        ESP_LOGE(TAG, "Not initialized");
+        return false;
+    }
+
+    if (_state == TransitionState::RUNNING) {
+        ESP_LOGW(TAG, "Transition already running");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Starting transition: type=%d, duration=%lu ms", 
+             static_cast<int>(config.type), config.duration_ms);
+
+    _config = config;
+    _state = TransitionState::RUNNING;
+    _startTime = esp_timer_get_time();
+    _progress = 0.0f;
+
+    // 開始コールバックを実行
+    if (_onTransitionStart) {
+        _onTransitionStart();
+    }
+
+    return true;
+}
+
+// トランジション更新
+bool ScreenTransition::updateTransition()
+{
+    if (_state != TransitionState::RUNNING) {
+        return false;
+    }
+
+    // 進行度を更新
+    updateProgress();
+
+    // トランジション効果を描画
+    switch (_config.type) {
+        case TransitionType::NONE:
+            // 即座に切り替え
+            _progress = 1.0f;
+            break;
+            
+        case TransitionType::FADE_BLACK:
+        case TransitionType::FADE_WHITE:
+            renderFade(_progress);
+            break;
+            
+        case TransitionType::SLIDE_LEFT:
+        case TransitionType::SLIDE_RIGHT:
+        case TransitionType::SLIDE_UP:
+        case TransitionType::SLIDE_DOWN:
+            renderSlide(_progress);
+            break;
+            
+        case TransitionType::WIPE_LEFT:
+        case TransitionType::WIPE_RIGHT:
+            renderWipe(_progress);
+            break;
+            
+        case TransitionType::CIRCLE_EXPAND:
+        case TransitionType::CIRCLE_SHRINK:
+            renderCircle(_progress);
+            break;
+            
+        case TransitionType::PIXELATE:
+            renderPixelate(_progress);
+            break;
+            
+        case TransitionType::VENETIAN_BLIND:
+            renderVenetianBlind(_progress);
+            break;
+            
+        case TransitionType::CHECKERBOARD:
+            renderCheckerboard(_progress);
+            break;
+            
+        case TransitionType::SPIRAL:
+            renderSpiral(_progress);
+            break;
+            
+        case TransitionType::RIPPLE:
+            renderRipple(_progress);
+            break;
+            
+        case TransitionType::MOSAIC:
+            renderMosaic(_progress);
+            break;
+            
+        case TransitionType::PAGE_TURN:
+            renderPageTurn(_progress);
+            break;
+            
+        default:
+            ESP_LOGW(TAG, "Unknown transition type: %d", static_cast<int>(_config.type));
+            renderFade(_progress); // フォールバック
+            break;
+    }
+
+    // 進行コールバックを実行
+    if (_onTransitionProgress) {
+        _onTransitionProgress(_progress);
     }
 
     // 完了チェック
-    if (_progress >= 1.0f)
-    {
-        _state = TransitionState::COMPLETED;
-
-        // 最終画面を描画
-        if (_newScreen)
-        {
-            _newScreen->pushSprite(_display, 0, 0);
+    if (_progress >= 1.0f) {
+        _state = TransitionState::FINISHED;
+        
+        // 最終画面を表示
+        if (_targetCanvas) {
+            _targetCanvas->pushSprite(0, 0);
         }
 
-        // 完了コールバック
-        if (_onTransitionComplete)
-        {
+        // 完了コールバックを実行
+        if (_onTransitionComplete) {
             _onTransitionComplete();
         }
 
         ESP_LOGI(TAG, "Transition completed");
-        return false; // 完了
+        return false;
     }
 
-    return true; // 継続中
+    return true;
 }
 
-// トランジション実行
-void ScreenTransition::executeTransition()
+// 進行度更新
+void ScreenTransition::updateProgress()
 {
-    if (!_workBuffer)
-        return;
+    _currentTime = esp_timer_get_time();
+    int64_t elapsed = _currentTime - _startTime;
+    float raw_progress = static_cast<float>(elapsed) / (_config.duration_ms * 1000.0f);
+    
+    // 進行度を0.0-1.0にクランプ
+    raw_progress = std::max(0.0f, std::min(1.0f, raw_progress));
+    
+    // 速度倍率を適用
+    raw_progress *= _config.speed_multiplier;
+    
+    // 逆方向フラグを適用
+    if (_config.reverse) {
+        raw_progress = 1.0f - raw_progress;
+    }
+    
+    // イージングを適用
+    _progress = applyEasing(raw_progress);
+}
 
-    // 作業バッファをクリア
-    _workBuffer->fillSprite(TFT_BLACK);
-
-    // トランジションタイプに応じて処理
-    switch (_config.type)
-    {
-    case TransitionType::FADE:
-        drawFadeTransition();
-        break;
-    case TransitionType::SLIDE_LEFT:
-    case TransitionType::SLIDE_RIGHT:
-    case TransitionType::SLIDE_UP:
-    case TransitionType::SLIDE_DOWN:
-        drawSlideTransition();
-        break;
-    case TransitionType::WIPE_LEFT:
-    case TransitionType::WIPE_RIGHT:
-    case TransitionType::WIPE_UP:
-    case TransitionType::WIPE_DOWN:
-        drawWipeTransition();
-        break;
-    case TransitionType::DISSOLVE:
-        drawDissolveTransition();
-        break;
-    case TransitionType::PUSH_LEFT:
-    case TransitionType::PUSH_RIGHT:
-    case TransitionType::PUSH_UP:
-    case TransitionType::PUSH_DOWN:
-        drawPushTransition();
-        break;
-    case TransitionType::IRIS_IN:
-    case TransitionType::IRIS_OUT:
-        drawIrisTransition();
-        break;
-    case TransitionType::BLINDS_H:
-    case TransitionType::BLINDS_V:
-        drawBlindsTransition();
-        break;
-    case TransitionType::CHECKERBOARD:
-        drawCheckerboardTransition();
-        break;
-    case TransitionType::SPIRAL:
-        drawSpiralTransition();
-        break;
-    case TransitionType::PIXEL_SCATTER:
-        drawPixelScatterTransition();
-        break;
-    default:
-        // 即座に新しい画面を表示
-        if (_newScreen)
+// イージング適用
+float ScreenTransition::applyEasing(float t)
+{
+    // tを0.0-1.0にクランプ
+    t = std::max(0.0f, std::min(1.0f, t));
+    
+    switch (_config.easing) {
+        case EasingType::LINEAR:
+            return t;
+            
+        case EasingType::EASE_IN:
+            return t * t;
+            
+        case EasingType::EASE_OUT:
+            return 1.0f - (1.0f - t) * (1.0f - t);
+            
+        case EasingType::EASE_IN_OUT:
+            if (t < 0.5f) {
+                return 2.0f * t * t;
+            } else {
+                return -1.0f + (4.0f - 2.0f * t) * t;
+            }
+            
+        case EasingType::BOUNCE:
+            if (t < 1.0f / 2.75f) {
+                return 7.5625f * t * t;
+            } else if (t < 2.0f / 2.75f) {
+                t -= 1.5f / 2.75f;
+                return 7.5625f * t * t + 0.75f;
+            } else if (t < 2.5f / 2.75f) {
+                t -= 2.25f / 2.75f;
+                return 7.5625f * t * t + 0.9375f;
+            } else {
+                t -= 2.625f / 2.75f;
+                return 7.5625f * t * t + 0.984375f;
+            }
+            
+        case EasingType::ELASTIC:
+            if (t == 0.0f) return 0.0f;
+            if (t == 1.0f) return 1.0f;
+            return powf(2.0f, -10.0f * t) * sinf((t - 0.1f) * (2.0f * M_PI) / 0.4f) + 1.0f;
+            
+        case EasingType::BACK:
         {
-            _newScreen->pushSprite(_workBuffer, 0, 0);
+            float c1 = 1.70158f;
+            float c3 = c1 + 1.0f;
+            return c3 * t * t * t - c1 * t * t;
         }
-        break;
-    }
-
-    // 作業バッファを画面に描画
-    _workBuffer->pushSprite(_display, 0, 0);
-}
-
-void ScreenTransition::executePartialTransition()
-{
-    if (_optimizedMode != OptimizationMode::PARTIAL_SCREEN)
-    {
-        executeTransition(); // 通常のトランジション
-        return;
-    }
-
-    // タイルベースのトランジション
-    int tileSize = 64;
-    int tilesX = (_screenWidth + tileSize - 1) / tileSize;
-    int tilesY = (_screenHeight + tileSize - 1) / tileSize;
-
-    float easedProgress = calculateEasing(_progress);
-    int completedTiles = static_cast<int>((tilesX * tilesY) * easedProgress);
-
-    // ランダムな順序でタイルを更新
-    for (int i = 0; i < completedTiles; i++)
-    {
-        int tileIndex = (i + static_cast<int>(_progress * 1000)) % (tilesX * tilesY);
-        int tileX = (tileIndex % tilesX) * tileSize;
-        int tileY = (tileIndex / tilesX) * tileSize;
-
-        int actualWidth = std::min(tileSize, _screenWidth - tileX);
-        int actualHeight = std::min(tileSize, _screenHeight - tileY);
-
-        // 新しい画面の該当部分を直接描画
-        // ここでは簡単な色変更で代用
-        uint32_t newColor = TFT_WHITE; // 実際は新しい画面のデータを使用
-        _display->fillRect(tileX, tileY, actualWidth, actualHeight, newColor);
+        
+        case EasingType::CUBIC:
+            return t * t * (3.0f - 2.0f * t);
+            
+        default:
+            return t;
     }
 }
 
-// フェードトランジション
-void ScreenTransition::drawFadeTransition()
+// フェード効果
+void ScreenTransition::renderFade(float progress)
 {
-    if (!_oldScreen || !_newScreen)
-        return;
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
 
-    float easedProgress = calculateEasing(_progress);
+    // 作業キャンバスをクリア
+    _workCanvas->fillSprite(_config.color);
 
-    // アルファブレンドでフェード効果を実現
-    // E-Inkでは実際のアルファブレンドは難しいので、グレースケール値で近似
+    if (progress < 0.5f) {
+        // 前半：ソース画面からフェード色へ
+        float alpha = progress * 2.0f;
+        blendCanvases(_sourceCanvas, _workCanvas, alpha);
+    } else {
+        // 後半：フェード色からターゲット画面へ
+        float alpha = (progress - 0.5f) * 2.0f;
+        blendCanvases(_workCanvas, _targetCanvas, alpha);
+    }
 
-    // 古い画面を基準にして、新しい画面を重ねる
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
 
-    // 簡易的なアルファブレンド（E-Ink向け）
-    for (int y = 0; y < _screenHeight; y += 4)
-    { // 4ピクセルごとに処理（高速化）
-        for (int x = 0; x < _screenWidth; x += 4)
-        {
-            if (static_cast<float>(rand()) / RAND_MAX < easedProgress)
-            {
-                // 新しい画面のピクセルを描画
-                uint32_t color = _newScreen->readPixel(x, y);
-                _workBuffer->fillRect(x, y, 4, 4, color);
+// スライド効果
+void ScreenTransition::renderSlide(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    int offset_x = 0, offset_y = 0;
+
+    switch (_config.type) {
+        case TransitionType::SLIDE_LEFT:
+            offset_x = static_cast<int>(-TRANSITION_WIDTH * progress);
+            break;
+        case TransitionType::SLIDE_RIGHT:
+            offset_x = static_cast<int>(TRANSITION_WIDTH * progress);
+            break;
+        case TransitionType::SLIDE_UP:
+            offset_y = static_cast<int>(-TRANSITION_HEIGHT * progress);
+            break;
+        case TransitionType::SLIDE_DOWN:
+            offset_y = static_cast<int>(TRANSITION_HEIGHT * progress);
+            break;
+        default:
+            break;
+    }
+
+    // 作業キャンバスをクリア
+    _workCanvas->fillSprite(TFT_BLACK);
+
+    // ソース画面をオフセット位置に描画
+    copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, offset_x, offset_y);
+
+    // ターゲット画面を反対側に描画
+    int target_x = offset_x > 0 ? offset_x - TRANSITION_WIDTH : offset_x + TRANSITION_WIDTH;
+    int target_y = offset_y > 0 ? offset_y - TRANSITION_HEIGHT : offset_y + TRANSITION_HEIGHT;
+    copyCanvasRegion(_targetCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, target_x, target_y);
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// ワイプ効果
+void ScreenTransition::renderWipe(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    // ソース画面をベースとしてコピー
+    copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+
+    int wipe_pos = 0;
+    if (_config.type == TransitionType::WIPE_LEFT) {
+        wipe_pos = static_cast<int>(TRANSITION_WIDTH * progress);
+        // 左からワイプ
+        copyCanvasRegion(_targetCanvas, _workCanvas, 0, 0, wipe_pos, TRANSITION_HEIGHT, 0, 0);
+    } else { // WIPE_RIGHT
+        wipe_pos = static_cast<int>(TRANSITION_WIDTH * (1.0f - progress));
+        // 右からワイプ
+        copyCanvasRegion(_targetCanvas, _workCanvas, wipe_pos, 0, TRANSITION_WIDTH - wipe_pos, TRANSITION_HEIGHT, wipe_pos, 0);
+    }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// 円形効果
+void ScreenTransition::renderCircle(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    int center_x = TRANSITION_WIDTH / 2;
+    int center_y = TRANSITION_HEIGHT / 2;
+    int max_radius = static_cast<int>(sqrt(center_x * center_x + center_y * center_y));
+
+    if (_config.type == TransitionType::CIRCLE_EXPAND) {
+        // 円形拡大：中心から外側へ
+        int radius = static_cast<int>(max_radius * progress);
+        
+        // ソース画面をベースとしてコピー
+        copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+        
+        // ターゲット画面を円形にマスクして描画
+        for (int y = 0; y < TRANSITION_HEIGHT; y++) {
+            for (int x = 0; x < TRANSITION_WIDTH; x++) {
+                int dx = x - center_x;
+                int dy = y - center_y;
+                int distance = static_cast<int>(sqrt(dx * dx + dy * dy));
+                
+                if (distance <= radius) {
+                    // 円の内側はターゲット画面
+                    uint16_t pixel = _targetCanvas->readPixel(x, y);
+                    _workCanvas->writePixel(x, y, pixel);
+                }
+            }
+        }
+    } else { // CIRCLE_SHRINK
+        // 円形縮小：外側から中心へ
+        int radius = static_cast<int>(max_radius * (1.0f - progress));
+        
+        // ターゲット画面をベースとしてコピー
+        copyCanvasRegion(_targetCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+        
+        // ソース画面を円形にマスクして描画
+        for (int y = 0; y < TRANSITION_HEIGHT; y++) {
+            for (int x = 0; x < TRANSITION_WIDTH; x++) {
+                int dx = x - center_x;
+                int dy = y - center_y;
+                int distance = static_cast<int>(sqrt(dx * dx + dy * dy));
+                
+                if (distance <= radius) {
+                    // 円の内側はソース画面
+                    uint16_t pixel = _sourceCanvas->readPixel(x, y);
+                    _workCanvas->writePixel(x, y, pixel);
+                }
             }
         }
     }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
 }
 
-// スライドトランジション
-void ScreenTransition::drawSlideTransition()
+// ピクセル化効果
+void ScreenTransition::renderPixelate(float progress)
 {
-    if (!_oldScreen || !_newScreen)
-        return;
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
 
-    float easedProgress = calculateEasing(_progress);
-    int offset;
+    // ピクセル化レベル（1.0で元サイズ、0.0で最大ピクセル化）
+    float pixel_level = 1.0f - progress * 0.9f; // 完全には0にしない
+    int pixel_size = static_cast<int>(1.0f / pixel_level);
+    pixel_size = std::max(1, std::min(pixel_size, 32)); // 1-32ピクセルの範囲
 
-    switch (_config.type)
-    {
-    case TransitionType::SLIDE_LEFT:
-        offset = static_cast<int>(_screenWidth * (1.0f - easedProgress));
-        _oldScreen->pushSprite(_workBuffer, 0, 0);
-        _newScreen->pushSprite(_workBuffer, -offset, 0);
-        break;
-
-    case TransitionType::SLIDE_RIGHT:
-        offset = static_cast<int>(_screenWidth * (1.0f - easedProgress));
-        _oldScreen->pushSprite(_workBuffer, 0, 0);
-        _newScreen->pushSprite(_workBuffer, offset, 0);
-        break;
-
-    case TransitionType::SLIDE_UP:
-        offset = static_cast<int>(_screenHeight * (1.0f - easedProgress));
-        _oldScreen->pushSprite(_workBuffer, 0, 0);
-        _newScreen->pushSprite(_workBuffer, 0, -offset);
-        break;
-
-    case TransitionType::SLIDE_DOWN:
-        offset = static_cast<int>(_screenHeight * (1.0f - easedProgress));
-        _oldScreen->pushSprite(_workBuffer, 0, 0);
-        _newScreen->pushSprite(_workBuffer, 0, offset);
-        break;
-
-    default:
-        break;
-    }
-}
-
-// ワイプトランジション
-void ScreenTransition::drawWipeTransition()
-{
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    // 古い画面を全体に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    // 進行度に応じて新しい画面の一部を描画
-    switch (_config.type)
-    {
-    case TransitionType::WIPE_LEFT:
-    {
-        int wipeWidth = static_cast<int>(_screenWidth * easedProgress);
-        _workBuffer->setClipRect(0, 0, wipeWidth, _screenHeight);
-        _newScreen->pushSprite(_workBuffer, 0, 0);
-        _workBuffer->clearClipRect();
-        break;
-    }
-
-    case TransitionType::WIPE_RIGHT:
-    {
-        int wipeStart = static_cast<int>(_screenWidth * (1.0f - easedProgress));
-        _workBuffer->setClipRect(wipeStart, 0, _screenWidth - wipeStart, _screenHeight);
-        _newScreen->pushSprite(_workBuffer, 0, 0);
-        _workBuffer->clearClipRect();
-        break;
-    }
-
-    case TransitionType::WIPE_UP:
-    {
-        int wipeHeight = static_cast<int>(_screenHeight * easedProgress);
-        _workBuffer->setClipRect(0, 0, _screenWidth, wipeHeight);
-        _newScreen->pushSprite(_workBuffer, 0, 0);
-        _workBuffer->clearClipRect();
-        break;
-    }
-
-    case TransitionType::WIPE_DOWN:
-    {
-        int wipeStart = static_cast<int>(_screenHeight * (1.0f - easedProgress));
-        _workBuffer->setClipRect(0, wipeStart, _screenWidth, _screenHeight - wipeStart);
-        _newScreen->pushSprite(_workBuffer, 0, 0);
-        _workBuffer->clearClipRect();
-        break;
-    }
-
-    default:
-        break;
-    }
-}
-
-// ディゾルブトランジション
-void ScreenTransition::drawDissolveTransition()
-{
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    // 古い画面を基準に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    // ランダムなピクセルを新しい画面の色に置き換え
-    int pixelsToChange = static_cast<int>((_screenWidth * _screenHeight) * easedProgress / 16); // 16分の1に間引き
-
-    for (int i = 0; i < pixelsToChange; i++)
-    {
-        int x = rand() % _screenWidth;
-        int y = rand() % _screenHeight;
-
-        uint32_t newColor = _newScreen->readPixel(x, y);
-        _workBuffer->fillRect(x - 1, y - 1, 3, 3, newColor); // 3x3のブロックで描画
-    }
-}
-
-// プッシュトランジション
-void ScreenTransition::drawPushTransition()
-{
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    switch (_config.type)
-    {
-    case TransitionType::PUSH_LEFT:
-    {
-        int offset = static_cast<int>(_screenWidth * easedProgress);
-        _oldScreen->pushSprite(_workBuffer, -offset, 0);
-        _newScreen->pushSprite(_workBuffer, _screenWidth - offset, 0);
-        break;
-    }
-
-    case TransitionType::PUSH_RIGHT:
-    {
-        int offset = static_cast<int>(_screenWidth * easedProgress);
-        _oldScreen->pushSprite(_workBuffer, offset, 0);
-        _newScreen->pushSprite(_workBuffer, -_screenWidth + offset, 0);
-        break;
-    }
-
-    case TransitionType::PUSH_UP:
-    {
-        int offset = static_cast<int>(_screenHeight * easedProgress);
-        _oldScreen->pushSprite(_workBuffer, 0, -offset);
-        _newScreen->pushSprite(_workBuffer, 0, _screenHeight - offset);
-        break;
-    }
-
-    case TransitionType::PUSH_DOWN:
-    {
-        int offset = static_cast<int>(_screenHeight * easedProgress);
-        _oldScreen->pushSprite(_workBuffer, 0, offset);
-        _newScreen->pushSprite(_workBuffer, 0, -_screenHeight + offset);
-        break;
-    }
-
-    default:
-        break;
-    }
-}
-
-// アイリストランジション
-void ScreenTransition::drawIrisTransition()
-{
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    // 古い画面を全体に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    // 円形のマスクで新しい画面を描画
-    int centerX = _screenWidth / 2;
-    int centerY = _screenHeight / 2;
-    int maxRadius = std::max(_screenWidth, _screenHeight);
-
-    if (_config.type == TransitionType::IRIS_IN)
-    {
-        int radius = static_cast<int>(maxRadius * easedProgress);
-
-        // 円形領域に新しい画面を描画（効率化のため4ピクセルごと）
-        for (int y = centerY - radius; y <= centerY + radius; y += 2)
-        {
-            for (int x = centerX - radius; x <= centerX + radius; x += 2)
-            {
-                if (x >= 0 && x < _screenWidth && y >= 0 && y < _screenHeight)
-                {
-                    int dx = x - centerX;
-                    int dy = y - centerY;
-                    if (dx * dx + dy * dy <= radius * radius)
-                    {
-                        uint32_t newColor = _newScreen->readPixel(x, y);
-                        _workBuffer->fillRect(x, y, 2, 2, newColor);
+    // 進行度に応じてソースとターゲットをブレンド
+    if (progress < 0.5f) {
+        // 前半：ソース画面をピクセル化
+        copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+    } else {
+        // 後半：ターゲット画面をピクセル化しながら表示
+        float blend_ratio = (progress - 0.5f) * 2.0f;
+        
+        for (int y = 0; y < TRANSITION_HEIGHT; y += pixel_size) {
+            for (int x = 0; x < TRANSITION_WIDTH; x += pixel_size) {
+                // ピクセルブロックの色を取得
+                uint16_t src_color = _sourceCanvas->readPixel(x, y);
+                uint16_t tgt_color = _targetCanvas->readPixel(x, y);
+                uint16_t blended_color = interpolateColor(src_color, tgt_color, blend_ratio);
+                
+                // ピクセルブロックを描画
+                for (int dy = 0; dy < pixel_size && (y + dy) < TRANSITION_HEIGHT; dy++) {
+                    for (int dx = 0; dx < pixel_size && (x + dx) < TRANSITION_WIDTH; dx++) {
+                        _workCanvas->writePixel(x + dx, y + dy, blended_color);
                     }
                 }
             }
         }
     }
-    else
-    { // IRIS_OUT
-        int radius = static_cast<int>(maxRadius * (1.0f - easedProgress));
-        // 外側から内側に向かって新しい画面を描画
-        for (int y = 0; y < _screenHeight; y += 2)
-        {
-            for (int x = 0; x < _screenWidth; x += 2)
-            {
-                int dx = x - centerX;
-                int dy = y - centerY;
-                if (dx * dx + dy * dy >= radius * radius)
-                {
-                    uint32_t newColor = _newScreen->readPixel(x, y);
-                    _workBuffer->fillRect(x, y, 2, 2, newColor);
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// ブラインド効果
+void ScreenTransition::renderVenetianBlind(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    const int blind_count = 20; // ブラインドの枚数
+    const int blind_height = TRANSITION_HEIGHT / blind_count;
+
+    // ソース画面をベース
+    copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+
+    for (int i = 0; i < blind_count; i++) {
+        int y_start = i * blind_height;
+        int y_end = std::min(y_start + blind_height, TRANSITION_HEIGHT);
+        
+        // 各ブラインドの開き具合を計算（少しずつ時間差をつける）
+        float blind_progress = progress + (static_cast<float>(i) / blind_count) * 0.3f;
+        blind_progress = std::max(0.0f, std::min(1.0f, blind_progress));
+        
+        int reveal_height = static_cast<int>((y_end - y_start) * blind_progress);
+        
+        if (reveal_height > 0) {
+            // ターゲット画面の該当部分を描画
+            copyCanvasRegion(_targetCanvas, _workCanvas, 0, y_start, TRANSITION_WIDTH, reveal_height, 0, y_start);
+        }
+    }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// チェッカーボード効果
+void ScreenTransition::renderCheckerboard(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    const int checker_size = 32; // チェッカーのサイズ
+    
+    // ベースとしてソース画面をコピー
+    copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+
+    for (int y = 0; y < TRANSITION_HEIGHT; y += checker_size) {
+        for (int x = 0; x < TRANSITION_WIDTH; x += checker_size) {
+            // チェッカーパターンを計算
+            bool is_checker = ((x / checker_size) + (y / checker_size)) % 2 == 0;
+            
+            // 各チェッカーの変化タイミングをずらす
+            float checker_progress = progress;
+            if (is_checker) {
+                checker_progress += 0.3f; // 先に変化
+            }
+            checker_progress = std::max(0.0f, std::min(1.0f, checker_progress));
+            
+            if (checker_progress > 0.5f) {
+                // チェッカー領域をターゲット画面に置き換え
+                int width = std::min(checker_size, TRANSITION_WIDTH - x);
+                int height = std::min(checker_size, TRANSITION_HEIGHT - y);
+                copyCanvasRegion(_targetCanvas, _workCanvas, x, y, width, height, x, y);
+            }
+        }
+    }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// 螺旋効果
+void ScreenTransition::renderSpiral(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    int center_x = TRANSITION_WIDTH / 2;
+    int center_y = TRANSITION_HEIGHT / 2;
+    float max_angle = progress * 8.0f * M_PI; // 螺旋の角度
+
+    // ソース画面をベース
+    copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+
+    // 螺旋の描画
+    for (int y = 0; y < TRANSITION_HEIGHT; y++) {
+        for (int x = 0; x < TRANSITION_WIDTH; x++) {
+            int dx = x - center_x;
+            int dy = y - center_y;
+            float angle = atan2f(dy, dx) + M_PI;
+            float distance = sqrtf(dx * dx + dy * dy);
+            
+            // 螺旋の進行度を計算
+            float spiral_progress = (angle + distance * 0.01f) / (2.0f * M_PI);
+            spiral_progress = fmodf(spiral_progress, 1.0f);
+            
+            if (spiral_progress < (max_angle / (8.0f * M_PI))) {
+                uint16_t pixel = _targetCanvas->readPixel(x, y);
+                _workCanvas->writePixel(x, y, pixel);
+            }
+        }
+    }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// 波紋効果
+void ScreenTransition::renderRipple(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    int center_x = TRANSITION_WIDTH / 2;
+    int center_y = TRANSITION_HEIGHT / 2;
+    float max_radius = sqrtf(center_x * center_x + center_y * center_y);
+    float current_radius = max_radius * progress;
+
+    // ベースとしてソース画面をコピー
+    copyCanvasRegion(_sourceCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
+
+    // 波紋効果
+    for (int y = 0; y < TRANSITION_HEIGHT; y++) {
+        for (int x = 0; x < TRANSITION_WIDTH; x++) {
+            int dx = x - center_x;
+            int dy = y - center_y;
+            float distance = sqrtf(dx * dx + dy * dy);
+            
+            // 波紋の位置での歪み計算
+            if (distance <= current_radius) {
+                float wave_factor = sinf((distance / current_radius) * 2.0f * M_PI * 3.0f) * 0.1f;
+                float blend_ratio = (distance / current_radius) + wave_factor;
+                blend_ratio = std::max(0.0f, std::min(1.0f, blend_ratio));
+                
+                uint16_t src_color = _sourceCanvas->readPixel(x, y);
+                uint16_t tgt_color = _targetCanvas->readPixel(x, y);
+                uint16_t blended_color = interpolateColor(src_color, tgt_color, blend_ratio);
+                _workCanvas->writePixel(x, y, blended_color);
+            }
+        }
+    }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
+}
+
+// モザイク効果
+void ScreenTransition::renderMosaic(float progress)
+{
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
+
+    const int max_mosaic_size = 16;
+    int mosaic_size = static_cast<int>(max_mosaic_size * (1.0f - progress)) + 1;
+
+    // モザイク効果を適用
+    for (int y = 0; y < TRANSITION_HEIGHT; y += mosaic_size) {
+        for (int x = 0; x < TRANSITION_WIDTH; x += mosaic_size) {
+            // モザイクブロックの代表色を計算
+            uint16_t src_color = _sourceCanvas->readPixel(x, y);
+            uint16_t tgt_color = _targetCanvas->readPixel(x, y);
+            uint16_t blend_color = interpolateColor(src_color, tgt_color, progress);
+            
+            // モザイクブロックを描画
+            for (int dy = 0; dy < mosaic_size && (y + dy) < TRANSITION_HEIGHT; dy++) {
+                for (int dx = 0; dx < mosaic_size && (x + dx) < TRANSITION_WIDTH; dx++) {
+                    _workCanvas->writePixel(x + dx, y + dy, blend_color);
                 }
             }
         }
     }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
 }
 
-// ブラインドトランジション
-void ScreenTransition::drawBlindsTransition()
+// ページめくり効果
+void ScreenTransition::renderPageTurn(float progress)
 {
-    if (!_oldScreen || !_newScreen)
-        return;
+    if (!_workCanvas || !_sourceCanvas || !_targetCanvas) return;
 
-    float easedProgress = calculateEasing(_progress);
+    // ページがめくれる位置を計算
+    int fold_x = static_cast<int>(TRANSITION_WIDTH * progress);
+    
+    // ベースとしてターゲット画面をコピー
+    copyCanvasRegion(_targetCanvas, _workCanvas, 0, 0, TRANSITION_WIDTH, TRANSITION_HEIGHT, 0, 0);
 
-    // 古い画面を基準に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    if (_config.type == TransitionType::BLINDS_H)
-    {
-        // 水平ブラインド
-        int blindCount = 8; // ブラインドの数
-        int blindHeight = _screenHeight / blindCount;
-        int openHeight = static_cast<int>(blindHeight * easedProgress);
-
-        for (int i = 0; i < blindCount; i++)
-        {
-            int blindY = i * blindHeight;
-            int clipY = blindY + (blindHeight - openHeight) / 2;
-
-            if (openHeight > 0)
-            {
-                _workBuffer->setClipRect(0, clipY, _screenWidth, openHeight);
-                _newScreen->pushSprite(_workBuffer, 0, 0);
-                _workBuffer->clearClipRect();
-            }
-        }
-    }
-    else
-    { // BLINDS_V
-        // 垂直ブラインド
-        int blindCount = 8;
-        int blindWidth = _screenWidth / blindCount;
-        int openWidth = static_cast<int>(blindWidth * easedProgress);
-
-        for (int i = 0; i < blindCount; i++)
-        {
-            int blindX = i * blindWidth;
-            int clipX = blindX + (blindWidth - openWidth) / 2;
-
-            if (openWidth > 0)
-            {
-                _workBuffer->setClipRect(clipX, 0, openWidth, _screenHeight);
-                _newScreen->pushSprite(_workBuffer, 0, 0);
-                _workBuffer->clearClipRect();
-            }
-        }
-    }
-}
-
-// チェッカーボードトランジション
-void ScreenTransition::drawCheckerboardTransition()
-{
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    // 古い画面を基準に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    int checkSize = 32; // チェッカーボードのサイズ
-
-    for (int y = 0; y < _screenHeight; y += checkSize)
-    {
-        for (int x = 0; x < _screenWidth; x += checkSize)
-        {
-            // チェッカーボードパターンで新しい画面を表示
-            bool isEvenCheck = ((x / checkSize) + (y / checkSize)) % 2 == 0;
-            float threshold = isEvenCheck ? easedProgress : easedProgress * 0.5f;
-
-            if (static_cast<float>(rand()) / RAND_MAX < threshold)
-            {
-                int width = std::min(checkSize, _screenWidth - x);
-                int height = std::min(checkSize, _screenHeight - y);
-
-                _workBuffer->setClipRect(x, y, width, height);
-                _newScreen->pushSprite(_workBuffer, 0, 0);
-                _workBuffer->clearClipRect();
-            }
-        }
-    }
-}
-
-// スパイラルトランジション
-void ScreenTransition::drawSpiralTransition()
-{
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    // 古い画面を基準に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    int centerX = _screenWidth / 2;
-    int centerY = _screenHeight / 2;
-    int maxRadius = std::max(_screenWidth, _screenHeight) / 2;
-
-    // スパイラル描画（効率化のため間引き）
-    for (int r = 0; r < maxRadius; r += 4)
-    {
-        float angleStep = 0.2f; // 角度のステップ
-        for (float angle = 0; angle < 6.28f; angle += angleStep)
-        {
-            float spiralProgress = static_cast<float>(r) / maxRadius;
-
-            if (spiralProgress <= easedProgress)
-            {
-                int x = centerX + static_cast<int>(r * cos(angle));
-                int y = centerY + static_cast<int>(r * sin(angle));
-
-                if (x >= 0 && x < _screenWidth && y >= 0 && y < _screenHeight)
-                {
-                    uint32_t newColor = _newScreen->readPixel(x, y);
-                    _workBuffer->fillRect(x - 2, y - 2, 5, 5, newColor);
+    // めくれていない部分はソース画面を表示
+    if (fold_x < TRANSITION_WIDTH) {
+        copyCanvasRegion(_sourceCanvas, _workCanvas, fold_x, 0, TRANSITION_WIDTH - fold_x, TRANSITION_HEIGHT, fold_x, 0);
+        
+        // ページの影を追加
+        if (fold_x > 10) {
+            for (int x = fold_x - 10; x < fold_x; x++) {
+                if (x >= 0 && x < TRANSITION_WIDTH) {
+                    float shadow_intensity = static_cast<float>(fold_x - x) / 10.0f;
+                    uint32_t shadow_color = interpolateColor(TFT_BLACK, _sourceCanvas->readPixel(x, TRANSITION_HEIGHT / 2), 1.0f - shadow_intensity * 0.5f);
+                    
+                    for (int y = 0; y < TRANSITION_HEIGHT; y++) {
+                        _workCanvas->writePixel(x, y, shadow_color);
+                    }
                 }
             }
         }
     }
+
+    // 結果を画面に表示
+    _workCanvas->pushSprite(0, 0);
 }
 
-// ピクセル散布トランジション（E-Ink特化）
-void ScreenTransition::drawPixelScatterTransition()
+// ユーティリティ関数：キャンバスブレンド
+void ScreenTransition::blendCanvases(M5Canvas* src, M5Canvas* dst, float alpha)
 {
-    if (!_oldScreen || !_newScreen)
-        return;
-
-    float easedProgress = calculateEasing(_progress);
-
-    // 古い画面を基準に描画
-    _oldScreen->pushSprite(_workBuffer, 0, 0);
-
-    // E-Inkに最適化されたピクセル散布
-    // 大きなブロック単位で処理してE-Inkの更新を効率化
-    int blockSize = 8;
-    int totalBlocks = (_screenWidth / blockSize) * (_screenHeight / blockSize);
-    int blocksToUpdate = static_cast<int>(totalBlocks * easedProgress);
-
-    for (int i = 0; i < blocksToUpdate; i++)
-    {
-        int blockX = (rand() % (_screenWidth / blockSize)) * blockSize;
-        int blockY = (rand() % (_screenHeight / blockSize)) * blockSize;
-
-        _workBuffer->setClipRect(blockX, blockY, blockSize, blockSize);
-        _newScreen->pushSprite(_workBuffer, 0, 0);
-        _workBuffer->clearClipRect();
+    if (!src || !dst) return;
+    
+    alpha = std::max(0.0f, std::min(1.0f, alpha));
+    
+    for (int y = 0; y < TRANSITION_HEIGHT; y++) {
+        for (int x = 0; x < TRANSITION_WIDTH; x++) {
+            uint16_t src_color = src->readPixel(x, y);
+            uint16_t dst_color = dst->readPixel(x, y);
+            uint16_t blended = interpolateColor(src_color, dst_color, alpha);
+            dst->writePixel(x, y, blended);
+        }
     }
 }
 
-// 現在の画面をキャプチャ
-bool ScreenTransition::captureCurrentScreen()
+// ユーティリティ関数：キャンバス領域コピー
+void ScreenTransition::copyCanvasRegion(M5Canvas* src, M5Canvas* dst, int sx, int sy, int sw, int sh, int dx, int dy)
 {
-    if (!_display || !_oldScreen)
-    {
-        return false;
+    if (!src || !dst) return;
+    
+    for (int y = 0; y < sh; y++) {
+        for (int x = 0; x < sw; x++) {
+            int src_x = sx + x;
+            int src_y = sy + y;
+            int dst_x = dx + x;
+            int dst_y = dy + y;
+            
+            // 境界チェック
+            if (src_x >= 0 && src_x < TRANSITION_WIDTH && src_y >= 0 && src_y < TRANSITION_HEIGHT &&
+                dst_x >= 0 && dst_x < TRANSITION_WIDTH && dst_y >= 0 && dst_y < TRANSITION_HEIGHT) {
+                uint16_t pixel = src->readPixel(src_x, src_y);
+                dst->writePixel(dst_x, dst_y, pixel);
+            }
+        }
     }
-
-    // 現在の画面内容を古い画面スプライトにコピー
-    copyScreenToSprite(_oldScreen);
-    ESP_LOGD(TAG, "Current screen captured");
-    return true;
 }
 
-// 古い画面として現在の画面をキャプチャ
-bool ScreenTransition::captureOldScreen()
+// ユーティリティ関数：色補間
+uint32_t ScreenTransition::interpolateColor(uint32_t color1, uint32_t color2, float t)
 {
-    return captureCurrentScreen();
-}
-
-// 新しい画面を設定
-bool ScreenTransition::setNewScreen(lgfx::LGFX_Sprite *newScreen)
-{
-    if (!newScreen || !_newScreen)
-    {
-        return false;
-    }
-
-    // 新しい画面のデータを内部スプライトにコピー
-    newScreen->pushSprite(_newScreen, 0, 0);
-    ESP_LOGD(TAG, "New screen set");
-    return true;
-}
-
-// 現在の画面をスプライトにコピー
-void ScreenTransition::copyScreenToSprite(lgfx::LGFX_Sprite *sprite)
-{
-    if (!sprite || !_display)
-        return;
-
-    // M5GFXの制限により、実際の画面読み取りは困難
-    // 代替として、現在のフレームバッファの内容をコピー
-    // 実装では、描画前に明示的にキャプチャを要求する方式を推奨
-    sprite->fillSprite(TFT_BLACK); // 暫定的に黒で埋める
-
-    ESP_LOGD(TAG, "Screen copied to sprite");
-}
-
-// 即座に切り替え
-void ScreenTransition::immediateTransition()
-{
-    if (_newScreen)
-    {
-        _newScreen->pushSprite(_display, 0, 0);
-    }
-
-    _state = TransitionState::COMPLETED;
-    ESP_LOGI(TAG, "Immediate transition completed");
+    t = std::max(0.0f, std::min(1.0f, t));
+    
+    // RGB565からRGB888に変換
+    uint8_t r1 = (color1 >> 11) & 0x1F;
+    uint8_t g1 = (color1 >> 5) & 0x3F;
+    uint8_t b1 = color1 & 0x1F;
+    
+    uint8_t r2 = (color2 >> 11) & 0x1F;
+    uint8_t g2 = (color2 >> 5) & 0x3F;
+    uint8_t b2 = color2 & 0x1F;
+    
+    // 補間
+    uint8_t r = static_cast<uint8_t>(r1 + (r2 - r1) * t);
+    uint8_t g = static_cast<uint8_t>(g1 + (g2 - g1) * t);
+    uint8_t b = static_cast<uint8_t>(b1 + (b2 - b1) * t);
+    
+    // RGB565に戻す
+    return ((r & 0x1F) << 11) | ((g & 0x3F) << 5) | (b & 0x1F);
 }
 
 // トランジション停止
 void ScreenTransition::stopTransition()
 {
-    if (_state == TransitionState::TRANSITIONING)
-    {
-        _state = TransitionState::IDLE;
-        ESP_LOGI(TAG, "Transition stopped");
+    if (_state == TransitionState::RUNNING) {
+        _state = TransitionState::CANCELLED;
+        ESP_LOGI(TAG, "Transition cancelled");
     }
 }
 
-// リセット
-void ScreenTransition::reset()
+// 即座に画面切り替え
+void ScreenTransition::switchImmediate()
 {
-    _state = TransitionState::IDLE;
-    _progress = 0.0f;
-    _startTime = 0;
-    _lastStepTime = 0;
-    ESP_LOGI(TAG, "Transition reset");
+    if (_targetCanvas) {
+        _targetCanvas->pushSprite(0, 0);
+        ESP_LOGI(TAG, "Immediate screen switch");
+    }
 }
 
-// E-Ink最適化設定
-void ScreenTransition::setEInkOptimization(bool enable)
+// 簡易トランジション実行
+void ScreenTransition::transition(std::function<void(M5Canvas*)> prepare_func, const TransitionConfig& config)
 {
-    if (enable)
-    {
-        _config.stepDelay = 100; // E-Ink用に遅延を増加
-        ESP_LOGI(TAG, "E-Ink optimization enabled");
-    }
-    else
-    {
-        _config.stepDelay = 16; // 通常の60FPS相当
-        ESP_LOGI(TAG, "E-Ink optimization disabled");
-    }
-}
-
-bool ScreenTransition::isEInkOptimized() const
-{
-    return _config.stepDelay >= 50; // 50ms以上なら最適化モードと判定
-}
-
-// デバッグ用進行度描画
-void ScreenTransition::debugDrawProgress()
-{
-    if (!_display)
-        return;
-
-    int barWidth = 200;
-    int barHeight = 10;
-    int barX = (_screenWidth - barWidth) / 2;
-    int barY = _screenHeight - 30;
-
-    // プログレスバーの枠
-    _display->drawRect(barX, barY, barWidth, barHeight, TFT_WHITE);
-
-    // プログレスバーの中身
-    int fillWidth = static_cast<int>(barWidth * _progress);
-    _display->fillRect(barX + 1, barY + 1, fillWidth, barHeight - 2, TFT_WHITE);
-
-    // 進行度のテキスト表示
-    _display->setTextColor(TFT_WHITE);
-    _display->setTextSize(1);
-    _display->setCursor(barX, barY - 15);
-    _display->printf("Progress: %.1f%%", _progress * 100.0f);
-}
-
-// トランジション情報のログ出力
-void ScreenTransition::logTransitionInfo()
-{
-    ESP_LOGI(TAG, "=== Transition Info ===");
-    ESP_LOGI(TAG, "State: %d", static_cast<int>(_state));
-    ESP_LOGI(TAG, "Type: %d", static_cast<int>(_config.type));
-    ESP_LOGI(TAG, "Duration: %lu ms", _config.duration);
-    ESP_LOGI(TAG, "Progress: %.2f", _progress);
-    ESP_LOGI(TAG, "E-Ink optimized: %s", isEInkOptimized() ? "Yes" : "No");
-    ESP_LOGI(TAG, "====================");
-}
-
-// main/ScreenTransition.cpp に追加するデバッグ関数
-
-// 詳細なメモリ情報を表示する関数
-void ScreenTransition::debugMemoryInfo() {
-    ESP_LOGI(TAG, "=== Detailed Memory Analysis ===");
-    
-    // 基本的なヒープ情報
-    size_t total_heap = esp_get_free_heap_size();
-    size_t min_heap = esp_get_minimum_free_heap_size();
-    size_t largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
-    
-    ESP_LOGI(TAG, "General Heap:");
-    ESP_LOGI(TAG, "  Free: %zu bytes (%.2f MB)", total_heap, total_heap / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "  Min free: %zu bytes (%.2f MB)", min_heap, min_heap / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "  Largest block: %zu bytes (%.2f MB)", largest_block, largest_block / (1024.0f * 1024.0f));
-    
-    // PSRAM情報
-    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    size_t psram_largest = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
-    size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-    
-    ESP_LOGI(TAG, "PSRAM:");
-    ESP_LOGI(TAG, "  Total: %zu bytes (%.2f MB)", psram_total, psram_total / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "  Free: %zu bytes (%.2f MB)", psram_free, psram_free / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "  Largest block: %zu bytes (%.2f MB)", psram_largest, psram_largest / (1024.0f * 1024.0f));
-    
-    // 内部RAM情報
-    size_t internal_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    size_t internal_largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
-    size_t internal_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL);
-    
-    ESP_LOGI(TAG, "Internal RAM:");
-    ESP_LOGI(TAG, "  Total: %zu bytes (%.2f MB)", internal_total, internal_total / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "  Free: %zu bytes (%.2f MB)", internal_free, internal_free / (1024.0f * 1024.0f));
-    ESP_LOGI(TAG, "  Largest block: %zu bytes (%.2f MB)", internal_largest, internal_largest / (1024.0f * 1024.0f));
-    
-    ESP_LOGI(TAG, "==============================");
-}
-
-// M5GFXの対応色深度をテストする関数
-void ScreenTransition::testColorDepthSupport() {
-    ESP_LOGI(TAG, "=== Testing M5GFX Color Depth Support ===");
-    
-    // 小さなテストスプライトで各色深度をテスト
-    int test_sizes[] = {32, 64, 128, 256};
-    int color_depths[] = {1, 4, 8, 16, 24};
-    
-    for (int depth : color_depths) {
-        ESP_LOGI(TAG, "Testing %d-bit color depth:", depth);
-        
-        for (int size : test_sizes) {
-            lgfx::LGFX_Sprite* testSprite = new lgfx::LGFX_Sprite(_display);
-            
-            if (testSprite) {
-                testSprite->setColorDepth(depth);
-                bool success = testSprite->createSprite(size, size);
-                
-                ESP_LOGI(TAG, "  %dx%d sprite: %s", size, size, success ? "SUCCESS" : "FAILED");
-                
-                if (success) {
-                    testSprite->deleteSprite();
-                }
-                delete testSprite;
-            } else {
-                ESP_LOGE(TAG, "  Failed to allocate test sprite");
-                break;
-            }
-        }
-    }
-    
-    ESP_LOGI(TAG, "=====================================");
-}
-
-// 段階的にスプライトサイズを増やしてテストする関数
-void ScreenTransition::testSpriteAllocation() {
-    ESP_LOGI(TAG, "=== Testing Sprite Allocation Limits ===");
-    
-    // 8bit色深度で段階的にサイズを増やしてテスト
-    int test_widths[] = {100, 200, 300, 400, 500, 540};
-    int test_heights[] = {100, 200, 400, 600, 800, 960};
-    
-    for (int w : test_widths) {
-        for (int h : test_heights) {
-            size_t sprite_size = w * h * 1; // 8bit = 1byte
-            
-            ESP_LOGI(TAG, "Testing %dx%d sprite (%.2f KB):", 
-                     w, h, sprite_size / 1024.0f);
-            
-            // メモリ使用量を事前チェック
-            size_t free_before = esp_get_free_heap_size();
-            
-            lgfx::LGFX_Sprite* testSprite = new lgfx::LGFX_Sprite(_display);
-            
-            if (testSprite) {
-                testSprite->setColorDepth(8);
-                bool success = testSprite->createSprite(w, h);
-                
-                size_t free_after = esp_get_free_heap_size();
-                size_t used_memory = free_before - free_after;
-                
-                ESP_LOGI(TAG, "  Result: %s, Used memory: %zu bytes", 
-                         success ? "SUCCESS" : "FAILED", used_memory);
-                
-                if (success) {
-                    testSprite->deleteSprite();
-                } else {
-                    ESP_LOGE(TAG, "  FAILED at %dx%d - this is our limit!", w, h);
-                    delete testSprite;
-                    ESP_LOGI(TAG, "=====================================");
-                    return;
-                }
-                delete testSprite;
-            } else {
-                ESP_LOGE(TAG, "  Failed to allocate sprite object");
-                ESP_LOGI(TAG, "=====================================");
-                return;
-            }
-        }
-    }
-    
-    ESP_LOGI(TAG, "=====================================");
-}
-
-// PSRAMを明示的に使用してスプライトを作成する関数
-bool ScreenTransition::createSpriteInPSRAM(lgfx::LGFX_Sprite** sprite, int width, int height, int colorDepth) {
-    ESP_LOGI(TAG, "Attempting to create %dx%d sprite in PSRAM", width, height);
-    
-    // PSRAMにスプライトオブジェクトを確保
-    *sprite = (lgfx::LGFX_Sprite*)heap_caps_malloc(sizeof(lgfx::LGFX_Sprite), MALLOC_CAP_SPIRAM);
-    
-    if (*sprite) {
-        // プレースメント new でコンストラクタ呼び出し
-        new lgfx::LGFX_Sprite(_display);
-        
-        (*sprite)->setColorDepth(colorDepth);
-        
-        bool success = (*sprite)->createSprite(width, height);
-        
-        if (success) {
-            ESP_LOGI(TAG, "Successfully created sprite in PSRAM");
-            return true;
-        } else {
-            // 失敗時のクリーンアップ
-            (*sprite)->~LGFX_Sprite();  // デストラクタ呼び出し
-            heap_caps_free(*sprite);
-            *sprite = nullptr;
-            ESP_LOGE(TAG, "Failed to create sprite in PSRAM");
-            return false;
-        }
-    } else {
-        ESP_LOGE(TAG, "Failed to allocate sprite object in PSRAM");
-        return false;
-    }
-}
-
-
-// PSRAM の詳細状況を分析する関数
-void ScreenTransition::analyzePSRAMUsage() {
-    ESP_LOGI(TAG, "=== PSRAM Detailed Analysis ===");
-    
-    // 基本的なPSRAM情報
-    if (esp_psram_is_initialized()) {
-        ESP_LOGI(TAG, "PSRAM is initialized: YES");
-        size_t psram_size = esp_psram_get_size();
-        ESP_LOGI(TAG, "PSRAM total size: %zu bytes (%.2f MB)", 
-                 psram_size, psram_size / (1024.0f * 1024.0f));
-    } else {
-        ESP_LOGE(TAG, "PSRAM is NOT initialized!");
+    if (!_initialized) {
+        ESP_LOGE(TAG, "Not initialized");
         return;
     }
+
+    // 現在の画面をキャプチャ（実装依存）
+    captureSource();
     
-    // ヒープ統計情報
-    multi_heap_info_t heap_info;
-    heap_caps_get_info(&heap_info, MALLOC_CAP_SPIRAM);
+    // 次画面を準備
+    prepareTarget(prepare_func);
     
-    ESP_LOGI(TAG, "PSRAM Heap Statistics:");
-    ESP_LOGI(TAG, "  Total free bytes: %zu", heap_info.total_free_bytes);
-    ESP_LOGI(TAG, "  Total allocated bytes: %zu", heap_info.total_allocated_bytes);
-    ESP_LOGI(TAG, "  Largest free block: %zu", heap_info.largest_free_block);
-    ESP_LOGI(TAG, "  Minimum free bytes: %zu", heap_info.minimum_free_bytes);
-    ESP_LOGI(TAG, "  Allocated blocks: %zu", heap_info.allocated_blocks);
-    ESP_LOGI(TAG, "  Free blocks: %zu", heap_info.free_blocks);
-    ESP_LOGI(TAG, "  Total blocks: %zu", heap_info.total_blocks);
-    
-    // 現在のメモリ使用者を特定
-    ESP_LOGI(TAG, "Memory allocation test:");
-    
-    // PSRAMに大きなメモリブロックを確保してテスト
-    size_t test_sizes[] = {100*1024, 500*1024, 1024*1024, 2*1024*1024, 4*1024*1024};
-    
-    for (size_t test_size : test_sizes) {
-        void* test_ptr = heap_caps_malloc(test_size, MALLOC_CAP_SPIRAM);
-        if (test_ptr) {
-            ESP_LOGI(TAG, "  Successfully allocated %zu KB in PSRAM", test_size / 1024);
-            heap_caps_free(test_ptr);
-        } else {
-            ESP_LOGE(TAG, "  Failed to allocate %zu KB in PSRAM", test_size / 1024);
-        }
-    }
-    
-    ESP_LOGI(TAG, "===============================");
+    // トランジション開始
+    startTransition(config);
 }
 
-// 既存のメモリ使用量を確認する関数（修正版）
-void ScreenTransition::checkCurrentMemoryUsers() {
-    ESP_LOGI(TAG, "=== Current Memory Users Analysis ===");
-    
-    // vTaskListの代わりにタスク数などの基本情報を取得
-    ESP_LOGI(TAG, "FreeRTOS Task Information:");
-    ESP_LOGI(TAG, "  Number of tasks: %d", uxTaskGetNumberOfTasks());
-    ESP_LOGI(TAG, "  Free heap size: %lu bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "  Minimum free heap: %lu bytes", esp_get_minimum_free_heap_size());
-    
-    // 現在実行中のタスクの情報
-    TaskHandle_t current_task = xTaskGetCurrentTaskHandle();
-    if (current_task) {
-        ESP_LOGI(TAG, "  Current task: %s", pcTaskGetName(current_task));
-        ESP_LOGI(TAG, "  Current task priority: %d", (int)uxTaskPriorityGet(current_task));
-    }
-    
-    // ヒープ統計（内部RAM）
-    multi_heap_info_t internal_heap;
-    heap_caps_get_info(&internal_heap, MALLOC_CAP_INTERNAL);
-    
-    ESP_LOGI(TAG, "Internal RAM usage:");
-    ESP_LOGI(TAG, "  Used: %zu KB", internal_heap.total_allocated_bytes / 1024);
-    ESP_LOGI(TAG, "  Free: %zu KB", internal_heap.total_free_bytes / 1024);
-    ESP_LOGI(TAG, "  Largest block: %zu KB", internal_heap.largest_free_block / 1024);
-    ESP_LOGI(TAG, "  Allocated blocks: %zu", internal_heap.allocated_blocks);
-    ESP_LOGI(TAG, "  Free blocks: %zu", internal_heap.free_blocks);
-    
-    // PSRAM統計
-    multi_heap_info_t psram_heap;
-    heap_caps_get_info(&psram_heap, MALLOC_CAP_SPIRAM);
-    
-    ESP_LOGI(TAG, "PSRAM usage:");
-    ESP_LOGI(TAG, "  Used: %zu KB", psram_heap.total_allocated_bytes / 1024);
-    ESP_LOGI(TAG, "  Free: %zu KB", psram_heap.total_free_bytes / 1024);
-    ESP_LOGI(TAG, "  Largest block: %zu KB", psram_heap.largest_free_block / 1024);
-    ESP_LOGI(TAG, "  Allocated blocks: %zu", psram_heap.allocated_blocks);
-    ESP_LOGI(TAG, "  Free blocks: %zu", psram_heap.free_blocks);
-    
-    // 各メモリタイプの詳細情報
-    ESP_LOGI(TAG, "Memory capabilities breakdown:");
-    
-    // DMA可能メモリ
-    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA);
-    size_t dma_largest = heap_caps_get_largest_free_block(MALLOC_CAP_DMA);
-    ESP_LOGI(TAG, "  DMA capable: %zu KB free, %zu KB largest block", 
-             dma_free / 1024, dma_largest / 1024);
-    
-    // 32bit aligned メモリ
-    size_t aligned_free = heap_caps_get_free_size(MALLOC_CAP_32BIT);
-    size_t aligned_largest = heap_caps_get_largest_free_block(MALLOC_CAP_32BIT);
-    ESP_LOGI(TAG, "  32-bit aligned: %zu KB free, %zu KB largest block", 
-             aligned_free / 1024, aligned_largest / 1024);
-    
-    // 実行可能メモリ
-    size_t exec_free = heap_caps_get_free_size(MALLOC_CAP_EXEC);
-    ESP_LOGI(TAG, "  Executable: %zu KB free", exec_free / 1024);
-    
-    ESP_LOGI(TAG, "====================================");
+// プリセット設定関数
+TransitionConfig ScreenTransition::getFadeConfig(uint32_t duration_ms, uint32_t color)
+{
+    TransitionConfig config = TransitionConfig::defaultConfig();
+    config.type = (color == TFT_BLACK) ? TransitionType::FADE_BLACK : TransitionType::FADE_WHITE;
+    config.duration_ms = duration_ms;
+    config.color = color;
+    return config;
 }
 
-// M5GFXがPSRAMを使用できるかテストする関数
-void ScreenTransition::testM5GFXPSRAMCompatibility() {
-    ESP_LOGI(TAG, "=== Testing M5GFX PSRAM Compatibility ===");
-    
-    // 段階的にサイズを増やしてPSRAM強制でテスト
-    int test_widths[] = {200, 250, 300, 350, 400, 450, 500, 540};
-    int test_heights[] = {600, 700, 800, 900, 960};
-    
-    for (int w : test_widths) {
-        for (int h : test_heights) {
-            size_t sprite_memory = w * h * 1; // 8bit
-            
-            if (sprite_memory > 250*1024) break; // 250KB以上はスキップ
-            
-            ESP_LOGI(TAG, "Testing %dx%d (%.1f KB) with PSRAM preference", 
-                     w, h, sprite_memory / 1024.0f);
-            
-            // M5GFXが内部でPSRAMを使うように誘導
-            // （M5GFXの内部実装次第だが...）
-            
-            lgfx::LGFX_Sprite* test_sprite = new lgfx::LGFX_Sprite(_display);
-            if (test_sprite) {
-                test_sprite->setColorDepth(8);
-                
-                // 大きなメモリを事前確保してからスプライト作成
-                void* dummy_alloc = heap_caps_malloc(1024*1024, MALLOC_CAP_SPIRAM);
-                
-                bool success = test_sprite->createSprite(w, h);
-                
-                if (dummy_alloc) heap_caps_free(dummy_alloc);
-                
-                ESP_LOGI(TAG, "  Result: %s", success ? "SUCCESS" : "FAILED");
-                
-                if (success) {
-                    test_sprite->deleteSprite();
-                }
-                delete test_sprite;
-                
-                if (!success) {
-                    ESP_LOGE(TAG, "M5GFX limit reached at %dx%d", w, h);
-                    break;
-                }
-            }
-        }
-    }
-    
-    ESP_LOGI(TAG, "========================================");
+TransitionConfig ScreenTransition::getSlideConfig(TransitionType slide_type, uint32_t duration_ms)
+{
+    TransitionConfig config = TransitionConfig::defaultConfig();
+    config.type = slide_type;
+    config.duration_ms = duration_ms;
+    config.easing = EasingType::EASE_OUT;
+    return config;
 }
 
-// 分割スプライト戦略のテスト
-void ScreenTransition::testDividedSpriteStrategy() {
-    ESP_LOGI(TAG, "=== Testing Divided Sprite Strategy ===");
-    
-    // 画面を分割する戦略をテスト
-    struct DivisionStrategy {
-        int divisions_x;
-        int divisions_y; 
-        const char* name;
-    };
-    
-    DivisionStrategy strategies[] = {
-        {2, 2, "4 tiles (270x480 each)"},
-        {3, 2, "6 tiles (180x480 each)"},
-        {2, 3, "6 tiles (270x320 each)"},
-        {3, 3, "9 tiles (180x320 each)"},
-        {4, 3, "12 tiles (135x320 each)"},
-        {4, 4, "16 tiles (135x240 each)"}
-    };
-    
-    for (auto& strategy : strategies) {
-        int tile_width = _screenWidth / strategy.divisions_x;
-        int tile_height = _screenHeight / strategy.divisions_y;
-        size_t tile_size = tile_width * tile_height * 1; // 8bit
-        size_t total_memory = tile_size * 3; // 3つのスプライト（old, new, work）
-        
-        ESP_LOGI(TAG, "Strategy: %s", strategy.name);
-        ESP_LOGI(TAG, "  Tile size: %dx%d (%zu KB)", 
-                 tile_width, tile_height, tile_size / 1024);
-        ESP_LOGI(TAG, "  Total memory: %zu KB", total_memory / 1024);
-        
-        // 実際にタイルサイズでスプライト作成をテスト
-        lgfx::LGFX_Sprite* test_tile = new lgfx::LGFX_Sprite(_display);
-        if (test_tile) {
-            test_tile->setColorDepth(8);
-            bool success = test_tile->createSprite(tile_width, tile_height);
-            
-            ESP_LOGI(TAG, "  Feasibility: %s", success ? "VIABLE" : "NOT VIABLE");
-            
-            if (success) {
-                test_tile->deleteSprite();
-            }
-            delete test_tile;
-        }
-        
-        ESP_LOGI(TAG, "");
-    }
-    
-    ESP_LOGI(TAG, "======================================");
+TransitionConfig ScreenTransition::getCircleConfig(TransitionType circle_type, uint32_t duration_ms)
+{
+    TransitionConfig config = TransitionConfig::defaultConfig();
+    config.type = circle_type;
+    config.duration_ms = duration_ms;
+    config.easing = EasingType::EASE_IN_OUT;
+    return config;
 }
 
-// メモリ断片化の状況を確認
-void ScreenTransition::checkMemoryFragmentation() {
-    ESP_LOGI(TAG, "=== Memory Fragmentation Analysis ===");
-    
-    // 断片化をテストするため、様々なサイズで確保・解放を試す
-    size_t test_sizes[] = {1024, 4096, 16384, 65536, 262144, 1048576}; // 1KB～1MB
-    
-    ESP_LOGI(TAG, "PSRAM fragmentation test:");
-    for (size_t size : test_sizes) {
-        size_t successful_allocs = 0;
-        void* ptrs[100]; // 最大100個まで確保
-        
-        // 指定サイズのメモリを可能な限り確保
-        for (int i = 0; i < 100; i++) {
-            ptrs[i] = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            if (ptrs[i]) {
-                successful_allocs++;
-            } else {
-                break;
-            }
-        }
-        
-        // 確保したメモリを解放
-        for (size_t i = 0; i < successful_allocs; i++) {
-            heap_caps_free(ptrs[i]);
-        }
-        
-        ESP_LOGI(TAG, "  %zu byte blocks: %zu successful allocations", 
-                 size, successful_allocs);
-    }
-    
-    ESP_LOGI(TAG, "===================================");
+TransitionConfig ScreenTransition::getEffectConfig(TransitionType effect_type, uint32_t duration_ms)
+{
+    TransitionConfig config = TransitionConfig::defaultConfig();
+    config.type = effect_type;
+    config.duration_ms = duration_ms;
+    config.easing = EasingType::EASE_IN_OUT;
+    return config;
 }

@@ -1,224 +1,243 @@
 // main/ScreenTransition.hpp
+// アドベンチャーゲーム用画面トランジションシステム
+// M5Canvasを使用したPSRAMダブルバッファリング対応
+
 #ifndef _SCREEN_TRANSITION_HPP_
 #define _SCREEN_TRANSITION_HPP_
 
 #include <M5GFX.h>
 #include <functional>
-#include "esp_log.h"
-#include "esp_timer.h"
-#include "esp_heap_caps.h"    // ヒープメモリ情報取得用
-#include "esp_system.h"       // システム情報取得用
-#include <new>                // std::nothrow用
+#include <vector>
 
-// タイル分割設定
-struct TileConfig {
-    int tiles_x;          // 水平方向のタイル数
-    int tiles_y;          // 垂直方向のタイル数
-    int tile_width;       // 各タイルの幅
-    int tile_height;      // 各タイルの高さ
-    size_t tile_memory;   // 各タイルのメモリ使用量
-    bool is_viable;       // 実現可能かどうか
-};
+// M5PaperS3の画面解像度
+#define TRANSITION_WIDTH  540
+#define TRANSITION_HEIGHT 960
 
-// 最適化モードの列挙型（メモリ不足対策）
-enum class OptimizationMode {
-    FULL_SCREEN,        // フルスクリーントランジション
-    COLOR_DEPTH_4BIT,   // 4bit色深度で最適化
-    PARTIAL_SCREEN,     // 部分画面トランジション
-    DIRECT_DRAW         // スプライトを使わず直接描画
-};
-
-// トランジション効果の種類
+/**
+ * @brief トランジション効果の種類
+ * アドベンチャーゲームでよく使われる効果を網羅
+ */
 enum class TransitionType {
-    NONE,           // トランジションなし（即座に切り替え）
-    FADE,           // フェードイン/フェードアウト
-    SLIDE_LEFT,     // 左からスライドイン
-    SLIDE_RIGHT,    // 右からスライドイン
-    SLIDE_UP,       // 上からスライドイン
-    SLIDE_DOWN,     // 下からスライドイン
-    WIPE_LEFT,      // 左からワイプ
-    WIPE_RIGHT,     // 右からワイプ
-    WIPE_UP,        // 上からワイプ
-    WIPE_DOWN,      // 下からワイプ
-    DISSOLVE,       // ディゾルブ（ランダムドット）
-    PUSH_LEFT,      // 左にプッシュ（現在の画面を押し出す）
-    PUSH_RIGHT,     // 右にプッシュ
-    PUSH_UP,        // 上にプッシュ
-    PUSH_DOWN,      // 下にプッシュ
-    IRIS_IN,        // アイリス（円形）イン
-    IRIS_OUT,       // アイリス（円形）アウト
-    BLINDS_H,       // 水平ブラインド
-    BLINDS_V,       // 垂直ブラインド
-    CHECKERBOARD,   // チェッカーボード
-    SPIRAL,         // スパイラル
-    PIXEL_SCATTER   // ピクセル散布（E-Ink特化）
+    NONE,              // トランジションなし（即座に切り替え）
+    FADE_BLACK,        // 黒フェード（クラシック）
+    FADE_WHITE,        // 白フェード（回想シーン用）
+    SLIDE_LEFT,        // 左スライド（場面転換）
+    SLIDE_RIGHT,       // 右スライド（時間遡行）
+    SLIDE_UP,          // 上スライド（上昇感）
+    SLIDE_DOWN,        // 下スライド（落下感）
+    WIPE_LEFT,         // 左ワイプ（ページめくり風）
+    WIPE_RIGHT,        // 右ワイプ（ページめくり風逆）
+    CIRCLE_EXPAND,     // 円形拡大（フォーカス効果）
+    CIRCLE_SHRINK,     // 円形縮小（望遠鏡効果）
+    PIXELATE,          // ピクセル化（デジタル効果）
+    VENETIAN_BLIND,    // ブラインド効果（サスペンス）
+    CHECKERBOARD,      // チェッカーボード（パズル風）
+    SPIRAL,            // 螺旋効果（幻想的）
+    RIPPLE,            // 波紋効果（水面のような）
+    MOSAIC,            // モザイク効果（記憶の断片）
+    PAGE_TURN          // ページめくり効果（本を読む感覚）
 };
 
-// トランジションの状態
+/**
+ * @brief トランジションの方向指定
+ */
+enum class TransitionDirection {
+    IN,     // 新しい画面が入ってくる
+    OUT,    // 現在の画面が出ていく
+    BOTH    // 両方向同時（クロスフェード等）
+};
+
+/**
+ * @brief イージング関数の種類
+ * アニメーションの動きに変化をつける
+ */
+enum class EasingType {
+    LINEAR,        // 線形（一定速度）
+    EASE_IN,       // ゆっくり始まって加速
+    EASE_OUT,      // 速く始まってゆっくり終わる
+    EASE_IN_OUT,   // ゆっくり始まってゆっくり終わる
+    BOUNCE,        // バウンス（跳ね返り）
+    ELASTIC,       // エラスティック（ゴムのような）
+    BACK,          // バック（少し逆方向に動いてから進む）
+    CUBIC          // 3次ベジェ曲線
+};
+
+/**
+ * @brief トランジション状態
+ */
 enum class TransitionState {
-    IDLE,           // アイドル状態
-    TRANSITIONING,  // トランジション実行中
-    COMPLETED       // トランジション完了
+    IDLE,       // 待機中
+    RUNNING,    // 実行中
+    FINISHED,   // 完了
+    CANCELLED   // キャンセル
 };
 
-// トランジション設定構造体
+/**
+ * @brief トランジション設定構造体
+ */
 struct TransitionConfig {
-    TransitionType type;        // トランジションタイプ
-    uint32_t duration;          // 継続時間（ミリ秒）
-    bool useEasing;             // イージング使用フラグ
-    float easingPower;          // イージングの強さ（1.0 = リニア、2.0 = クアドラティック）
-    uint32_t stepDelay;         // ステップ間の遅延（E-Ink用、ミリ秒）
-    bool preserveOldScreen;     // 古い画面を保持するかどうか
+    TransitionType type;           // トランジション種類
+    uint32_t duration_ms;          // 継続時間（ミリ秒）
+    EasingType easing;            // イージング関数
+    TransitionDirection direction; // 方向
+    uint32_t color;               // フェード色等で使用
+    bool use_psram;               // PSRAM使用フラグ
+    float speed_multiplier;       // 速度倍率（1.0が標準）
+    bool reverse;                 // 逆方向フラグ
     
-    // デフォルト設定を返す静的メソッド
+    // デフォルト設定
     static TransitionConfig defaultConfig() {
         return {
-            TransitionType::FADE,   // デフォルトはフェード
-            1000,                   // 1秒間
-            true,                   // イージング使用
-            2.0f,                   // クアドラティックイージング
-            50,                     // E-Ink用50ms遅延
-            true                    // 古い画面を保持
+            TransitionType::FADE_BLACK,   // 標準的な黒フェード
+            1000,                         // 1秒
+            EasingType::EASE_IN_OUT,      // スムーズな動き
+            TransitionDirection::BOTH,    // 両方向
+            TFT_BLACK,                    // 黒色
+            true,                         // PSRAM使用
+            1.0f,                         // 標準速度
+            false                         // 通常方向
         };
     }
 };
 
-// 画面トランジション管理クラス
+/**
+ * @brief ScreenTransitionクラス
+ * アドベンチャーゲーム用の高機能画面遷移システム
+ */
 class ScreenTransition {
 private:
-    static const char* TAG;                     // ログタグ
+    M5GFX* _display;              // 描画先ディスプレイ
+    bool _initialized;            // 初期化フラグ
+    bool _use_psram;              // PSRAM使用フラグ
     
-    M5GFX* _display;                           // ディスプレイへの参照
-    lgfx::LGFX_Sprite* _oldScreen;             // 古い画面のスプライト
-    lgfx::LGFX_Sprite* _newScreen;             // 新しい画面のスプライト
-    lgfx::LGFX_Sprite* _workBuffer;            // 作業用バッファ
+    // ダブルバッファリング用キャンバス
+    M5Canvas* _sourceCanvas;      // 元画面のキャンバス
+    M5Canvas* _targetCanvas;      // 次画面のキャンバス
+    M5Canvas* _workCanvas;        // 作業用キャンバス
     
-    // タイル分割用スプライト
-    lgfx::LGFX_Sprite* _oldTile;               // 古い画面のタイル
-    lgfx::LGFX_Sprite* _newTile;               // 新しい画面のタイル
-    lgfx::LGFX_Sprite* _workTile;              // 作業用タイル
-    TileConfig _tileConfig;                    // タイル分割設定
+    // トランジション状態管理
+    TransitionState _state;       // 現在の状態
+    TransitionConfig _config;     // 現在の設定
+    int64_t _startTime;           // 開始時刻
+    int64_t _currentTime;         // 現在時刻
+    float _progress;              // 進行度（0.0-1.0）
     
-    TransitionState _state;                     // 現在の状態
-    TransitionConfig _config;                   // 現在の設定
-    OptimizationMode _optimizedMode;            // 最適化モード
-    
-    uint64_t _startTime;                       // トランジション開始時刻
-    uint64_t _lastStepTime;                    // 最後のステップ実行時刻
-    float _progress;                           // 進行度（0.0 - 1.0）
-    
-    int _screenWidth;                          // 画面幅
-    int _screenHeight;                         // 画面高さ
-    
-    // コールバック関数の型定義
-    using TransitionCallback = std::function<void()>;
-    TransitionCallback _onTransitionStart;      // トランジション開始時のコールバック
-    TransitionCallback _onTransitionComplete;  // トランジション完了時のコールバック
-    TransitionCallback _onTransitionStep;      // 各ステップでのコールバック
+    // コールバック関数
+    std::function<void()> _onTransitionStart;     // 開始時コールバック
+    std::function<void(float)> _onTransitionProgress; // 進行中コールバック
+    std::function<void()> _onTransitionComplete;  // 完了時コールバック
     
     // 内部メソッド
-    void initializeSprites();                  // スプライトの初期化
-    bool initializeSprites(int colorDepth);    // 色深度指定版
-    bool initPartialTransition();              // 部分トランジション初期化
-    bool initTileBasedTransition();            // タイル分割初期化
-    void cleanupSprites();                     // スプライトの解放
-    void cleanupTileSprites();                 // タイルスプライトの解放
-    
-    // タイル分割関連メソッド
-    TileConfig selectOptimalTileConfig();      // 最適なタイル設定選択
-    void executeTileBasedTransition();         // タイル分割トランジション実行
-    void executeTileFade(int tilesToUpdate, int totalTiles);     // タイルフェード
-    void executeTileWipeLeft(int tilesToUpdate);                 // タイル左ワイプ
-    void executeTileWipeRight(int tilesToUpdate);                // タイル右ワイプ
-    void executeTileDissolve(int tilesToUpdate, int totalTiles); // タイルディゾルブ
-    void executeTileRandom(int tilesToUpdate, int totalTiles);   // タイルランダム
-    void updateSingleTile(int tile_x, int tile_y, bool useNewScreen); // 単一タイル更新
-    float calculateEasing(float t);            // イージング計算
-    uint64_t getCurrentTime();                 // 現在時刻取得（マイクロ秒）
+    void cleanup();                               // リソース解放
+    bool createCanvases();                        // キャンバス作成
+    void updateProgress();                        // 進行度更新
+    float applyEasing(float t);                   // イージング適用
     
     // 各トランジション効果の実装
-    void executeTransition();                  // トランジション実行
-    void executePartialTransition();           // 部分トランジション実行
-    void drawFadeTransition();                 // フェードトランジション
-    void drawSlideTransition();                // スライドトランジション
-    void drawWipeTransition();                 // ワイプトランジション
-    void drawDissolveTransition();             // ディゾルブトランジション
-    void drawPushTransition();                 // プッシュトランジション
-    void drawIrisTransition();                 // アイリストランジション
-    void drawBlindsTransition();               // ブラインドトランジション
-    void drawCheckerboardTransition();         // チェッカーボードトランジション
-    void drawSpiralTransition();               // スパイラルトランジション
-    void drawPixelScatterTransition();         // ピクセル散布トランジション（E-Ink特化）
+    void renderFade(float progress);              // フェード効果
+    void renderSlide(float progress);             // スライド効果
+    void renderWipe(float progress);              // ワイプ効果
+    void renderCircle(float progress);            // 円形効果
+    void renderPixelate(float progress);          // ピクセル化効果
+    void renderVenetianBlind(float progress);     // ブラインド効果
+    void renderCheckerboard(float progress);      // チェッカーボード効果
+    void renderSpiral(float progress);            // 螺旋効果
+    void renderRipple(float progress);            // 波紋効果
+    void renderMosaic(float progress);            // モザイク効果
+    void renderPageTurn(float progress);          // ページめくり効果
     
-    // ヘルパーメソッド
-    void blendSprites(float alpha);            // スプライトのアルファブレンド
-    void copyScreenToSprite(lgfx::LGFX_Sprite* sprite); // 現在の画面をスプライトにコピー
-    bool shouldStepNow();                      // ステップを実行すべきかどうか
-    
-    // デバッグ・調査用メソッド
-    void debugMemoryInfo();                    // 詳細なメモリ情報表示
-    void testColorDepthSupport();              // M5GFXの色深度サポートテスト
-    void testSpriteAllocation();               // スプライト割り当て限界テスト
-    bool createSpriteInPSRAM(lgfx::LGFX_Sprite** sprite, int width, int height, int colorDepth); // PSRAM使用
-    
-    // PSRAM詳細分析用メソッド
-    void analyzePSRAMUsage();                  // PSRAM使用状況詳細分析
-    void checkCurrentMemoryUsers();            // 現在のメモリ使用者確認
-    void testM5GFXPSRAMCompatibility();        // M5GFXのPSRAM互換性テスト
-    void testDividedSpriteStrategy();          // 分割スプライト戦略テスト
-    void checkMemoryFragmentation();           // メモリ断片化確認
-    
+    // ユーティリティ関数
+    void blendCanvases(M5Canvas* src, M5Canvas* dst, float alpha);
+    void copyCanvasRegion(M5Canvas* src, M5Canvas* dst, int sx, int sy, int sw, int sh, int dx, int dy);
+    uint32_t interpolateColor(uint32_t color1, uint32_t color2, float t);
+    void applyImageEffect(M5Canvas* canvas, float intensity);
+
 public:
-    // コンストラクタ・デストラクタ
+    /**
+     * @brief コンストラクタ
+     * @param display M5GFXディスプレイオブジェクト
+     */
     ScreenTransition(M5GFX* display);
+    
+    /**
+     * @brief デストラクタ
+     */
     ~ScreenTransition();
     
-    // 初期化
-    bool init();
+    /**
+     * @brief 初期化処理
+     * @param use_psram PSRAM使用フラグ
+     * @return 成功時true
+     */
+    bool init(bool use_psram = true);
     
-    // トランジション開始
-    bool startTransition(TransitionType type, uint32_t duration = 1000);
-    bool startTransition(const TransitionConfig& config);
+    /**
+     * @brief 元画面のキャプチャ
+     * 現在の画面をソースキャンバスに保存
+     */
+    void captureSource();
     
-    // 更新処理（メインループで呼び出す）
-    bool update();
+    /**
+     * @brief 次画面の準備
+     * @param prepare_func 次画面を描画する関数
+     */
+    void prepareTarget(std::function<void(M5Canvas*)> prepare_func);
     
-    // 状態取得
-    TransitionState getState() const { return _state; }
-    bool isTransitioning() const { return _state == TransitionState::TRANSITIONING; }
-    bool isCompleted() const { return _state == TransitionState::COMPLETED; }
-    float getProgress() const { return _progress; }
+    /**
+     * @brief トランジション開始
+     * @param config トランジション設定
+     * @return 成功時true
+     */
+    bool startTransition(const TransitionConfig& config = TransitionConfig::defaultConfig());
     
-    // 画面キャプチャ
-    bool captureCurrentScreen();               // 現在の画面をキャプチャ
-    bool captureOldScreen();                   // 古い画面として現在の画面をキャプチャ
-    bool setNewScreen(lgfx::LGFX_Sprite* newScreen); // 新しい画面を設定
+    /**
+     * @brief トランジション更新（メインループで呼び出し）
+     * @return 継続中ならtrue、完了ならfalse
+     */
+    bool updateTransition();
     
-    // 設定
-    void setConfig(const TransitionConfig& config) { _config = config; }
-    const TransitionConfig& getConfig() const { return _config; }
-    
-    // コールバック設定
-    void setOnTransitionStart(TransitionCallback callback) { _onTransitionStart = callback; }
-    void setOnTransitionComplete(TransitionCallback callback) { _onTransitionComplete = callback; }
-    void setOnTransitionStep(TransitionCallback callback) { _onTransitionStep = callback; }
-    
-    // 即座に切り替え（トランジションなし）
-    void immediateTransition();
-    
-    // トランジション停止
+    /**
+     * @brief トランジション停止
+     */
     void stopTransition();
     
-    // リセット
-    void reset();
+    /**
+     * @brief 即座に画面切り替え（トランジションなし）
+     */
+    void switchImmediate();
     
-    // E-Ink最適化関連
-    void setEInkOptimization(bool enable);     // E-Ink最適化の有効/無効
-    bool isEInkOptimized() const;              // E-Ink最適化が有効かどうか
+    /**
+     * @brief 簡易トランジション実行
+     * キャプチャ→準備→実行を一括で行う便利関数
+     * @param prepare_func 次画面を描画する関数
+     * @param config トランジション設定
+     */
+    void transition(std::function<void(M5Canvas*)> prepare_func, 
+                   const TransitionConfig& config = TransitionConfig::defaultConfig());
     
-    // デバッグ用
-    void debugDrawProgress();                  // 進行度の描画（デバッグ用）
-    void logTransitionInfo();                  // トランジション情報のログ出力
+    // ゲッター
+    TransitionState getState() const { return _state; }
+    float getProgress() const { return _progress; }
+    bool isRunning() const { return _state == TransitionState::RUNNING; }
+    bool isFinished() const { return _state == TransitionState::FINISHED; }
+    
+    // コールバック設定
+    void setOnTransitionStart(std::function<void()> callback) { _onTransitionStart = callback; }
+    void setOnTransitionProgress(std::function<void(float)> callback) { _onTransitionProgress = callback; }
+    void setOnTransitionComplete(std::function<void()> callback) { _onTransitionComplete = callback; }
+    
+    // ユーティリティ
+    M5Canvas* getSourceCanvas() { return _sourceCanvas; }
+    M5Canvas* getTargetCanvas() { return _targetCanvas; }
+    M5Canvas* getWorkCanvas() { return _workCanvas; }
+    
+    /**
+     * @brief プリセット設定の取得
+     */
+    static TransitionConfig getFadeConfig(uint32_t duration_ms = 1000, uint32_t color = TFT_BLACK);
+    static TransitionConfig getSlideConfig(TransitionType slide_type, uint32_t duration_ms = 800);
+    static TransitionConfig getCircleConfig(TransitionType circle_type, uint32_t duration_ms = 1200);
+    static TransitionConfig getEffectConfig(TransitionType effect_type, uint32_t duration_ms = 1500);
 };
 
 #endif // _SCREEN_TRANSITION_HPP_
