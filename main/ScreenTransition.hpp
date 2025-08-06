@@ -1,6 +1,5 @@
 // main/ScreenTransition.hpp
-// アドベンチャーゲーム用画面トランジションシステム
-// M5Canvasを使用したPSRAMダブルバッファリング対応
+// ステップベース画面遷移システム（E-Paper最適化版）
 
 #ifndef _SCREEN_TRANSITION_HPP_
 #define _SCREEN_TRANSITION_HPP_
@@ -15,7 +14,7 @@
 
 /**
  * @brief トランジション効果の種類
- * アドベンチャーゲームでよく使われる効果を網羅
+ * E-Paper最適化版
  */
 enum class TransitionType {
     NONE,              // トランジションなし（即座に切り替え）
@@ -39,27 +38,24 @@ enum class TransitionType {
 };
 
 /**
- * @brief トランジションの方向指定
+ * @brief トランジション速度設定
+ * ステップ数で速度を制御
+ */
+enum class TransitionSpeed {
+    VERY_FAST = 2,     // 2ステップ（超高速）
+    FAST = 4,          // 4ステップ（高速）
+    NORMAL = 8,        // 8ステップ（標準）
+    SLOW = 16,         // 16ステップ（ゆっくり）
+    VERY_SLOW = 32     // 32ステップ（非常にゆっくり）
+};
+
+/**
+ * @brief トランジション方向指定
  */
 enum class TransitionDirection {
     IN,     // 新しい画面が入ってくる
     OUT,    // 現在の画面が出ていく
     BOTH    // 両方向同時（クロスフェード等）
-};
-
-/**
- * @brief イージング関数の種類
- * アニメーションの動きに変化をつける
- */
-enum class EasingType {
-    LINEAR,        // 線形（一定速度）
-    EASE_IN,       // ゆっくり始まって加速
-    EASE_OUT,      // 速く始まってゆっくり終わる
-    EASE_IN_OUT,   // ゆっくり始まってゆっくり終わる
-    BOUNCE,        // バウンス（跳ね返り）
-    ELASTIC,       // エラスティック（ゴムのような）
-    BACK,          // バック（少し逆方向に動いてから進む）
-    CUBIC          // 3次ベジェ曲線
 };
 
 /**
@@ -73,36 +69,34 @@ enum class TransitionState {
 };
 
 /**
- * @brief トランジション設定構造体
+ * @brief ステップベーストランジション設定構造体
  */
 struct TransitionConfig {
     TransitionType type;           // トランジション種類
-    uint32_t duration_ms;          // 継続時間（ミリ秒）
-    EasingType easing;            // イージング関数
+    TransitionSpeed speed;         // 速度（ステップ数）
     TransitionDirection direction; // 方向
-    uint32_t color;               // フェード色等で使用
+    uint32_t step_delay_ms;        // ステップ間の待機時間（ミリ秒）
+    uint32_t fade_color;          // フェード色（白黒のみ）
     bool use_psram;               // PSRAM使用フラグ
-    float speed_multiplier;       // 速度倍率（1.0が標準）
     bool reverse;                 // 逆方向フラグ
     
     // デフォルト設定
     static TransitionConfig defaultConfig() {
         return {
             TransitionType::FADE_BLACK,   // 標準的な黒フェード
-            1000,                         // 1秒
-            EasingType::EASE_IN_OUT,      // スムーズな動き
+            TransitionSpeed::NORMAL,      // 8ステップ
             TransitionDirection::BOTH,    // 両方向
+            150,                          // 150ms間隔（E-Paper最適）
             TFT_BLACK,                    // 黒色
             true,                         // PSRAM使用
-            1.0f,                         // 標準速度
             false                         // 通常方向
         };
     }
 };
 
 /**
- * @brief ScreenTransitionクラス
- * アドベンチャーゲーム用の高機能画面遷移システム
+ * @brief ステップベースScreenTransitionクラス
+ * E-Paper最適化版
  */
 class ScreenTransition {
 private:
@@ -115,42 +109,43 @@ private:
     M5Canvas* _targetCanvas;      // 次画面のキャンバス
     M5Canvas* _workCanvas;        // 作業用キャンバス
     
-    // トランジション状態管理
+    // ステップベース状態管理
     TransitionState _state;       // 現在の状態
     TransitionConfig _config;     // 現在の設定
-    int64_t _startTime;           // 開始時刻
-    int64_t _currentTime;         // 現在時刻
-    float _progress;              // 進行度（0.0-1.0）
+    int _currentStep;             // 現在のステップ（0から開始）
+    int _totalSteps;              // 総ステップ数
+    int64_t _lastStepTime;        // 最後のステップ実行時刻
     
     // コールバック関数
-    std::function<void()> _onTransitionStart;     // 開始時コールバック
-    std::function<void(float)> _onTransitionProgress; // 進行中コールバック
-    std::function<void()> _onTransitionComplete;  // 完了時コールバック
+    std::function<void()> _onTransitionStart;                    // 開始時コールバック
+    std::function<void(int, int)> _onTransitionStep;            // ステップ進行コールバック
+    std::function<void()> _onTransitionComplete;                // 完了時コールバック
     
     // 内部メソッド
     void cleanup();                               // リソース解放
     bool createCanvases();                        // キャンバス作成
-    void updateProgress();                        // 進行度更新
-    float applyEasing(float t);                   // イージング適用
+    float getStepProgress() const;                      // 現在ステップの進行度取得
+    bool isStepReady();                          // 次ステップ実行可能かチェック
+    void executeStep();                          // 1ステップ実行
     
-    // 各トランジション効果の実装
-    void renderFade(float progress);              // フェード効果
-    void renderSlide(float progress);             // スライド効果
-    void renderWipe(float progress);              // ワイプ効果
-    void renderCircle(float progress);            // 円形効果
-    void renderPixelate(float progress);          // ピクセル化効果
-    void renderVenetianBlind(float progress);     // ブラインド効果
-    void renderCheckerboard(float progress);      // チェッカーボード効果
-    void renderSpiral(float progress);            // 螺旋効果
-    void renderRipple(float progress);            // 波紋効果
-    void renderMosaic(float progress);            // モザイク効果
-    void renderPageTurn(float progress);          // ページめくり効果
+    // 各トランジション効果の実装（ステップベース）
+    void renderFadeStep(int step, int totalSteps);              // フェード効果
+    void renderSlideStep(int step, int totalSteps);             // スライド効果
+    void renderWipeStep(int step, int totalSteps);              // ワイプ効果
+    void renderCircleStep(int step, int totalSteps);            // 円形効果
+    void renderPixelateStep(int step, int totalSteps);          // ピクセル化効果
+    void renderVenetianBlindStep(int step, int totalSteps);     // ブラインド効果
+    void renderCheckerboardStep(int step, int totalSteps);      // チェッカーボード効果
+    void renderSpiralStep(int step, int totalSteps);            // 螺旋効果
+    void renderRippleStep(int step, int totalSteps);            // 波紋効果
+    void renderMosaicStep(int step, int totalSteps);            // モザイク効果
+    void renderPageTurnStep(int step, int totalSteps);          // ページめくり効果
     
-    // ユーティリティ関数
-    void blendCanvases(M5Canvas* src, M5Canvas* dst, float alpha);
+    // E-Paper最適化ユーティリティ関数
     void copyCanvasRegion(M5Canvas* src, M5Canvas* dst, int sx, int sy, int sw, int sh, int dx, int dy);
-    uint32_t interpolateColor(uint32_t color1, uint32_t color2, float t);
-    void applyImageEffect(M5Canvas* canvas, float intensity);
+    void blendCanvasesGrayscale(M5Canvas* src, M5Canvas* dst, float alpha);
+    uint16_t getGrayscaleColor(float intensity);                // 0.0(黒) - 1.0(白)
+    void fillCanvasGradient(M5Canvas* canvas, uint16_t color1, uint16_t color2, bool horizontal);
 
 public:
     /**
@@ -217,13 +212,15 @@ public:
     
     // ゲッター
     TransitionState getState() const { return _state; }
-    float getProgress() const { return _progress; }
+    int getCurrentStep() const { return _currentStep; }
+    int getTotalSteps() const { return _totalSteps; }
+    float getProgress() const { return getStepProgress(); }
     bool isRunning() const { return _state == TransitionState::RUNNING; }
     bool isFinished() const { return _state == TransitionState::FINISHED; }
     
     // コールバック設定
     void setOnTransitionStart(std::function<void()> callback) { _onTransitionStart = callback; }
-    void setOnTransitionProgress(std::function<void(float)> callback) { _onTransitionProgress = callback; }
+    void setOnTransitionStep(std::function<void(int, int)> callback) { _onTransitionStep = callback; }
     void setOnTransitionComplete(std::function<void()> callback) { _onTransitionComplete = callback; }
     
     // ユーティリティ
@@ -234,10 +231,20 @@ public:
     /**
      * @brief プリセット設定の取得
      */
-    static TransitionConfig getFadeConfig(uint32_t duration_ms = 1000, uint32_t color = TFT_BLACK);
-    static TransitionConfig getSlideConfig(TransitionType slide_type, uint32_t duration_ms = 800);
-    static TransitionConfig getCircleConfig(TransitionType circle_type, uint32_t duration_ms = 1200);
-    static TransitionConfig getEffectConfig(TransitionType effect_type, uint32_t duration_ms = 1500);
+    static TransitionConfig getFadeConfig(TransitionSpeed speed = TransitionSpeed::NORMAL, 
+                                        uint32_t color = TFT_BLACK);
+    static TransitionConfig getSlideConfig(TransitionType slide_type, 
+                                         TransitionSpeed speed = TransitionSpeed::NORMAL);
+    static TransitionConfig getCircleConfig(TransitionType circle_type, 
+                                          TransitionSpeed speed = TransitionSpeed::SLOW);
+    static TransitionConfig getEffectConfig(TransitionType effect_type, 
+                                          TransitionSpeed speed = TransitionSpeed::NORMAL);
+                                          
+    /**
+     * @brief ステップ数を直接指定してコンフィグ作成
+     */
+    static TransitionConfig createCustomConfig(TransitionType type, int steps, 
+                                             uint32_t step_delay_ms = 150);
 };
 
 #endif // _SCREEN_TRANSITION_HPP_

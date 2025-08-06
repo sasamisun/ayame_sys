@@ -74,7 +74,8 @@ TransitionType transitionTypes[] = {
     TransitionType::MOSAIC,
     TransitionType::PAGE_TURN};
 
-const int transitionTypeCount = sizeof(transitionTypes) / sizeof(transitionTypes[0]);
+//const int transitionTypeCount = sizeof(transitionTypes) / sizeof(transitionTypes[0]);
+const int transitionTypeCount = 1;
 
 // トランジションタイプの名前
 const char *getTransitionTypeName(TransitionType type)
@@ -683,6 +684,8 @@ void setup()
 {
   ESP_LOGI(TAG, "Initializing M5Paper S3...");
   display.begin();
+  display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_fastest);
+  display.setColorDepth(1);
   display.fillScreen(TFT_BLACK);
 
   // 1. SDカードの初期化（SPI接続）
@@ -857,8 +860,8 @@ void loop(void)
 
     if (!screenTransition->isRunning())
     {
-      // 2秒間隔で次のトランジションを開始
-      if (currentTime - lastTransitionTime > 2000)
+      // 1秒間隔で次のトランジションを開始
+      if (currentTime - lastTransitionTime > 1000)
       {
         if (currentTransitionIndex < transitionTypeCount)
         {
@@ -870,8 +873,8 @@ void loop(void)
           // トランジション設定
           TransitionConfig config = TransitionConfig::defaultConfig();
           config.type = currentType;
-          config.duration_ms = 1500; // 1.5秒
-          config.easing = EasingType::EASE_IN_OUT;
+          //config.duration_ms = 4000; // 4秒
+          //config.easing = EasingType::EASE_IN_OUT;
 
           // 次の画面を準備してトランジション開始
           screenTransition->transition(prepareNextDemoScreen, config);
