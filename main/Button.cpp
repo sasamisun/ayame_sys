@@ -1,4 +1,5 @@
-// main/Button.cpp
+// main/Button.cpp - Type Safe Canvas Drawing Support Version
+// 型安全Canvas描画対応ボタンシステム
 #include "Button.hpp"
 #include "esp_log.h"
 
@@ -8,7 +9,7 @@ static const char *TAG = "BUTTON";
 // Button クラスの実装
 Button::Button(M5GFX *display, int x, int y, int width, int height, const char *label)
     : _x(x), _y(y), _width(width), _height(height), _state(ButtonState::Normal),
-      _display(display), _font(nullptr), _textSize(1.0f), _visible(true),
+      _display(display), _drawTarget(nullptr), _font(nullptr), _textSize(1.0f), _visible(true),
       _onPressed(nullptr), _onReleased(nullptr),
       _onSwipeUp(nullptr), _onSwipeDown(nullptr), _onSwipeLeft(nullptr), _onSwipeRight(nullptr)
 {
@@ -40,9 +41,15 @@ bool Button::containsPoint(int x, int y) const
     return _visible && x >= _x && x < (_x + _width) && y >= _y && y < (_y + _height);
 }
 
+void Button::setDrawTarget(lgfx::LGFX_Sprite *canvas)
+{
+    _drawTarget = canvas;
+    ESP_LOGI(TAG, "Button draw target set to %s", canvas ? "canvas" : "display");
+}
+
 void Button::draw()
 {
-    if (!_visible || !_display)
+    if (!_visible)
         return;
 
     // 現在の状態に応じた色を取得
@@ -67,33 +74,56 @@ void Button::draw()
         break;
     }
 
+    // ★ 描画先を判別してif分岐で処理
+    if (_drawTarget != nullptr)
+    {
+        // Canvas（lgfx::LGFX_Sprite）に描画
+        drawToCanvas(_drawTarget, bgColor, textColor, borderColor);
+        ESP_LOGD(TAG, "Button '%s' drawn to canvas at (%d,%d)", _label, _x, _y);
+    }
+    else if (_display != nullptr)
+    {
+        // Display（M5GFX）に直接描画
+        drawToDisplay(_display, bgColor, textColor, borderColor);
+        ESP_LOGD(TAG, "Button '%s' drawn to display at (%d,%d)", _label, _x, _y);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "No valid draw target available for button '%s'", _label);
+    }
+}
+
+void Button::drawToCanvas(lgfx::LGFX_Sprite* canvas, uint32_t bgColor, uint32_t textColor, uint32_t borderColor)
+{
+    // Canvas（lgfx::LGFX_Sprite）への描画処理
+    
     // 背景を描画
     if (_style.cornerRadius > 0)
     {
         // 角が丸いボタン
-        _display->fillRoundRect(_x, _y, _width, _height, _style.cornerRadius, bgColor);
+        canvas->fillRoundRect(_x, _y, _width, _height, _style.cornerRadius, bgColor);
 
         // 枠線を描画
         if (_style.borderWidth > 0)
         {
             for (int i = 0; i < _style.borderWidth; i++)
             {
-                _display->drawRoundRect(_x + i, _y + i, _width - i * 2, _height - i * 2,
-                                        _style.cornerRadius, borderColor);
+                canvas->drawRoundRect(_x + i, _y + i, _width - i * 2, _height - i * 2,
+                                     _style.cornerRadius, borderColor);
             }
         }
     }
     else
     {
         // 角が四角いボタン
-        _display->fillRect(_x, _y, _width, _height, bgColor);
+        canvas->fillRect(_x, _y, _width, _height, bgColor);
 
         // 枠線を描画
         if (_style.borderWidth > 0)
         {
             for (int i = 0; i < _style.borderWidth; i++)
             {
-                _display->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, borderColor);
+                canvas->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, borderColor);
             }
         }
     }
@@ -104,17 +134,72 @@ void Button::draw()
         // フォントやテキストサイズを設定
         if (_font)
         {
-            _display->setFont(_font);
+            canvas->setFont(_font);
         }
-        _display->setTextColor(textColor);
-        _display->setTextSize(_textSize);
+        canvas->setTextColor(textColor);
+        canvas->setTextSize(_textSize);
 
         // テキスト中央寄せで描画
-        _display->setTextDatum(middle_center);
-        _display->drawString(_label, _x + _width / 2, _y + _height / 2);
+        canvas->setTextDatum(middle_center);
+        canvas->drawString(_label, _x + _width / 2, _y + _height / 2);
 
         // テキスト配置を元に戻す
-        _display->setTextDatum(top_left);
+        canvas->setTextDatum(top_left);
+    }
+}
+
+void Button::drawToDisplay(M5GFX* display, uint32_t bgColor, uint32_t textColor, uint32_t borderColor)
+{
+    // Display（M5GFX）への描画処理
+    
+    // 背景を描画
+    if (_style.cornerRadius > 0)
+    {
+        // 角が丸いボタン
+        display->fillRoundRect(_x, _y, _width, _height, _style.cornerRadius, bgColor);
+
+        // 枠線を描画
+        if (_style.borderWidth > 0)
+        {
+            for (int i = 0; i < _style.borderWidth; i++)
+            {
+                display->drawRoundRect(_x + i, _y + i, _width - i * 2, _height - i * 2,
+                                      _style.cornerRadius, borderColor);
+            }
+        }
+    }
+    else
+    {
+        // 角が四角いボタン
+        display->fillRect(_x, _y, _width, _height, bgColor);
+
+        // 枠線を描画
+        if (_style.borderWidth > 0)
+        {
+            for (int i = 0; i < _style.borderWidth; i++)
+            {
+                display->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, borderColor);
+            }
+        }
+    }
+
+    // テキストを描画
+    if (_label[0] != '\0')
+    {
+        // フォントやテキストサイズを設定
+        if (_font)
+        {
+            display->setFont(_font);
+        }
+        display->setTextColor(textColor);
+        display->setTextSize(_textSize);
+
+        // テキスト中央寄せで描画
+        display->setTextDatum(middle_center);
+        display->drawString(_label, _x + _width / 2, _y + _height / 2);
+
+        // テキスト配置を元に戻す
+        display->setTextDatum(top_left);
     }
 }
 
@@ -212,9 +297,9 @@ bool Button::handleSwipe(SwipeDirection direction)
     return handled;
 }
 
-// ButtonManager クラスの実装
+// ButtonManager クラスの実装（Canvas対応版）
 ButtonManager::ButtonManager(M5GFX *display, TouchHandler *touchHandler)
-    : _buttonCount(0), _display(display), _touchHandler(touchHandler)
+    : _buttonCount(0), _display(display), _touchHandler(touchHandler), _drawTarget(nullptr)
 {
 
     // ボタン配列を初期化
@@ -228,6 +313,23 @@ ButtonManager::~ButtonManager()
 {
     // 全ボタンのクリア
     clearButtons();
+}
+
+void ButtonManager::setDrawTarget(lgfx::LGFX_Sprite *canvas)
+{
+    _drawTarget = canvas;
+    
+    // 管理している全ボタンの描画先も変更
+    for (int i = 0; i < _buttonCount; i++)
+    {
+        if (_buttons[i])
+        {
+            _buttons[i]->setDrawTarget(canvas);
+        }
+    }
+    
+    ESP_LOGI(TAG, "ButtonManager draw target set to %s for %d buttons", 
+             canvas ? "canvas" : "display", _buttonCount);
 }
 
 bool ButtonManager::addButton(Button *button)
@@ -251,6 +353,10 @@ bool ButtonManager::addButton(Button *button)
 
     // ボタンを追加
     _buttons[_buttonCount++] = button;
+    
+    // ボタンの描画先を現在の設定に合わせる
+    button->setDrawTarget(_drawTarget);
+    
     ESP_LOGI(TAG, "Button added, count: %d", _buttonCount);
     return true;
 }
@@ -300,6 +406,38 @@ void ButtonManager::drawButtons()
             _buttons[i]->draw();
         }
     }
+    
+    ESP_LOGD(TAG, "Drew %d buttons to %s", _buttonCount, 
+             _drawTarget ? "canvas" : "display");
+}
+
+void ButtonManager::drawButtonsToTarget(lgfx::LGFX_Sprite *target)
+{
+    // 一時的に描画先を変更
+    lgfx::LGFX_Sprite *originalTarget = _drawTarget;
+    
+    // 全ボタンの描画先を一時変更
+    for (int i = 0; i < _buttonCount; i++)
+    {
+        if (_buttons[i])
+        {
+            _buttons[i]->setDrawTarget(target);
+        }
+    }
+    
+    // 描画実行
+    drawButtons();
+    
+    // 元の描画先に戻す
+    for (int i = 0; i < _buttonCount; i++)
+    {
+        if (_buttons[i])
+        {
+            _buttons[i]->setDrawTarget(originalTarget);
+        }
+    }
+    
+    ESP_LOGI(TAG, "Drew %d buttons to specified target", _buttonCount);
 }
 
 void ButtonManager::handleTouch()
