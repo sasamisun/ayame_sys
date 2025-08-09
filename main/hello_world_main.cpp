@@ -1,4 +1,4 @@
-// main/hello_world_main.cpp - Complete External Canvas System
+// main/hello_world_main.cpp - SimpleTransition Integration
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -13,7 +13,7 @@
 #include "TypoWrite.hpp"
 #include "VLWFontParser.hpp"
 #include "CanvasTest.hpp"
-#include "ScreenTransition.hpp" // 完全外部キャンバス専用版
+#include "SimpleTransition.hpp" // 新しいシンプルトランジション
 
 #include "fonts/shippori_16.h"
 
@@ -36,11 +36,10 @@ Button *btnCanvasStop = nullptr;
 
 VLWFontParser vlwParser;
 CanvasTest *canvasTest = nullptr;
-ScreenTransition *screenTransition = nullptr; // 完全外部キャンバス専用版トランジションオブジェクト
+SimpleTransition *simpleTransition = nullptr; // 新しいシンプルトランジション
 
-// メインキャンバス（ゲームシステム用 - ScreenTransitionと共有）
+// アプリケーション用メインキャンバス
 M5Canvas *mainCanvas = nullptr;
-M5Canvas *subCanvas = nullptr;
 
 // テスト実行状態管理
 enum class TestMode
@@ -59,111 +58,118 @@ int currentTransitionIndex = 0;
 bool transitionDemoRunning = false;
 
 // トランジションタイプの配列（デモ用）
-TransitionType transitionTypes[] = {
-    TransitionType::FADE_BLACK,
-    TransitionType::FADE_WHITE,
-    TransitionType::SLIDE_LEFT,
-    TransitionType::SLIDE_RIGHT,
-    TransitionType::SLIDE_UP,
-    TransitionType::SLIDE_DOWN,
-    TransitionType::WIPE_LEFT,
-    TransitionType::WIPE_RIGHT,
-    TransitionType::CIRCLE_EXPAND,
-    TransitionType::CIRCLE_SHRINK,
-    TransitionType::PIXELATE,
-    TransitionType::VENETIAN_BLIND,
-    TransitionType::CHECKERBOARD,
-    TransitionType::SPIRAL,
-    TransitionType::RIPPLE,
-    TransitionType::MOSAIC,
-    TransitionType::PAGE_TURN
+SimpleTransitionType transitionTypes[] = {
+    SimpleTransitionType::FADE_IN,
+    SimpleTransitionType::SLIDE_DOWN,
+    SimpleTransitionType::SLIDE_UP,
+    SimpleTransitionType::SLIDE_LEFT,
+    SimpleTransitionType::SLIDE_RIGHT,
+    SimpleTransitionType::WIPE_DOWN,
+    SimpleTransitionType::WIPE_UP,
+    SimpleTransitionType::WIPE_LEFT,
+    SimpleTransitionType::WIPE_RIGHT,
+    SimpleTransitionType::CENTER_OUT,
+    SimpleTransitionType::RANDOM_BLOCKS,
+    SimpleTransitionType::LINE_SCAN,
+    SimpleTransitionType::TYPEWRITER
 };
 
 const int transitionTypeCount = sizeof(transitionTypes) / sizeof(transitionTypes[0]);
 
-// トランジションタイプの名前を取得
-const char *getTransitionTypeName(TransitionType type)
+// トランジションタイプの名前
+const char *getTransitionTypeName(SimpleTransitionType type)
 {
   switch (type)
   {
-  case TransitionType::FADE_BLACK: return "Fade Black";
-  case TransitionType::FADE_WHITE: return "Fade White";
-  case TransitionType::SLIDE_LEFT: return "Slide Left";
-  case TransitionType::SLIDE_RIGHT: return "Slide Right";
-  case TransitionType::SLIDE_UP: return "Slide Up";
-  case TransitionType::SLIDE_DOWN: return "Slide Down";
-  case TransitionType::WIPE_LEFT: return "Wipe Left";
-  case TransitionType::WIPE_RIGHT: return "Wipe Right";
-  case TransitionType::CIRCLE_EXPAND: return "Circle Expand";
-  case TransitionType::CIRCLE_SHRINK: return "Circle Shrink";
-  case TransitionType::PIXELATE: return "Pixelate";
-  case TransitionType::VENETIAN_BLIND: return "Venetian Blind";
-  default: return "Unknown";
+  case SimpleTransitionType::FADE_IN:
+    return "Fade In";
+  case SimpleTransitionType::SLIDE_DOWN:
+    return "Slide Down";
+  case SimpleTransitionType::SLIDE_UP:
+    return "Slide Up";
+  case SimpleTransitionType::SLIDE_LEFT:
+    return "Slide Left";
+  case SimpleTransitionType::SLIDE_RIGHT:
+    return "Slide Right";
+  case SimpleTransitionType::WIPE_DOWN:
+    return "Wipe Down";
+  case SimpleTransitionType::WIPE_UP:
+    return "Wipe Up";
+  case SimpleTransitionType::WIPE_LEFT:
+    return "Wipe Left";
+  case SimpleTransitionType::WIPE_RIGHT:
+    return "Wipe Right";
+  case SimpleTransitionType::CENTER_OUT:
+    return "Center Out";
+  case SimpleTransitionType::RANDOM_BLOCKS:
+    return "Random Blocks";
+  case SimpleTransitionType::LINE_SCAN:
+    return "Line Scan";
+  case SimpleTransitionType::TYPEWRITER:
+    return "Typewriter";
+  default:
+    return "Unknown";
   }
 }
 
-// デモ画面描画関数群
-void drawDemoScreen1(M5Canvas *canvas)
+// デモ画面描画関数（メインキャンバスに描画）
+void drawDemoScreen1()
 {
-  if (!canvas) return;
+  if (!mainCanvas) return;
 
-  canvas->fillSprite(TFT_BLUE);
-  canvas->setTextColor(TFT_WHITE);
-  canvas->setTextSize(3);
-  canvas->setTextDatum(middle_center);
-  canvas->drawString("SCREEN 1", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 - 100);
+  mainCanvas->fillSprite(TFT_BLUE);
+  mainCanvas->setTextColor(TFT_WHITE);
+  mainCanvas->setTextSize(3);
+  mainCanvas->setTextDatum(middle_center);
+  mainCanvas->drawString("SCREEN 1", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 - 100);
 
   // 装飾的な図形を追加
-  canvas->fillCircle(100, 200, 50, TFT_YELLOW);
-  canvas->fillRect(300, 150, 100, 100, TFT_RED);
-  canvas->drawTriangle(200, 400, 150, 500, 250, 500, TFT_GREEN);
+  mainCanvas->fillCircle(100, 200, 50, TFT_YELLOW);
+  mainCanvas->fillRect(300, 150, 100, 100, TFT_RED);
+  mainCanvas->drawTriangle(200, 400, 150, 500, 250, 500, TFT_GREEN);
 
   // テキスト情報
-  canvas->setTextSize(2);
-  canvas->drawString("Adventure Game Demo", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 50);
-  canvas->setTextSize(1);
-  canvas->drawString("Zero Memory Transition!", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 100);
-  
-  ESP_LOGI(TAG, "Demo screen 1 drawn to canvas");
+  mainCanvas->setTextSize(2);
+  mainCanvas->drawString("Simple Transition Demo", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 50);
+  mainCanvas->setTextSize(1);
+  mainCanvas->drawString("New System Test", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 100);
 }
 
-void drawDemoScreen2(M5Canvas *canvas)
+void drawDemoScreen2()
 {
-  if (!canvas) return;
+  if (!mainCanvas) return;
 
-  canvas->fillSprite(TFT_RED);
-  canvas->setTextColor(TFT_WHITE);
-  canvas->setTextSize(3);
-  canvas->setTextDatum(middle_center);
-  canvas->drawString("SCREEN 2", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 - 100);
+  mainCanvas->fillSprite(TFT_RED);
+  mainCanvas->setTextColor(TFT_WHITE);
+  mainCanvas->setTextSize(3);
+  mainCanvas->setTextDatum(middle_center);
+  mainCanvas->drawString("SCREEN 2", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 - 100);
 
   // 異なる装飾
-  canvas->fillEllipse(TRANSITION_WIDTH / 2, 300, 80, 40, TFT_CYAN);
-  canvas->drawRoundRect(150, 450, 200, 80, 20, TFT_MAGENTA);
+  mainCanvas->fillEllipse(TRANSITION_WIDTH / 2, 300, 80, 40, TFT_CYAN);
+  mainCanvas->drawRoundRect(150, 450, 200, 80, 20, TFT_MAGENTA);
 
   // パターン描画
   for (int i = 0; i < 10; i++)
   {
-    canvas->drawLine(i * 54, 0, i * 54, TRANSITION_HEIGHT, TFT_DARKGRAY);
+    mainCanvas->drawLine(i * 54, 0, i * 54, TRANSITION_HEIGHT, TFT_DARKGRAY);
   }
 
-  canvas->setTextSize(2);
-  canvas->drawString("Next Scene", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 50);
-  canvas->setTextSize(1);
-  canvas->drawString("Maximum Memory Saved!", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 100);
-  
-  ESP_LOGI(TAG, "Demo screen 2 drawn to canvas");
+  mainCanvas->setTextSize(2);
+  mainCanvas->drawString("Next Scene", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 50);
+  mainCanvas->setTextSize(1);
+  mainCanvas->drawString("M5Canvas Powered", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 100);
 }
 
-void drawDemoScreen3(M5Canvas *canvas)
+void drawDemoScreen3()
 {
-  if (!canvas) return;
+  if (!mainCanvas) return;
 
-  canvas->fillSprite(TFT_GREEN);
-  canvas->setTextColor(TFT_BLACK);
-  canvas->setTextSize(3);
-  canvas->setTextDatum(middle_center);
-  canvas->drawString("SCREEN 3", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 - 100);
+  mainCanvas->fillSprite(TFT_GREEN);
+  mainCanvas->setTextColor(TFT_BLACK);
+  mainCanvas->setTextSize(3);
+  mainCanvas->setTextDatum(middle_center);
+  mainCanvas->drawString("SCREEN 3", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 - 100);
 
   // 複雑なパターン
   for (int y = 0; y < TRANSITION_HEIGHT; y += 40)
@@ -172,117 +178,33 @@ void drawDemoScreen3(M5Canvas *canvas)
     {
       if ((x / 40 + y / 40) % 2 == 0)
       {
-        canvas->fillRect(x, y, 40, 40, TFT_DARKGREEN);
+        mainCanvas->fillRect(x, y, 40, 40, TFT_DARKGREEN);
       }
     }
   }
 
-  canvas->setTextSize(2);
-  canvas->drawString("Final Screen", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 50);
-  canvas->setTextSize(1);
-  canvas->drawString("External Canvas Only!", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 100);
-  
-  ESP_LOGI(TAG, "Demo screen 3 drawn to canvas");
+  mainCanvas->setTextSize(2);
+  mainCanvas->drawString("Final Screen", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 50);
+  mainCanvas->setTextSize(1);
+  mainCanvas->drawString("Transition Complete!", TRANSITION_WIDTH / 2, TRANSITION_HEIGHT / 2 + 100);
 }
 
-// メインキャンバスの作成
-bool createMainCanvases()
+// 縦書きと横書きテキスト表示のデモ（メインキャンバスに描画）
+void drawTextOnMainCanvas()
 {
-  ESP_LOGI(TAG, "Creating main canvases for external-only transition system...");
+  if (!mainCanvas) return;
   
-  // PSRAMの使用可能容量をチェック
-  size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-  size_t canvas_size = TRANSITION_WIDTH * TRANSITION_HEIGHT * 2; // RGB565 = 2 bytes per pixel
-  size_t total_required = canvas_size * 2; // 2つのキャンバス（ScreenTransitionは内部キャンバスなし）
-  
-  ESP_LOGI(TAG, "Required memory: %zu bytes, Available PSRAM: %zu bytes", total_required, psram_free);
-  ESP_LOGI(TAG, "ScreenTransition internal memory: 0 bytes (External Canvas Only)");
-
-  if (psram_free < total_required) {
-    ESP_LOGE(TAG, "Insufficient PSRAM memory for main canvases");
-    return false;
-  }
-
-  // メインキャンバス作成
-  mainCanvas = new M5Canvas(&display);
-  if (!mainCanvas) {
-    ESP_LOGE(TAG, "Failed to allocate main canvas");
-    return false;
-  }
-  
-  mainCanvas->setPsram(true);
-  if (!mainCanvas->createSprite(TRANSITION_WIDTH, TRANSITION_HEIGHT)) {
-    ESP_LOGE(TAG, "Failed to create main canvas sprite");
-    delete mainCanvas;
-    mainCanvas = nullptr;
-    return false;
-  }
-
-  // サブキャンバス作成
-  subCanvas = new M5Canvas(&display);
-  if (!subCanvas) {
-    ESP_LOGE(TAG, "Failed to allocate sub canvas");
-    delete mainCanvas;
-    mainCanvas = nullptr;
-    return false;
-  }
-  
-  subCanvas->setPsram(true);
-  if (!subCanvas->createSprite(TRANSITION_WIDTH, TRANSITION_HEIGHT)) {
-    ESP_LOGE(TAG, "Failed to create sub canvas sprite");
-    delete mainCanvas;
-    delete subCanvas;
-    mainCanvas = nullptr;
-    subCanvas = nullptr;
-    return false;
-  }
-
-  ESP_LOGI(TAG, "Main canvases created successfully");
-  ESP_LOGI(TAG, "Total memory usage: %zu bytes (External Canvas Only System)", total_required);
-  
-  // 初期化
-  mainCanvas->fillSprite(TFT_BLACK);
-  subCanvas->fillSprite(TFT_BLACK);
-  
-  return true;
-}
-
-// メインキャンバスのクリーンアップ
-void cleanupMainCanvases()
-{
-  ESP_LOGI(TAG, "Cleaning up main canvases...");
-  
-  if (mainCanvas) {
-    mainCanvas->deleteSprite();
-    delete mainCanvas;
-    mainCanvas = nullptr;
-  }
-  
-  if (subCanvas) {
-    subCanvas->deleteSprite();
-    delete subCanvas;
-    subCanvas = nullptr;
-  }
-  
-  ESP_LOGI(TAG, "Main canvases cleanup completed");
-}
-
-// 縦書きと横書きテキスト表示のデモ
-void textDisplayDemo()
-{
-  ESP_LOGI(TAG, "Starting VLW font demo...");
+  ESP_LOGI(TAG, "Drawing text on main canvas...");
 
   // VLWフォントデータの初期化（例：shipporiフォント）
   if (vlwParser.init(shippori, sizeof(shippori)))
   {
     ESP_LOGI(TAG, "VLW font initialized successfully");
 
-    // フォント情報をデバッグ出力
-    vlwParser.debugPrintFontInfo();
-
-    // TypoWriteでVLWパーサーを使用
+    // TypoWriteでVLWパーサーを使用（メインキャンバスに描画）
     TypoWrite verticalWriter(&display);
     verticalWriter.setVLWParser(&vlwParser); // VLWパーサーを設定
+    verticalWriter.setDrawTarget(mainCanvas); // メインキャンバスに描画
 
     // フォント設定
     verticalWriter.loadFontFromArray(shippori); // M5GFXにもフォントを設定
@@ -296,31 +218,33 @@ void textDisplayDemo()
     verticalWriter.setLineSpacing(6);
 
     // テキスト描画
-    verticalWriter.drawText("完全外部\nキャンバス\n専用システム\nでメモリを\n最大限節約\nしましたにゃ！");
+    verticalWriter.drawText("新しいシンプル\nトランジション\nシステムで\n美しい切り替えが\n可能です。");
   }
   else
   {
     ESP_LOGE(TAG, "Failed to initialize VLW font");
 
-    // エラー表示
-    display.setTextColor(TFT_RED);
-    display.setTextSize(1);
-    display.setCursor(10, 100);
-    display.println("VLW Font Load Failed");
+    // エラー表示をメインキャンバスに
+    mainCanvas->setTextColor(TFT_RED);
+    mainCanvas->setTextSize(1);
+    mainCanvas->setCursor(10, 100);
+    mainCanvas->println("VLW Font Load Failed");
   }
 }
 
-// ファイルフォルダ一覧表示
-void listAndDisplayFiles()
+// ファイルフォルダ一覧表示（メインキャンバスに描画）
+void drawFileListOnMainCanvas()
 {
+  if (!mainCanvas) return;
+  
   // SDカードのルートディレクトリを読み込み
   DirInfo *rootDir = SD.listDir("/");
   if (rootDir)
   {
-    display.setTextColor(TFT_WHITE);
-    display.setTextSize(1);
-    display.setCursor(10, 10);
-    display.println("SD Card Files:");
+    mainCanvas->setTextColor(TFT_WHITE);
+    mainCanvas->setTextSize(1);
+    mainCanvas->setCursor(10, 10);
+    mainCanvas->println("SD Card Files:");
 
     int y = 30;
     for (size_t i = 0; i < rootDir->count; i++)
@@ -330,20 +254,20 @@ void listAndDisplayFiles()
       // ディレクトリには[DIR]マークを付ける
       if (file->isDirectory)
       {
-        display.printf("[DIR] %s\n", file->name);
+        mainCanvas->printf("[DIR] %s\n", file->name);
       }
       else
       {
         // ファイルサイズを表示（KB単位）
         float size_kb = file->size / 1024.0f;
-        display.printf("%s (%.1f KB)\n", file->name, size_kb);
+        mainCanvas->printf("%s (%.1f KB)\n", file->name, size_kb);
       }
 
       y += 20;
-      if (y > display.height() - 20)
+      if (y > mainCanvas->height() - 20)
       {
         // 画面の下部に達したら表示を止める
-        display.println("... and more files");
+        mainCanvas->println("... and more files");
         break;
       }
     }
@@ -353,16 +277,31 @@ void listAndDisplayFiles()
   }
   else
   {
-    display.fillScreen(TFT_BLACK);
-    display.setTextColor(TFT_RED);
-    display.setTextSize(1);
-    display.setCursor(10, 10);
-    display.println("Failed to read SD card directory");
+    mainCanvas->fillSprite(TFT_BLACK);
+    mainCanvas->setTextColor(TFT_RED);
+    mainCanvas->setTextSize(1);
+    mainCanvas->setCursor(10, 10);
+    mainCanvas->println("Failed to read SD card directory");
   }
 }
 
+// メインキャンバスに通常画面を描画
+void drawMainScreen()
+{
+  if (!mainCanvas) return;
+  
+  // 背景をクリア
+  mainCanvas->fillSprite(TFT_BLACK);
+  
+  // ファイル一覧を描画
+  drawFileListOnMainCanvas();
+  
+  // テキストを描画
+  drawTextOnMainCanvas();
+}
+
 // トランジションデモの次の画面を準備
-void prepareNextDemoScreen(M5Canvas *canvas)
+void prepareNextDemoScreen()
 {
   static int screenIndex = 0;
   screenIndex = (screenIndex + 1) % 3;
@@ -370,13 +309,13 @@ void prepareNextDemoScreen(M5Canvas *canvas)
   switch (screenIndex)
   {
   case 0:
-    drawDemoScreen1(canvas);
+    drawDemoScreen1();
     break;
   case 1:
-    drawDemoScreen2(canvas);
+    drawDemoScreen2();
     break;
   case 2:
-    drawDemoScreen3(canvas);
+    drawDemoScreen3();
     break;
   }
 }
@@ -392,11 +331,19 @@ void onTouchStart(const ExtendedTouchPoint &point)
     return;
   }
 
-  // タッチ開始時の処理
-  display.setTextColor(TFT_GREEN, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 100);
-  display.printf("Touch started at (%d, %d)   ", point.x, point.y);
+  // タッチ開始時の処理をメインキャンバスに描画
+  mainCanvas->setTextColor(TFT_GREEN, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 100);
+  mainCanvas->printf("Touch started at (%d, %d)   ", point.x, point.y);
+  
+  // すぐに表示
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 void onTouchEnd(const ExtendedTouchPoint &point)
@@ -409,11 +356,19 @@ void onTouchEnd(const ExtendedTouchPoint &point)
     return;
   }
 
-  // タッチ終了時の処理
-  display.setTextColor(TFT_RED, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 120);
-  display.printf("Touch ended at (%d, %d)   ", point.x, point.y);
+  // タッチ終了時の処理をメインキャンバスに描画
+  mainCanvas->setTextColor(TFT_RED, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 120);
+  mainCanvas->printf("Touch ended at (%d, %d)   ", point.x, point.y);
+  
+  // すぐに表示
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 void onSwipe(SwipeDirection direction, const ExtendedTouchPoint &start, const ExtendedTouchPoint &end)
@@ -446,11 +401,19 @@ void onSwipe(SwipeDirection direction, const ExtendedTouchPoint &start, const Ex
     return;
   }
 
-  // スワイプ情報を表示
-  display.setTextColor(TFT_YELLOW, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 140);
-  display.printf("Swipe: %s   ", dirStr);
+  // スワイプ情報をメインキャンバスに描画
+  mainCanvas->setTextColor(TFT_YELLOW, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 140);
+  mainCanvas->printf("Swipe: %s   ", dirStr);
+  
+  // すぐに表示
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 // ボタンコールバック関数
@@ -469,11 +432,19 @@ void onTestButtonReleased(Button *btn)
     return;
   }
 
-  // テキスト表示例
-  display.setTextColor(TFT_YELLOW, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 80);
-  display.println("テストボタンが押されました");
+  // テキスト表示例をメインキャンバスに
+  mainCanvas->setTextColor(TFT_YELLOW, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 80);
+  mainCanvas->println("テストボタンが押されました");
+  
+  // すぐに表示
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 // USB MSCボタンコールバック
@@ -502,7 +473,13 @@ void onUSBMSCButtonReleased(Button *btn)
       btn->setLabel("Enable USB MSC");
 
       // 再度ファイル一覧を表示
-      listAndDisplayFiles();
+      drawMainScreen();
+      mainCanvas->pushSprite(0, 0);
+      
+      // ✅ ボタンを再描画
+      if (buttonManager) {
+        buttonManager->drawButtons();
+      }
     }
   }
   else
@@ -513,12 +490,19 @@ void onUSBMSCButtonReleased(Button *btn)
       ESP_LOGI(TAG, "USB MSC enabled");
       btn->setLabel("Disable USB MSC");
 
-      // 情報表示
-      display.setTextColor(TFT_WHITE, TFT_BLACK);
-      display.setTextSize(1.5);
-      display.setCursor(10, 100);
-      display.println("USB MSC Enabled");
-      display.println("Connect to PC to access SD card");
+      // 情報表示をメインキャンバスに
+      mainCanvas->fillSprite(TFT_BLACK);
+      mainCanvas->setTextColor(TFT_WHITE, TFT_BLACK);
+      mainCanvas->setTextSize(1.5);
+      mainCanvas->setCursor(10, 100);
+      mainCanvas->println("USB MSC Enabled");
+      mainCanvas->println("Connect to PC to access SD card");
+      mainCanvas->pushSprite(0, 0);
+      
+      // ✅ ボタンを再描画
+      if (buttonManager) {
+        buttonManager->drawButtons();
+      }
     }
   }
 }
@@ -580,10 +564,9 @@ void onCanvasTestButtonReleased(Button *btn)
   btnCanvasStop->setVisible(false);
 
   // 元の画面に戻る
-  display.fillScreen(TFT_BLACK);
-  listAndDisplayFiles();
-  textDisplayDemo();
-  buttonManager->drawButtons();
+  drawMainScreen();
+  mainCanvas->pushSprite(0, 0);
+  buttonManager->drawButtons(); // ✅ ボタン再描画追加
 
   ESP_LOGI(TAG, "Canvas tests completed");
 }
@@ -604,9 +587,9 @@ void onTransitionTestButtonReleased(Button *btn)
     return;
   }
 
-  if (!screenTransition || !mainCanvas || !subCanvas)
+  if (!simpleTransition)
   {
-    ESP_LOGE(TAG, "Screen transition or canvases not initialized");
+    ESP_LOGE(TAG, "Simple transition not initialized");
     return;
   }
 
@@ -622,12 +605,7 @@ void onTransitionTestButtonReleased(Button *btn)
   btnCanvasStop->setLabel("Stop Transition");
   buttonManager->drawButtons();
 
-  ESP_LOGI(TAG, "Starting external canvas only transition demo...");
-
-  // 最初の画面をメインキャンバスに準備
-  drawDemoScreen1(mainCanvas);
-
-  ESP_LOGI(TAG, "External canvas only transition demo started");
+  ESP_LOGI(TAG, "Starting simple transition demo...");
 }
 
 // キャンバステスト停止ボタンコールバック
@@ -644,7 +622,7 @@ void onCanvasStopButtonReleased(Button *btn)
   {
     // トランジションデモ停止
     transitionDemoRunning = false;
-    screenTransition->stopTransition();
+    simpleTransition->stop();
 
     currentTestMode = TestMode::NORMAL;
     btnTransitionTest->setLabel("Transition Test");
@@ -653,12 +631,11 @@ void onCanvasStopButtonReleased(Button *btn)
     btn->setLabel("Stop Test");
 
     // 元の画面に戻る
-    display.fillScreen(TFT_BLACK);
-    listAndDisplayFiles();
-    textDisplayDemo();
-    buttonManager->drawButtons();
+    drawMainScreen();
+    mainCanvas->pushSprite(0, 0);
+    buttonManager->drawButtons(); // ✅ ボタン再描画追加 // ✅ ボタン再描画追加
 
-    ESP_LOGI(TAG, "External canvas only transition demo stopped by user");
+    ESP_LOGI(TAG, "Simple transition demo stopped by user");
   }
   else if (canvasTest && canvasTest->isTestRunning())
   {
@@ -671,9 +648,8 @@ void onCanvasStopButtonReleased(Button *btn)
     btn->setVisible(false);
 
     // 元の画面に戻る
-    display.fillScreen(TFT_BLACK);
-    listAndDisplayFiles();
-    textDisplayDemo();
+    drawMainScreen();
+    mainCanvas->pushSprite(0, 0);
     buttonManager->drawButtons();
 
     ESP_LOGI(TAG, "Canvas test stopped by user");
@@ -691,10 +667,16 @@ void onButtonSwipeUp(Button *btn, SwipeDirection dir)
     return;
   }
 
-  display.setTextColor(TFT_CYAN, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 160);
-  display.printf("Button swiped up: %s   ", btn->getLabel());
+  mainCanvas->setTextColor(TFT_CYAN, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 160);
+  mainCanvas->printf("Button swiped up: %s   ", btn->getLabel());
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 void onButtonSwipeDown(Button *btn, SwipeDirection dir)
@@ -707,10 +689,16 @@ void onButtonSwipeDown(Button *btn, SwipeDirection dir)
     return;
   }
 
-  display.setTextColor(TFT_MAGENTA, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 160);
-  display.printf("Button swiped down: %s   ", btn->getLabel());
+  mainCanvas->setTextColor(TFT_MAGENTA, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 160);
+  mainCanvas->printf("Button swiped down: %s   ", btn->getLabel());
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 void onButtonSwipeLeft(Button *btn, SwipeDirection dir)
@@ -723,10 +711,16 @@ void onButtonSwipeLeft(Button *btn, SwipeDirection dir)
     return;
   }
 
-  display.setTextColor(TFT_ORANGE, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 160);
-  display.printf("Button swiped left: %s   ", btn->getLabel());
+  mainCanvas->setTextColor(TFT_ORANGE, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 160);
+  mainCanvas->printf("Button swiped left: %s   ", btn->getLabel());
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 void onButtonSwipeRight(Button *btn, SwipeDirection dir)
@@ -739,19 +733,41 @@ void onButtonSwipeRight(Button *btn, SwipeDirection dir)
     return;
   }
 
-  display.setTextColor(TFT_PINK, TFT_BLACK);
-  display.setTextSize(1);
-  display.setCursor(10, display.height() - 160);
-  display.printf("Button swiped right: %s   ", btn->getLabel());
+  mainCanvas->setTextColor(TFT_PINK, TFT_BLACK);
+  mainCanvas->setTextSize(1);
+  mainCanvas->setCursor(10, mainCanvas->height() - 160);
+  mainCanvas->printf("Button swiped right: %s   ", btn->getLabel());
+  mainCanvas->pushSprite(0, 0);
+  
+  // ✅ ボタンを再描画
+  if (buttonManager) {
+    buttonManager->drawButtons();
+  }
 }
 
 void setup()
 {
-  ESP_LOGI(TAG, "Initializing M5Paper S3 with External Canvas Only System...");
+  ESP_LOGI(TAG, "Initializing M5Paper S3...");
   display.begin();
   display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_fastest);
-  display.setColorDepth(8);
+  display.setColorDepth(1);
   display.fillScreen(TFT_BLACK);
+
+  // メインキャンバスの初期化
+  ESP_LOGI(TAG, "Creating main canvas...");
+  mainCanvas = new M5Canvas(&display);
+  if (mainCanvas) {
+    mainCanvas->setPsram(true); // PSRAM使用
+    if (mainCanvas->createSprite(TRANSITION_WIDTH, TRANSITION_HEIGHT)) {
+      ESP_LOGI(TAG, "Main canvas created successfully");
+    } else {
+      ESP_LOGE(TAG, "Failed to create main canvas sprite");
+      delete mainCanvas;
+      mainCanvas = nullptr;
+    }
+  } else {
+    ESP_LOGE(TAG, "Failed to allocate main canvas");
+  }
 
   // 1. SDカードの初期化（SPI接続）
   ESP_LOGI(TAG, "Initializing SD card via SPI...");
@@ -778,9 +794,7 @@ void setup()
       display.setCursor(10, 10);
       display.printf("File not found: %s", IMAGE_FILE);
     }
-    display.fillScreen(TFT_BLACK);
-    listAndDisplayFiles();
-
+    
     // 4. ファイルアクセスが完了したので、ファイルをクローズ
     SD.close();
   }
@@ -794,15 +808,7 @@ void setup()
     display.println("SD Card Init Failed");
   }
 
-  // 5. メインキャンバスの作成
-  ESP_LOGI(TAG, "Creating main canvases for external-only transition system...");
-  if (!createMainCanvases())
-  {
-    ESP_LOGE(TAG, "Failed to create main canvases");
-    // 続行するが機能は制限される
-  }
-
-  // 6. キャンバステストオブジェクトの初期化
+  // キャンバステストオブジェクトの初期化
   ESP_LOGI(TAG, "Initializing Canvas Test...");
   canvasTest = new CanvasTest(&display);
   if (canvasTest && canvasTest->init())
@@ -819,36 +825,19 @@ void setup()
     }
   }
 
-  // 7. スクリーントランジションオブジェクトの初期化（完全外部キャンバス専用版）
-  ESP_LOGI(TAG, "Initializing External Canvas Only Screen Transition...");
-  screenTransition = new ScreenTransition(&display);
-  
-  if (screenTransition && mainCanvas && subCanvas)
+  // シンプルトランジションオブジェクトの初期化
+  ESP_LOGI(TAG, "Initializing Simple Transition...");
+  simpleTransition = new SimpleTransition(&display);
+  if (simpleTransition)
   {
-    // 外部キャンバス必須初期化
-    if (screenTransition->init(mainCanvas, subCanvas))
-    {
-      ESP_LOGI(TAG, "External canvas only screen transition initialized successfully");
-      ESP_LOGI(TAG, "ScreenTransition internal memory usage: 0 bytes");
-    }
-    else
-    {
-      ESP_LOGE(TAG, "External canvas only screen transition initialization failed");
-      delete screenTransition;
-      screenTransition = nullptr;
-    }
+    ESP_LOGI(TAG, "Simple transition initialized successfully");
   }
   else
   {
-    ESP_LOGE(TAG, "Cannot initialize screen transition - missing canvases or object");
-    if (screenTransition)
-    {
-      delete screenTransition;
-      screenTransition = nullptr;
-    }
+    ESP_LOGE(TAG, "Simple transition initialization failed");
   }
 
-  // 8. タッチハンドラの初期化を追加
+  // タッチハンドラの初期化を追加
   ESP_LOGI(TAG, "Initializing touch handler...");
   if (touchHandler.init(&display))
   {
@@ -891,7 +880,7 @@ void setup()
     btnCanvasTest->setOnReleased(onCanvasTestButtonReleased);
 
     // トランジションテストボタンの作成
-    btnTransitionTest = new Button(&display, 340, 350, 100, 40, "Transition");
+    btnTransitionTest = new Button(&display, 340, 350, 100, 40, "Simple Trans");
     btnTransitionTest->setOnPressed(onTransitionTestButtonPressed);
     btnTransitionTest->setOnReleased(onTransitionTestButtonReleased);
 
@@ -932,73 +921,69 @@ void setup()
     ESP_LOGE(TAG, "Touch handler initialization failed");
   }
 
-  textDisplayDemo();
-  
-  ESP_LOGI(TAG, "Setup completed with External Canvas Only system!");
+  // メイン画面を初期描画
+  if (mainCanvas) {
+    drawMainScreen();
+    mainCanvas->pushSprite(0, 0);
+    
+    // ✅ ボタンを再描画（pushSpriteで消されるため）
+    if (buttonManager) {
+      buttonManager->drawButtons();
+    }
+  }
 }
 
 void loop(void)
 {
-  // トランジションデモの処理（完全外部キャンバス版）
-  if (currentTestMode == TestMode::TRANSITION_DEMO && transitionDemoRunning && screenTransition)
+  // トランジションデモの処理
+  if (currentTestMode == TestMode::TRANSITION_DEMO && transitionDemoRunning && simpleTransition)
   {
-    static int64_t lastTransitionTime = 0;
-    int64_t currentTime = esp_timer_get_time() / 1000;
-
-    if (!screenTransition->isRunning())
+    // トランジションが実行中でなければ次のトランジションを開始
+    if (!simpleTransition->isRunning())
     {
-      // 5秒間隔で次のトランジションを開始
-      if (currentTime - lastTransitionTime > 5000)
+      if (currentTransitionIndex < transitionTypeCount)
       {
-        if (currentTransitionIndex < transitionTypeCount)
-        {
-          TransitionType currentType = transitionTypes[currentTransitionIndex];
+        SimpleTransitionType currentType = transitionTypes[currentTransitionIndex];
 
-          ESP_LOGI(TAG, "Starting external canvas only transition %d: %s",
-                   currentTransitionIndex, getTransitionTypeName(currentType));
+        ESP_LOGI(TAG, "Starting transition %d: %s",
+                 currentTransitionIndex, getTransitionTypeName(currentType));
 
-          // トランジション設定
-          TransitionConfig config = TransitionConfig::defaultConfig();
-          config.type = currentType;
-          config.step_delay_ms = 50;
+        // 次の画面を準備
+        prepareNextDemoScreen();
 
-          // 完全外部キャンバス専用版トランジションを実行
-          // mainCanvas(source) → subCanvas(target)にキャンバスを切り替え
-          screenTransition->setCanvases(mainCanvas, subCanvas);
-          screenTransition->executeTransition(prepareNextDemoScreen, config);
+        // トランジション設定
+        SimpleTransitionConfig config = SimpleTransitionConfig::defaultConfig();
+        config.type = currentType;
+        config.total_steps = 20; // 20ステップ
+        config.clear_before_step = true;
 
-          currentTransitionIndex++;
-          lastTransitionTime = currentTime;
+        // トランジション開始
+        simpleTransition->start(mainCanvas, config);
 
-          // 次回のためにキャンバスを交換
-          M5Canvas* temp = mainCanvas;
-          mainCanvas = subCanvas;
-          subCanvas = temp;
-        }
-        else
-        {
-          // 全てのトランジション完了
-          transitionDemoRunning = false;
-          currentTestMode = TestMode::NORMAL;
+        currentTransitionIndex++;
+      }
+      else
+      {
+        // 全てのトランジション完了
+        transitionDemoRunning = false;
+        currentTestMode = TestMode::NORMAL;
 
-          btnTransitionTest->setLabel("Transition Test");
-          btnTransitionTest->setEnabled(true);
-          btnCanvasStop->setVisible(false);
+        btnTransitionTest->setLabel("Simple Trans");
+        btnTransitionTest->setEnabled(true);
+        btnCanvasStop->setVisible(false);
 
-          // 元の画面に戻る
-          display.fillScreen(TFT_BLACK);
-          listAndDisplayFiles();
-          textDisplayDemo();
-          buttonManager->drawButtons();
+        // 元の画面に戻る
+        drawMainScreen();
+        mainCanvas->pushSprite(0, 0);
+        buttonManager->drawButtons(); // ✅ ボタン再描画追加
 
-          ESP_LOGI(TAG, "All external canvas only transitions completed");
-        }
+        ESP_LOGI(TAG, "All simple transitions completed");
       }
     }
     else
     {
-      // トランジションを更新
-      screenTransition->updateTransition();
+      // トランジションを1ステップ実行
+      simpleTransition->step();
     }
   }
 
@@ -1017,11 +1002,19 @@ void loop(void)
       bool connected = SD.isUSBMSCConnected();
       ESP_LOGI(TAG, "USB MSC connection status: %s", connected ? "Connected" : "Disconnected");
 
-      // 接続状態をディスプレイに表示
-      display.setTextColor(TFT_WHITE, TFT_BLACK);
-      display.setTextSize(1);
-      display.setCursor(10, display.height() - 20);
-      display.printf("USB Status: %s    ", connected ? "Connected" : "Disconnected");
+      // 接続状態をメインキャンバスに表示
+      if (mainCanvas) {
+        mainCanvas->setTextColor(TFT_WHITE, TFT_BLACK);
+        mainCanvas->setTextSize(1);
+        mainCanvas->setCursor(10, mainCanvas->height() - 20);
+        mainCanvas->printf("USB Status: %s    ", connected ? "Connected" : "Disconnected");
+        mainCanvas->pushSprite(0, 0);
+        
+        // ✅ ボタンを再描画
+        if (buttonManager) {
+          buttonManager->drawButtons();
+        }
+      }
     }
   }
 
@@ -1032,11 +1025,9 @@ void loop(void)
   }
 
   // 通常のタッチ処理（テスト実行中でない場合のみ）
-  if (currentTestMode == TestMode::NORMAL && touchHandler.update() &&
-      touchHandler.isTouched() && !buttonManager)
+  // ✅ ButtonManagerの更新は完了しているが、汎用タッチイベントも処理する
+  if (currentTestMode == TestMode::NORMAL && touchHandler.isTouched())
   {
-    // ボタンマネージャーがない場合のみ実行
-
     const ExtendedTouchPoint &point = touchHandler.getLastPoint();
 
     // タッチされた位置に円を描画
@@ -1045,11 +1036,19 @@ void loop(void)
     // タッチ情報をログに出力
     ESP_LOGI(TAG, "Touch at (%d, %d)", point.x, point.y);
 
-    // タッチ座標を画面に表示
-    display.setTextColor(TFT_GREEN, TFT_BLACK);
-    display.setTextSize(1);
-    display.setCursor(10, display.height() - 40);
-    display.printf("Touch: (%d, %d)     ", point.x, point.y);
+    // タッチ座標をメインキャンバスに表示
+    if (mainCanvas) {
+      mainCanvas->setTextColor(TFT_GREEN, TFT_BLACK);
+      mainCanvas->setTextSize(1);
+      mainCanvas->setCursor(10, mainCanvas->height() - 40);
+      mainCanvas->printf("Touch: (%d, %d)     ", point.x, point.y);
+      mainCanvas->pushSprite(0, 0);
+      
+      // ✅ ボタンを再描画
+      if (buttonManager) {
+        buttonManager->drawButtons();
+      }
+    }
   }
 }
 
@@ -1079,7 +1078,7 @@ extern "C"
     // ログ初期化
     esp_log_level_set(TAG, ESP_LOG_INFO);
 
-    ESP_LOGI(TAG, "Application starting with External Canvas Only System...");
+    ESP_LOGI(TAG, "Application starting...");
     initializeTask();
   }
 }
