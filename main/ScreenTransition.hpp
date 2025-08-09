@@ -1,5 +1,5 @@
 // main/ScreenTransition.hpp
-// ステップベース画面遷移システム（E-Paper最適化版）
+// 完全外部キャンバス専用版画面遷移システム（最大メモリ節約版）
 
 #ifndef _SCREEN_TRANSITION_HPP_
 #define _SCREEN_TRANSITION_HPP_
@@ -77,7 +77,6 @@ struct TransitionConfig {
     TransitionDirection direction; // 方向
     uint32_t step_delay_ms;        // ステップ間の待機時間（ミリ秒）
     uint32_t fade_color;          // フェード色（白黒のみ）
-    bool use_psram;               // PSRAM使用フラグ
     bool reverse;                 // 逆方向フラグ
     
     // デフォルト設定
@@ -88,26 +87,27 @@ struct TransitionConfig {
             TransitionDirection::BOTH,    // 両方向
             150,                          // 150ms間隔（E-Paper最適）
             TFT_BLACK,                    // 黒色
-            true,                         // PSRAM使用
             false                         // 通常方向
         };
     }
 };
 
 /**
- * @brief ステップベースScreenTransitionクラス
- * E-Paper最適化版
+ * @brief 完全外部キャンバス専用ScreenTransitionクラス
+ * 最大メモリ節約版 - 内部キャンバス一切なし、外部キャンバス必須
  */
 class ScreenTransition {
 private:
     M5GFX* _display;              // 描画先ディスプレイ
     bool _initialized;            // 初期化フラグ
-    bool _use_psram;              // PSRAM使用フラグ
     
-    // ダブルバッファリング用キャンバス
-    M5Canvas* _sourceCanvas;      // 元画面のキャンバス
-    M5Canvas* _targetCanvas;      // 次画面のキャンバス
-    M5Canvas* _workCanvas;        // 作業用キャンバス
+    // 外部キャンバスへの参照（所有権なし、必須）
+    M5Canvas* _sourceCanvas;      // 元画面のキャンバス（外部必須）
+    M5Canvas* _targetCanvas;      // 次画面のキャンバス（外部必須）
+    M5Canvas* _workCanvas;        // 作業用キャンバス（必要時のみ一時作成）
+    
+    // 作業用キャンバスの管理フラグ
+    bool _owns_work_canvas;       // 作業用キャンバスを一時作成したか
     
     // ステップベース状態管理
     TransitionState _state;       // 現在の状態
@@ -122,9 +122,10 @@ private:
     std::function<void()> _onTransitionComplete;                // 完了時コールバック
     
     // 内部メソッド
-    void cleanup();                               // リソース解放
-    bool createCanvases();                        // キャンバス作成
-    float getStepProgress() const;                      // 現在ステップの進行度取得
+    void cleanup();                               // リソース解放（作業用キャンバスのみ）
+    bool ensureWorkCanvas();                      // 必要時に作業用キャンバス作成
+    void releaseWorkCanvas();                     // 作業用キャンバス解放
+    float getStepProgress() const;                // 現在ステップの進行度取得
     bool isStepReady();                          // 次ステップ実行可能かチェック
     void executeStep();                          // 1ステップ実行
     
@@ -160,17 +161,28 @@ public:
     ~ScreenTransition();
     
     /**
-     * @brief 初期化処理
-     * @param use_psram PSRAM使用フラグ
+     * @brief 初期化処理（外部キャンバス必須）
+     * @param sourceCanvas 元画面用のキャンバス（540x960必須）
+     * @param targetCanvas 次画面用のキャンバス（540x960必須）
      * @return 成功時true
+     * @note 両方のキャンバスは外部で作成・管理される必要があります
      */
-    bool init(bool use_psram = true);
+    bool init(M5Canvas* sourceCanvas, M5Canvas* targetCanvas);
+    
+    /**
+     * @brief 外部キャンバスを変更（実行時変更用）
+     * @param sourceCanvas 元画面用のキャンバス（540x960必須）
+     * @param targetCanvas 次画面用のキャンバス（540x960必須）
+     * @note 通常は init() で設定するため、実行中の変更時のみ使用
+     */
+    void setCanvases(M5Canvas* sourceCanvas, M5Canvas* targetCanvas);
     
     /**
      * @brief 元画面のキャプチャ
      * 現在の画面をソースキャンバスに保存
+     * @param captureFromDisplay 画面から直接キャプチャするか（false推奨）
      */
-    void captureSource();
+    void captureSource(bool captureFromDisplay = false);
     
     /**
      * @brief 次画面の準備
@@ -202,13 +214,13 @@ public:
     void switchImmediate();
     
     /**
-     * @brief 簡易トランジション実行
+     * @brief ワンステップトランジション実行
      * キャプチャ→準備→実行を一括で行う便利関数
      * @param prepare_func 次画面を描画する関数
      * @param config トランジション設定
      */
-    void transition(std::function<void(M5Canvas*)> prepare_func, 
-                   const TransitionConfig& config = TransitionConfig::defaultConfig());
+    void executeTransition(std::function<void(M5Canvas*)> prepare_func, 
+                          const TransitionConfig& config = TransitionConfig::defaultConfig());
     
     // ゲッター
     TransitionState getState() const { return _state; }
@@ -217,13 +229,14 @@ public:
     float getProgress() const { return getStepProgress(); }
     bool isRunning() const { return _state == TransitionState::RUNNING; }
     bool isFinished() const { return _state == TransitionState::FINISHED; }
+    bool isInitialized() const { return _initialized; }
     
     // コールバック設定
     void setOnTransitionStart(std::function<void()> callback) { _onTransitionStart = callback; }
     void setOnTransitionStep(std::function<void(int, int)> callback) { _onTransitionStep = callback; }
     void setOnTransitionComplete(std::function<void()> callback) { _onTransitionComplete = callback; }
     
-    // ユーティリティ
+    // キャンバス取得（デバッグ・高度な用途）
     M5Canvas* getSourceCanvas() { return _sourceCanvas; }
     M5Canvas* getTargetCanvas() { return _targetCanvas; }
     M5Canvas* getWorkCanvas() { return _workCanvas; }
