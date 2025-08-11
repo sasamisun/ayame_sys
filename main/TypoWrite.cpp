@@ -30,8 +30,11 @@ TypoWrite::TypoWrite(M5GFX *display)
       _currentX(0),
       _currentY(0),
       _vlwParser(nullptr),
-      _useVLWParser(false)
+      _useVLWParser(false),
+      _enableSmallCharHandling(true),
+      _smallCharSettings(SmallCharSettings::getDefault())
 {
+    initializeSmallCharMap();
     ESP_LOGI(TAG, "TypoWrite initialized");
 }
 
@@ -61,6 +64,175 @@ void TypoWrite::setVLWParser(VLWFontParser* parser) {
     }
 }
 
+// === 小文字マッピングテーブル構築 ===
+void TypoWrite::initializeSmallCharMap()
+{
+    ESP_LOGI(TAG, "Building small character mapping table...");
+    
+    // 🔹 ひらがな小文字マッピング
+    _smallToLargeMap[0x3041] = 0x3042;  // ぁ → あ
+    _smallToLargeMap[0x3043] = 0x3044;  // ぃ → い
+    _smallToLargeMap[0x3045] = 0x3046;  // ぅ → う
+    _smallToLargeMap[0x3047] = 0x3048;  // ぇ → え
+    _smallToLargeMap[0x3049] = 0x304A;  // ぉ → お
+    _smallToLargeMap[0x3063] = 0x3064;  // っ → つ
+    _smallToLargeMap[0x3083] = 0x3084;  // ゃ → や
+    _smallToLargeMap[0x3085] = 0x3086;  // ゅ → ゆ
+    _smallToLargeMap[0x3087] = 0x3088;  // ょ → よ
+    _smallToLargeMap[0x308E] = 0x308F;  // ゎ → わ
+
+    // 🔹 カタカナ小文字マッピング
+    _smallToLargeMap[0x30A1] = 0x30A2;  // ァ → ア
+    _smallToLargeMap[0x30A3] = 0x30A4;  // ィ → イ
+    _smallToLargeMap[0x30A5] = 0x30A6;  // ゥ → ウ
+    _smallToLargeMap[0x30A7] = 0x30A8;  // ェ → エ
+    _smallToLargeMap[0x30A9] = 0x30AA;  // ォ → オ
+    _smallToLargeMap[0x30C3] = 0x30C4;  // ッ → ツ
+    _smallToLargeMap[0x30E3] = 0x30E4;  // ャ → ヤ
+    _smallToLargeMap[0x30E5] = 0x30E6;  // ュ → ユ
+    _smallToLargeMap[0x30E7] = 0x30E8;  // ョ → ヨ
+    _smallToLargeMap[0x30EE] = 0x30EF;  // ヮ → ワ
+    _smallToLargeMap[0x30F5] = 0x30AB;  // ヵ → カ
+    _smallToLargeMap[0x30F6] = 0x30B1;  // ヶ → ケ
+
+    ESP_LOGI(TAG, "Small character mapping table built successfully!");
+    ESP_LOGI(TAG, "  - Hiragana mappings: 10 characters");
+    ESP_LOGI(TAG, "  - Katakana mappings: 12 characters");
+    ESP_LOGI(TAG, "  - Total mappings: %d characters", _smallToLargeMap.size());
+}
+
+// === 小文字判定機能 ===
+bool TypoWrite::isSmallChar(uint16_t unicode_char) const
+{
+    // マッピングテーブルに存在するかをチェック
+    bool result = _smallToLargeMap.find(unicode_char) != _smallToLargeMap.end();
+    
+    ESP_LOGD(TAG, "isSmallChar(U+%04X) = %s", unicode_char, result ? "true" : "false");
+    return result;
+}
+
+// === 対応大文字取得機能 ===
+uint16_t TypoWrite::getCorrespondingLargeChar(uint16_t small_char) const
+{
+    auto it = _smallToLargeMap.find(small_char);
+    
+    if (it != _smallToLargeMap.end()) {
+        uint16_t large_char = it->second;
+        ESP_LOGD(TAG, "getCorrespondingLargeChar(U+%04X) -> U+%04X", small_char, large_char);
+        return large_char;
+    } else {
+        ESP_LOGD(TAG, "getCorrespondingLargeChar(U+%04X) -> not found, returning original", small_char);
+        return small_char;  // 見つからない場合は元の文字をそのまま返す
+    }
+}
+
+void TypoWrite::setSmallCharHandling(bool enable) 
+{ 
+    _enableSmallCharHandling = enable; 
+}
+
+bool TypoWrite::isSmallCharHandlingEnabled() const 
+{ 
+    return _enableSmallCharHandling; 
+}
+
+void TypoWrite::setSmallCharSettings(const SmallCharSettings& settings) 
+{ 
+    _smallCharSettings = settings; 
+}
+
+const SmallCharSettings& TypoWrite::getSmallCharSettings() const 
+{ 
+    return _smallCharSettings; 
+}
+
+// === デバッグ機能 - マッピングテーブル表示 ===
+void TypoWrite::debugPrintSmallCharMap() const
+{
+    ESP_LOGI(TAG, "=== Small Character Mapping Table ===");
+    ESP_LOGI(TAG, "Small char handling: %s", _enableSmallCharHandling ? "ENABLED" : "DISABLED");
+    ESP_LOGI(TAG, "Settings: scale=%.2f, offsetX=%.2f, offsetY=%.2f",
+             _smallCharSettings.scale, _smallCharSettings.offsetX, _smallCharSettings.offsetY);
+    ESP_LOGI(TAG, "");
+    
+    ESP_LOGI(TAG, "📝 Hiragana mappings:");
+    // ひらがな小文字を順番に表示
+    std::vector<uint16_t> hiragana_small = {
+        0x3041, 0x3043, 0x3045, 0x3047, 0x3049,  // ぁぃぅぇぉ
+        0x3063, 0x3083, 0x3085, 0x3087, 0x308E   // っゃゅょゎ
+    };
+    
+    for (uint16_t small : hiragana_small) {
+        uint16_t large = getCorrespondingLargeChar(small);
+        ESP_LOGI(TAG, "  U+%04X (%c) -> U+%04X (%c)", 
+                 small, (char)small, large, (char)large);
+    }
+    
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "📝 Katakana mappings:");
+    // カタカナ小文字を順番に表示
+    std::vector<uint16_t> katakana_small = {
+        0x30A1, 0x30A3, 0x30A5, 0x30A7, 0x30A9,  // ァィゥェォ
+        0x30C3, 0x30E3, 0x30E5, 0x30E7, 0x30EE,  // ッャュョヮ
+        0x30F5, 0x30F6                            // ヵヶ
+    };
+    
+    for (uint16_t small : katakana_small) {
+        uint16_t large = getCorrespondingLargeChar(small);
+        ESP_LOGI(TAG, "  U+%04X (%c) -> U+%04X (%c)", 
+                 small, (char)small, large, (char)large);
+    }
+    
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "Total: %d mappings registered", _smallToLargeMap.size());
+    ESP_LOGI(TAG, "=====================================");
+}
+
+// === デバッグ機能 - 文字列内小文字分析 ===
+void TypoWrite::debugAnalyzeSmallChars(const std::string& text)
+{
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);  // 既存関数呼び出し
+    
+    for (uint16_t ch : unicode_chars) {
+        bool is_small = isSmallChar(ch);
+        if (is_small) {
+            uint16_t large = getCorrespondingLargeChar(ch);
+            std::string char_str = unicodeToUtf8(ch);      // 既存関数呼び出し
+            std::string large_str = unicodeToUtf8(large);  // 既存関数呼び出し
+            ESP_LOGI(TAG, "Small char: %s -> %s", char_str.c_str(), large_str.c_str());
+        }
+    }
+}
+
+// === 🌟 Step1: 文字カテゴリ判定の更新（小文字対応） ===
+CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
+{
+    // 🌟 最初に小文字判定をチェック（最優先）
+    if (isSmallChar(unicode_char)) {
+        return CharCategory::SMALL_CHAR;
+    }
+
+    // 既存の判定処理（句読点、括弧等）
+    if (unicode_char == 0x3001 || unicode_char == 0x3002) {
+        return CharCategory::PUNCTUATION;
+    }
+
+    if ((unicode_char >= 0x3008 && unicode_char <= 0x3011) ||
+        (unicode_char >= 0x300C && unicode_char <= 0x300F) ||
+        unicode_char == 0x0028 || unicode_char == 0x0029 ||
+        unicode_char == 0x005B || unicode_char == 0x005D ||
+        unicode_char == 0x007B || unicode_char == 0x007D) {
+        return CharCategory::BRACKET;
+    }
+
+    if (unicode_char == 0x30FC || unicode_char == 0x2014 ||
+        unicode_char == 0x2013 || unicode_char == 0x2015 ||
+        unicode_char == 0xFF0D || unicode_char == 0x005F) {
+        return CharCategory::HORIZONTAL_BAR;
+    }
+
+    return CharCategory::NORMAL;
+}
 
 // UTF-8文字列をUnicodeコードポイントの配列に変換
 std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
@@ -266,36 +438,6 @@ bool TypoWrite::shouldRotateInVertical(uint16_t unicode_char)
     }
 
     return false;
-}
-
-// 文字カテゴリの判定
-CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
-{
-    // 句読点
-    if (unicode_char == 0x3001 || unicode_char == 0x3002)
-    {
-        return CharCategory::PUNCTUATION;
-    }
-
-    // 括弧類
-    if ((unicode_char >= 0x3008 && unicode_char <= 0x3011) ||
-        (unicode_char >= 0x300C && unicode_char <= 0x300F) ||
-        unicode_char == 0x0028 || unicode_char == 0x0029 ||
-        unicode_char == 0x005B || unicode_char == 0x005D ||
-        unicode_char == 0x007B || unicode_char == 0x007D)
-    {
-        return CharCategory::BRACKET;
-    }
-
-    // 横棒・長音記号類
-    if (unicode_char == 0x30FC || unicode_char == 0x2014 ||
-        unicode_char == 0x2013 || unicode_char == 0x2015 ||
-        unicode_char == 0xFF0D || unicode_char == 0x005F)
-    {
-        return CharCategory::HORIZONTAL_BAR;
-    }
-
-    return CharCategory::NORMAL;
 }
 
 // 文字の幅を取得

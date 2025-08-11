@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <unordered_map>
 #include "VLWFontParser.hpp"
 
 // テキスト方向の列挙型
@@ -30,7 +31,25 @@ enum class CharCategory
     BRACKET,        // 括弧類
     HORIZONTAL_BAR, // 横棒・長音記号類
     PUNCTUATION,    // 句読点類
+    SMALL_CHAR,     // 小文字（ひらがな・カタカナ）
     OTHER_SPECIAL   // その他の特殊文字
+};
+
+// 小文字の描画設定構造体（シンプル版）
+struct SmallCharSettings
+{
+    float scale;        // 縮小率（0.7～0.8推奨）
+    float offsetX;      // X方向オフセット（文字幅に対する比率）
+    float offsetY;      // Y方向オフセット（文字高に対する比率）
+    
+    // デフォルト設定（実測で調整済み）
+    static SmallCharSettings getDefault() {
+        return {
+            0.75f,  // 75%に縮小
+            0.35f,  // 右に35%オフセット（縦書き用）
+            -0.2f   // 上に20%オフセット（縦書き用）
+        };
+    }
 };
 
 // TypoWrite - 縦書き/横書き対応テキスト描画クラス
@@ -99,6 +118,32 @@ private:
     // テキストサイズ計算
     void calculateTextSize(const std::string &text, int &width, int &height);
 
+    // 小文字システム関連メンバ
+    bool _enableSmallCharHandling;                            // 小文字特別処理を有効にするか
+    SmallCharSettings _smallCharSettings;                     // 小文字描画設定
+    std::unordered_map<uint16_t, uint16_t> _smallToLargeMap; // 小文字→大文字マッピング
+
+    // 小文字システム内部メソッド
+    /**
+     * @brief 小文字マッピングテーブルを初期化する
+     * ひらがな・カタカナの小文字を対応する大文字にマッピング
+     */
+    void initializeSmallCharMap();
+    
+    /**
+     * @brief 指定された文字が小文字かどうかを判定する
+     * @param unicode_char 判定したいUnicode文字コード
+     * @return 小文字ならtrue、そうでなければfalse
+     */
+    bool isSmallChar(uint16_t unicode_char) const;
+    
+    /**
+     * @brief 小文字に対応する大文字を取得する
+     * @param small_char 小文字のUnicode文字コード
+     * @return 対応する大文字のUnicode文字コード（見つからない場合は元の文字）
+     */
+    uint16_t getCorrespondingLargeChar(uint16_t small_char) const;
+
 public:
     // コンストラクタ
     TypoWrite(M5GFX *display);
@@ -108,7 +153,7 @@ public:
     // 文字変換ヘルパーメソッド
     std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
     std::string unicodeToUtf8(uint16_t unicode_char);
-    
+
     // 描画先の設定
     void setDrawTarget(lgfx::LGFX_Sprite *sprite); // nullptrでディスプレイに直接描画
 
@@ -189,6 +234,17 @@ public:
      * @return 送り幅（ピクセル）
      */
     int32_t getCharacterSetWidthVLW(uint16_t unicode_char);
+
+    // 小文字システム公開メソッド
+    // 🌟 小文字システム公開メソッド（追加のみ）
+    void setSmallCharHandling(bool enable);
+    bool isSmallCharHandlingEnabled() const;
+    void setSmallCharSettings(const SmallCharSettings& settings);
+    const SmallCharSettings& getSmallCharSettings() const;
+    
+    // 🌟 デバッグメソッド（追加のみ）
+    void debugPrintSmallCharMap() const;
+    void debugAnalyzeSmallChars(const std::string& text);
 };
 
 #endif // _TYPO_WRITE_HPP_
