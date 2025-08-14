@@ -204,10 +204,10 @@ void TypoWrite::debugAnalyzeSmallChars(const std::string& text)
     }
 }
 
-// === 🌟 Step1: 文字カテゴリ判定の更新（小文字対応） ===
+// ===  Step1: 文字カテゴリ判定の更新（小文字対応） ===
 CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
 {
-    // 🌟 最初に小文字判定をチェック（最優先）
+    //  最初に小文字判定をチェック（最優先）
     if (isSmallChar(unicode_char)) {
         return CharCategory::SMALL_CHAR;
     }
@@ -550,43 +550,40 @@ int32_t TypoWrite::getCharacterSetWidthVLW(uint16_t unicode_char){
 // 横書き用の一文字描画
 void TypoWrite::drawCharacterHorizontal(uint16_t unicode_char, int x, int y)
 {
+    //  小文字の特別処理（横書きでも対応）
+    if (_enableSmallCharHandling && isSmallChar(unicode_char)) {
+        ESP_LOGD(TAG, "Drawing small char U+%04X horizontally with scaling", unicode_char);
+        drawSmallCharacterHorizontal(unicode_char, x, y);
+        return;
+    }
+
+    // 従来の処理（通常文字）
     std::string utf8_char = unicodeToUtf8(unicode_char);
 
-    if (_drawTarget)
-    {
+    if (_drawTarget) {
         // スプライトに描画
-        if (_isCustomFont && _vlwFont)
-        {
+        if (_isCustomFont && _vlwFont) {
             _drawTarget->loadFont(_vlwFont);
-        }
-        else if (_font)
-        {
+        } else if (_font) {
             _drawTarget->setFont(_font);
         }
         _drawTarget->setTextSize(_fontSize);
         _drawTarget->setTextColor(_color, _bgColor);
         _drawTarget->drawString(utf8_char.c_str(), _x + x, _y + y);
-        if (_isCustomFont && _vlwFont)
-        {
+        if (_isCustomFont && _vlwFont) {
             _drawTarget->unloadFont();
         }
-    }
-    else
-    {
+    } else {
         // ディスプレイに描画
-        if (_isCustomFont && _vlwFont)
-        {
+        if (_isCustomFont && _vlwFont) {
             _display->loadFont(_vlwFont);
-        }
-        else if (_font)
-        {
+        } else if (_font) {
             _display->setFont(_font);
         }
         _display->setTextSize(_fontSize);
         _display->setTextColor(_color, _bgColor);
         _display->drawString(utf8_char.c_str(), _x + x, _y + y);
-        if (_isCustomFont && _vlwFont)
-        {
+        if (_isCustomFont && _vlwFont) {
             _display->unloadFont();
         }
     }
@@ -595,20 +592,166 @@ void TypoWrite::drawCharacterHorizontal(uint16_t unicode_char, int x, int y)
 // 縦書き用の一文字描画
 void TypoWrite::drawCharacterVertical(uint16_t unicode_char, int x, int y)
 {
+    //  小文字の特別処理（縦書き時の最優先処理）
+    if (_enableSmallCharHandling && isSmallChar(unicode_char)) {
+        ESP_LOGD(TAG, "Drawing small char U+%04X vertically with scaling", unicode_char);
+        drawSmallCharacterVertical(unicode_char, x, y);
+        return;
+    }
+
     // 縦書き用グリフに変換
     uint16_t display_char = convertToVerticalGlyph(unicode_char);
 
     // 回転が必要かチェック
-    if (shouldRotateInVertical(unicode_char))
-    {
+    if (shouldRotateInVertical(unicode_char)) {
         // 90度回転して描画
         drawRotatedCharacter(display_char, x, y);
-    }
-    else
-    {
+    } else {
         // そのまま描画
         drawCharacterHorizontal(display_char, x, y);
     }
+}
+
+void TypoWrite::drawSmallCharacterVertical(uint16_t small_char, int x, int y)
+{
+    // 対応する大文字を取得
+    uint16_t large_char = getCorrespondingLargeChar(small_char);
+    
+    // 文字の基本サイズを取得
+    int char_width = getCharacterWidth(large_char);
+    int char_height = getCharacterHeight(large_char);
+    
+    //  縦書き用位置調整計算
+    float offsetX = char_width * _smallCharSettings.offsetX;   // 右方向オフセット
+    float offsetY = char_height * _smallCharSettings.offsetY;  // 上方向オフセット
+    
+    // 実際の描画位置を計算
+    int draw_x = x + static_cast<int>(offsetX);
+    int draw_y = y + static_cast<int>(offsetY);
+    
+    ESP_LOGD(TAG, "Small char vertical: U+%04X->U+%04X at (%d,%d) scale=%.2f offset=(%.1f,%.1f)", 
+             small_char, large_char, draw_x, draw_y, _smallCharSettings.scale, offsetX, offsetY);
+    
+    //  縮小描画実行
+    drawScaledCharacter(large_char, draw_x, draw_y, _smallCharSettings.scale, 0, 0);
+}
+
+// ===  新実装2: 横書き小文字描画 ===
+void TypoWrite::drawSmallCharacterHorizontal(uint16_t small_char, int x, int y)
+{
+    // 対応する大文字を取得
+    uint16_t large_char = getCorrespondingLargeChar(small_char);
+    
+    // 文字の基本サイズを取得
+    int char_height = getCharacterHeight(large_char);
+    
+    //  横書き用位置調整（下寄せ）
+    float offsetY = char_height * 0.3f;  // 下に30%オフセット
+    
+    // 実際の描画位置を計算
+    int draw_x = x;
+    int draw_y = y + static_cast<int>(offsetY);
+    
+    ESP_LOGD(TAG, "Small char horizontal: U+%04X->U+%04X at (%d,%d) scale=%.2f offset=(0,%.1f)", 
+             small_char, large_char, draw_x, draw_y, _smallCharSettings.scale, offsetY);
+    
+    // 縮小描画実行
+    drawScaledCharacter(large_char, draw_x, draw_y, _smallCharSettings.scale, 0, 0);
+}
+
+// === 縮小文字描画（コア機能） ===
+void TypoWrite::drawScaledCharacter(uint16_t unicode_char, int x, int y, 
+                                  float scale, float offsetX, float offsetY)
+{
+    // 文字の基本サイズを取得
+    int char_width = getCharacterWidth(unicode_char);
+    int char_height = getCharacterHeight(unicode_char);
+    
+    // 縮小後のサイズを計算
+    int scaled_width = static_cast<int>(char_width * scale);
+    int scaled_height = static_cast<int>(char_height * scale);
+    
+    ESP_LOGD(TAG, "Scaling char U+%04X: %dx%d -> %dx%d (scale=%.2f)", 
+             unicode_char, char_width, char_height, scaled_width, scaled_height, scale);
+    
+    //  一時スプライトを作成
+    lgfx::LGFX_Sprite* tempSprite;
+    if (_drawTarget) {
+        tempSprite = new lgfx::LGFX_Sprite(_drawTarget);
+        tempSprite->setColorDepth(_drawTarget->getColorDepth());
+    } else {
+        tempSprite = new lgfx::LGFX_Sprite(_display);
+        tempSprite->setColorDepth(_display->getColorDepth());
+    }
+    
+    // スプライトサイズを少し大きめに設定（余白確保）
+    int sprite_width = char_width + 10;
+    int sprite_height = char_height + 10;
+    
+    if (!tempSprite->createSprite(sprite_width, sprite_height)) {
+        ESP_LOGE(TAG, "Failed to create temp sprite for scaled char");
+        delete tempSprite;
+        
+        // 🔄 フォールバック：通常描画
+        std::string utf8_char = unicodeToUtf8(unicode_char);
+        if (_drawTarget) {
+            _drawTarget->drawString(utf8_char.c_str(), _x + x, _y + y);
+        } else {
+            _display->drawString(utf8_char.c_str(), _x + x, _y + y);
+        }
+        return;
+    }
+    
+    // 背景をクリア
+    if (_transparentBg) {
+        tempSprite->fillSprite(TFT_TRANSPARENT);
+    } else {
+        tempSprite->fillSprite(_bgColor);
+    }
+    
+    //  元のサイズで文字を描画
+    if (_isCustomFont && _vlwFont) {
+        tempSprite->loadFont(_vlwFont);
+    } else if (_font) {
+        tempSprite->setFont(_font);
+    }
+    tempSprite->setTextSize(_fontSize);
+    tempSprite->setTextColor(_color, _bgColor);
+    
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+    tempSprite->drawString(utf8_char.c_str(), 5, 5);  // 余白を考慮した位置
+    
+    if (_isCustomFont && _vlwFont) {
+        tempSprite->unloadFont();
+    }
+    
+    //  縮小してターゲットに描画
+    int center_x = _x + x + scaled_width / 2;
+    int center_y = _y + y + scaled_height / 2;
+    
+    ESP_LOGD(TAG, "PushRotateZoom to center (%d,%d) with scale %.2f", center_x, center_y, scale);
+    
+    if (_drawTarget) {
+        tempSprite->pushRotateZoom(_drawTarget, 
+                                  center_x, center_y,
+                                  0,      // 回転角度（0度）
+                                  scale,  // X方向スケール
+                                  scale,  // Y方向スケール
+                                  _transparentBg ? TFT_TRANSPARENT : _bgColor);
+    } else {
+        tempSprite->pushRotateZoom(_display, 
+                                  center_x, center_y,
+                                  0,      // 回転角度（0度）
+                                  scale,  // X方向スケール
+                                  scale,  // Y方向スケール
+                                  _transparentBg ? TFT_TRANSPARENT : _bgColor);
+    }
+    
+    // 一時スプライトを削除
+    tempSprite->deleteSprite();
+    delete tempSprite;
+    
+    ESP_LOGD(TAG, "Scaled character drawing completed");
 }
 
 // 回転した文字の描画

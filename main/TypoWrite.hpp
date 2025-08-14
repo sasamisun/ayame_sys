@@ -144,6 +144,33 @@ private:
      */
     uint16_t getCorrespondingLargeChar(uint16_t small_char) const;
 
+    /**
+     * @brief 縦書き用小文字描画（縮小+位置オフセット）
+     * @param small_char 小文字のUnicode文字コード
+     * @param x X座標（描画領域内の相対位置）
+     * @param y Y座標（描画領域内の相対位置）
+     */
+    void drawSmallCharacterVertical(uint16_t small_char, int x, int y);
+    
+    /**
+     * @brief 横書き用小文字描画（縮小+位置オフセット）
+     * @param small_char 小文字のUnicode文字コード
+     * @param x X座標（描画領域内の相対位置）
+     * @param y Y座標（描画領域内の相対位置）
+     */
+    void drawSmallCharacterHorizontal(uint16_t small_char, int x, int y);
+
+    /**
+     * @brief 文字の縮小描画（一時スプライト使用）
+     * @param unicode_char 描画する文字のUnicode文字コード
+     * @param x X座標（描画領域内の相対位置）
+     * @param y Y座標（描画領域内の相対位置）
+     * @param scale 縮小率（1.0=原寸、0.5=50%など）
+     * @param offsetX 追加X方向オフセット（通常は0）
+     * @param offsetY 追加Y方向オフセット（通常は0）
+     */
+    void drawScaledCharacter(uint16_t unicode_char, int x, int y, 
+                           float scale, float offsetX, float offsetY);
 public:
     // コンストラクタ
     TypoWrite(M5GFX *display);
