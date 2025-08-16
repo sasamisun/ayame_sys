@@ -1,240 +1,418 @@
-// main/TypoWrite.cpp
+// main/TypoWrite.cpp - エラー修正版
 #include "TypoWrite.hpp"
 #include "esp_log.h"
 #include <cstring>
 
-// ログタグ
 static const char *TAG = "TypoWrite";
 
-// コンストラクタ
+// ========================================
+// コンストラクタ・デストラクタ
+// ========================================
 TypoWrite::TypoWrite(M5GFX *display)
     : _display(display),
-      _drawTarget(nullptr), // 描画先（nullptrの場合は_displayに描画）
+      _drawTarget(nullptr),
+      _charSprite(nullptr),  // ヘッダーの宣言順序に合わせる
       _direction(TextDirection::HORIZONTAL),
       _alignment(TextAlignment::LEFT),
-      _x(0),
+      _x(0), 
       _y(0),
-      _width(100),
+      _width(100), 
       _height(100),
       _color(TFT_WHITE),
       _bgColor(TFT_BLACK),
+      _transparentBg(false),  // _wrapより前に移動
+      _wrap(true),
       _fontSize(1.0f),
       _font(&fonts::lgfxJapanGothic_16),
       _vlwFont(nullptr),
       _isCustomFont(false),
+      _vlwParser(nullptr),  // _currentX/Yより前に移動
+      _useVLWParser(false),
       _lineSpacing(2),
       _charSpacing(0),
-      _wrap(true),
-      _transparentBg(false),
       _columnSpacing(0),
-      _currentX(0),
+      _currentX(0), 
       _currentY(0),
-      _vlwParser(nullptr),
-      _useVLWParser(false),
       _enableSmallCharHandling(true),
       _smallCharSettings(SmallCharSettings::getDefault())
 {
+    // マッピングテーブルの初期化
     initializeSmallCharMap();
-    ESP_LOGI(TAG, "TypoWrite initialized");
+    initializeVerticalGlyphMap();
+    
+    // 文字描画用スプライトを事前作成（再利用用）
+    _charSprite = new lgfx::LGFX_Sprite(display);
+    
+    ESP_LOGI(TAG, "TypoWrite initialized with optimizations");
 }
 
-// デストラクタ
 TypoWrite::~TypoWrite()
 {
+    if (_charSprite) {
+        _charSprite->deleteSprite();
+        delete _charSprite;
+    }
     _vlwFont = nullptr;
     _drawTarget = nullptr;
     ESP_LOGI(TAG, "TypoWrite destroyed");
 }
 
-// 描画先スプライトの設定
-void TypoWrite::setDrawTarget(lgfx::LGFX_Sprite *sprite)
-{
-    _drawTarget = sprite;
-    ESP_LOGI(TAG, "Draw target set to %s", sprite ? "sprite" : "display");
-}
-
-void TypoWrite::setVLWParser(VLWFontParser* parser) {
-    _vlwParser = parser;
-    _useVLWParser = (parser != nullptr && parser->isInitialized());
-    
-    if (_useVLWParser) {
-        ESP_LOGI(TAG, "VLW parser enabled for font metrics");
-    } else {
-        ESP_LOGI(TAG, "VLW parser disabled, using M5GFX metrics");
-    }
-}
-
-// === 小文字マッピングテーブル構築 ===
+// ========================================
+// マッピングテーブル初期化
+// ========================================
 void TypoWrite::initializeSmallCharMap()
 {
     ESP_LOGI(TAG, "Building small character mapping table...");
     
-    // 🔹 ひらがな小文字マッピング
-    _smallToLargeMap[0x3041] = 0x3042;  // ぁ → あ
-    _smallToLargeMap[0x3043] = 0x3044;  // ぃ → い
-    _smallToLargeMap[0x3045] = 0x3046;  // ぅ → う
-    _smallToLargeMap[0x3047] = 0x3048;  // ぇ → え
-    _smallToLargeMap[0x3049] = 0x304A;  // ぉ → お
-    _smallToLargeMap[0x3063] = 0x3064;  // っ → つ
-    _smallToLargeMap[0x3083] = 0x3084;  // ゃ → や
-    _smallToLargeMap[0x3085] = 0x3086;  // ゅ → ゆ
-    _smallToLargeMap[0x3087] = 0x3088;  // ょ → よ
-    _smallToLargeMap[0x308E] = 0x308F;  // ゎ → わ
-
-    // 🔹 カタカナ小文字マッピング
-    _smallToLargeMap[0x30A1] = 0x30A2;  // ァ → ア
-    _smallToLargeMap[0x30A3] = 0x30A4;  // ィ → イ
-    _smallToLargeMap[0x30A5] = 0x30A6;  // ゥ → ウ
-    _smallToLargeMap[0x30A7] = 0x30A8;  // ェ → エ
-    _smallToLargeMap[0x30A9] = 0x30AA;  // ォ → オ
-    _smallToLargeMap[0x30C3] = 0x30C4;  // ッ → ツ
-    _smallToLargeMap[0x30E3] = 0x30E4;  // ャ → ヤ
-    _smallToLargeMap[0x30E5] = 0x30E6;  // ュ → ユ
-    _smallToLargeMap[0x30E7] = 0x30E8;  // ョ → ヨ
-    _smallToLargeMap[0x30EE] = 0x30EF;  // ヮ → ワ
-    _smallToLargeMap[0x30F5] = 0x30AB;  // ヵ → カ
-    _smallToLargeMap[0x30F6] = 0x30B1;  // ヶ → ケ
-
-    ESP_LOGI(TAG, "Small character mapping table built successfully!");
-    ESP_LOGI(TAG, "  - Hiragana mappings: 10 characters");
-    ESP_LOGI(TAG, "  - Katakana mappings: 12 characters");
-    ESP_LOGI(TAG, "  - Total mappings: %d characters", _smallToLargeMap.size());
-}
-
-// === 小文字判定機能 ===
-bool TypoWrite::isSmallChar(uint16_t unicode_char) const
-{
-    // マッピングテーブルに存在するかをチェック
-    bool result = _smallToLargeMap.find(unicode_char) != _smallToLargeMap.end();
-    
-    ESP_LOGD(TAG, "isSmallChar(U+%04X) = %s", unicode_char, result ? "true" : "false");
-    return result;
-}
-
-// === 対応大文字取得機能 ===
-uint16_t TypoWrite::getCorrespondingLargeChar(uint16_t small_char) const
-{
-    auto it = _smallToLargeMap.find(small_char);
-    
-    if (it != _smallToLargeMap.end()) {
-        uint16_t large_char = it->second;
-        ESP_LOGD(TAG, "getCorrespondingLargeChar(U+%04X) -> U+%04X", small_char, large_char);
-        return large_char;
-    } else {
-        ESP_LOGD(TAG, "getCorrespondingLargeChar(U+%04X) -> not found, returning original", small_char);
-        return small_char;  // 見つからない場合は元の文字をそのまま返す
-    }
-}
-
-void TypoWrite::setSmallCharHandling(bool enable) 
-{ 
-    _enableSmallCharHandling = enable; 
-}
-
-bool TypoWrite::isSmallCharHandlingEnabled() const 
-{ 
-    return _enableSmallCharHandling; 
-}
-
-void TypoWrite::setSmallCharSettings(const SmallCharSettings& settings) 
-{ 
-    _smallCharSettings = settings; 
-}
-
-const SmallCharSettings& TypoWrite::getSmallCharSettings() const 
-{ 
-    return _smallCharSettings; 
-}
-
-// === デバッグ機能 - マッピングテーブル表示 ===
-void TypoWrite::debugPrintSmallCharMap() const
-{
-    ESP_LOGI(TAG, "=== Small Character Mapping Table ===");
-    ESP_LOGI(TAG, "Small char handling: %s", _enableSmallCharHandling ? "ENABLED" : "DISABLED");
-    ESP_LOGI(TAG, "Settings: scale=%.2f, offsetX=%.2f, offsetY=%.2f",
-             _smallCharSettings.scale, _smallCharSettings.offsetX, _smallCharSettings.offsetY);
-    ESP_LOGI(TAG, "");
-    
-    ESP_LOGI(TAG, "📝 Hiragana mappings:");
-    // ひらがな小文字を順番に表示
-    std::vector<uint16_t> hiragana_small = {
-        0x3041, 0x3043, 0x3045, 0x3047, 0x3049,  // ぁぃぅぇぉ
-        0x3063, 0x3083, 0x3085, 0x3087, 0x308E   // っゃゅょゎ
+    // ひらがな小文字マッピング
+    _smallToLargeMap = {
+        {0x3041, 0x3042},  // ぁ → あ
+        {0x3043, 0x3044},  // ぃ → い
+        {0x3045, 0x3046},  // ぅ → う
+        {0x3047, 0x3048},  // ぇ → え
+        {0x3049, 0x304A},  // ぉ → お
+        {0x3063, 0x3064},  // っ → つ
+        {0x3083, 0x3084},  // ゃ → や
+        {0x3085, 0x3086},  // ゅ → ゆ
+        {0x3087, 0x3088},  // ょ → よ
+        {0x308E, 0x308F},  // ゎ → わ
+        
+        // カタカナ小文字マッピング
+        {0x30A1, 0x30A2},  // ァ → ア
+        {0x30A3, 0x30A4},  // ィ → イ
+        {0x30A5, 0x30A6},  // ゥ → ウ
+        {0x30A7, 0x30A8},  // ェ → エ
+        {0x30A9, 0x30AA},  // ォ → オ
+        {0x30C3, 0x30C4},  // ッ → ツ
+        {0x30E3, 0x30E4},  // ャ → ヤ
+        {0x30E5, 0x30E6},  // ュ → ユ
+        {0x30E7, 0x30E8},  // ョ → ヨ
+        {0x30EE, 0x30EF},  // ヮ → ワ
+        {0x30F5, 0x30AB},  // ヵ → カ
+        {0x30F6, 0x30B1}   // ヶ → ケ
     };
     
-    for (uint16_t small : hiragana_small) {
-        uint16_t large = getCorrespondingLargeChar(small);
-        ESP_LOGI(TAG, "  U+%04X (%c) -> U+%04X (%c)", 
-                 small, (char)small, large, (char)large);
-    }
-    
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "📝 Katakana mappings:");
-    // カタカナ小文字を順番に表示
-    std::vector<uint16_t> katakana_small = {
-        0x30A1, 0x30A3, 0x30A5, 0x30A7, 0x30A9,  // ァィゥェォ
-        0x30C3, 0x30E3, 0x30E5, 0x30E7, 0x30EE,  // ッャュョヮ
-        0x30F5, 0x30F6                            // ヵヶ
-    };
-    
-    for (uint16_t small : katakana_small) {
-        uint16_t large = getCorrespondingLargeChar(small);
-        ESP_LOGI(TAG, "  U+%04X (%c) -> U+%04X (%c)", 
-                 small, (char)small, large, (char)large);
-    }
-    
-    ESP_LOGI(TAG, "");
-    ESP_LOGI(TAG, "Total: %d mappings registered", _smallToLargeMap.size());
-    ESP_LOGI(TAG, "=====================================");
+    ESP_LOGI(TAG, "Small character map: %d entries", _smallToLargeMap.size());
 }
 
-// === デバッグ機能 - 文字列内小文字分析 ===
-void TypoWrite::debugAnalyzeSmallChars(const std::string& text)
+void TypoWrite::initializeVerticalGlyphMap()
 {
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);  // 既存関数呼び出し
+    ESP_LOGI(TAG, "Building vertical glyph mapping table...");
+    
+    // 縦書き用グリフマッピング（unordered_map化）
+    _verticalGlyphMap = {
+        // 句読点
+        {0x3001, 0xFE11},  // 、→ ︑
+        {0x3002, 0xFE12},  // 。→ ︒
+        
+        // 日本語括弧
+        {0x300C, 0xFE41},  // 「→ ﹁
+        {0x300D, 0xFE42},  // 」→ ﹂
+        {0x300E, 0xFE43},  // 『→ ﹃
+        {0x300F, 0xFE44},  // 』→ ﹄
+        
+        // 半角括弧類
+        {0x0028, 0xFE35},  // ( → ︵
+        {0x0029, 0xFE36},  // ) → ︶
+        {0x005B, 0xFE47},  // [ → ﹇
+        {0x005D, 0xFE48},  // ] → ﹈
+        {0x007B, 0xFE37},  // { → ︷
+        {0x007D, 0xFE38},  // } → ︸
+        
+        // 山括弧類
+        {0x3008, 0xFE3F},  // 〈→ ︿
+        {0x3009, 0xFE40},  // 〉→ ﹀
+        {0x300A, 0xFE3D},  // 《→ ︽
+        {0x300B, 0xFE3E},  // 》→ ︾
+        
+        // その他括弧
+        {0x3010, 0xFE3B},  // 【→ ︻
+        {0x3011, 0xFE3C},  // 】→ ︼
+        {0x3014, 0xFE39},  // 〔→ ︹
+        {0x3015, 0xFE3A},  // 〕→ ︺
+        
+        // ダッシュ・区切り線類
+        {0x2014, 0xFE31},  // — → ︱
+        {0x2013, 0xFE32},  // – → ︲
+        {0x2015, 0xFE31},  // ― → ︱
+        {0x005F, 0xFE33},  // _ → ︳
+        {0x2025, 0xFE30},  // ‥ → ︰
+        {0x2026, 0xFE19},  // … → ︙
+        
+        // 全角ダッシュ・記号
+        {0xFF0D, 0xFE32},  // － → ︲
+        {0x30FC, 0xFE31}   // ー → ︱
+    };
+    
+    ESP_LOGI(TAG, "Vertical glyph map: %d entries", _verticalGlyphMap.size());
+}
+
+// ========================================
+// 統一メトリクス取得
+// ========================================
+CharMetrics TypoWrite::getCharMetrics(uint16_t unicode_char)
+{
+    // キャッシュチェック
+    auto it = _metricsCache.find(unicode_char);
+    if (it != _metricsCache.end()) {
+        return it->second;
+    }
+    
+    CharMetrics metrics;
+    
+    // VLWParser優先
+    if (_useVLWParser && _vlwParser && _vlwParser->isInitialized()) {
+        metrics = {
+            static_cast<int32_t>(_vlwParser->getCharWidth(unicode_char) * _fontSize),
+            static_cast<int32_t>(_vlwParser->getCharHeight(unicode_char) * _fontSize),
+            static_cast<int32_t>(_vlwParser->getCharSetWidth(unicode_char) * _fontSize),
+            0  // baseline（必要に応じて追加）
+        };
+    }
+    else {
+        // M5GFXフォールバック
+        lgfx::FontMetrics fm;
+        _display->setFont(_font);
+        _display->setTextSize(_fontSize);
+        _font->updateFontMetric(&fm, unicode_char);
+        
+        metrics = {
+            static_cast<int32_t>(fm.x_advance * _fontSize),
+            static_cast<int32_t>(fm.y_advance * _fontSize),
+            static_cast<int32_t>(fm.x_advance * _fontSize),  // 送り幅
+            static_cast<int32_t>(fm.baseline * _fontSize)
+        };
+    }
+    
+    // キャッシュに保存（よく使う文字のみ）
+    if (_metricsCache.size() < 256) {  // キャッシュサイズ制限
+        _metricsCache[unicode_char] = metrics;
+    }
+    
+    return metrics;
+}
+
+// ========================================
+// 統一文字描画関数（すべての描画を一元化）
+// ========================================
+void TypoWrite::drawUnifiedCharacter(uint16_t unicode_char, int x, int y, 
+                                     float scale, float rotation,
+                                     float offsetX, float offsetY)
+{
+    // 実際の描画位置を計算
+    int draw_x = x + static_cast<int>(offsetX);
+    int draw_y = y + static_cast<int>(offsetY);
+    
+    // スケール1.0かつ回転なしの場合は直接描画（最速パス）
+    if (scale == 1.0f && rotation == 0.0f) {
+        drawDirectCharacter(unicode_char, draw_x, draw_y);
+        return;
+    }
+    
+    // スケールまたは回転が必要な場合はスプライト描画
+    drawSpriteCharacter(unicode_char, draw_x, draw_y, scale, rotation);
+}
+
+// 直接描画（最速パス）
+void TypoWrite::drawDirectCharacter(uint16_t unicode_char, int x, int y)
+{
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+    
+    // 描画先の選択（明示的なキャストを追加）
+    lgfx::LovyanGFX* target = _drawTarget ? 
+        static_cast<lgfx::LovyanGFX*>(_drawTarget) : 
+        static_cast<lgfx::LovyanGFX*>(_display);
+    
+    // フォント設定
+    if (_isCustomFont && _vlwFont) {
+        target->loadFont(_vlwFont);
+    } else if (_font) {
+        target->setFont(_font);
+    }
+    
+    target->setTextSize(_fontSize);
+    target->setTextColor(_color, _bgColor);
+    target->drawString(utf8_char.c_str(), _x + x, _y + y);
+    
+    if (_isCustomFont && _vlwFont) {
+        target->unloadFont();
+    }
+}
+
+// スプライトを使った描画（スケール・回転対応）
+void TypoWrite::drawSpriteCharacter(uint16_t unicode_char, int x, int y,
+                                    float scale, float rotation)
+{
+    CharMetrics metrics = getCharMetrics(unicode_char);
+    
+    // スプライトサイズを計算（余裕を持たせる）
+    int sprite_width = static_cast<int>(metrics.width * scale + 20);
+    int sprite_height = static_cast<int>(metrics.height * scale + 20);
+    
+    // 再利用スプライトのサイズ調整
+    if (_charSprite->width() < sprite_width || _charSprite->height() < sprite_height) {
+        _charSprite->deleteSprite();
+        _charSprite->createSprite(sprite_width, sprite_height);
+    }
+    
+    // 背景をクリア
+    _charSprite->fillSprite(_transparentBg ? TFT_TRANSPARENT : _bgColor);
+    
+    // フォント設定と描画
+    if (_isCustomFont && _vlwFont) {
+        _charSprite->loadFont(_vlwFont);
+    } else if (_font) {
+        _charSprite->setFont(_font);
+    }
+    
+    _charSprite->setTextSize(_fontSize);
+    _charSprite->setTextColor(_color, _bgColor);
+    
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+    _charSprite->drawString(utf8_char.c_str(), 10, 10);
+    
+    if (_isCustomFont && _vlwFont) {
+        _charSprite->unloadFont();
+    }
+    
+    // 描画先を選択（明示的なキャストを追加）
+    lgfx::LovyanGFX* target = _drawTarget ? 
+        static_cast<lgfx::LovyanGFX*>(_drawTarget) : 
+        static_cast<lgfx::LovyanGFX*>(_display);
+    
+    // 回転・スケール描画
+    int center_x = _x + x + sprite_width / 2;
+    int center_y = _y + y + sprite_height / 2;
+    
+    _charSprite->pushRotateZoom(target, center_x, center_y,
+                                rotation, scale, scale,
+                                _transparentBg ? TFT_TRANSPARENT : _bgColor);
+}
+
+// ========================================
+// 横書きテキスト描画（簡略化版）
+// ========================================
+void TypoWrite::drawHorizontalText(const std::string &text)
+{
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    
+    _currentX = 0;
+    _currentY = 0;
     
     for (uint16_t ch : unicode_chars) {
-        bool is_small = isSmallChar(ch);
-        if (is_small) {
-            uint16_t large = getCorrespondingLargeChar(ch);
-            std::string char_str = unicodeToUtf8(ch);      // 既存関数呼び出し
-            std::string large_str = unicodeToUtf8(large);  // 既存関数呼び出し
-            ESP_LOGI(TAG, "Small char: %s -> %s", char_str.c_str(), large_str.c_str());
+        // 改行処理
+        if (ch == '\n') {
+            _currentX = 0;
+            _currentY += getCharMetrics(0x3000).height + _lineSpacing;  // 全角スペース基準
+            continue;
         }
+        
+        // 描画パラメータの決定
+        float scale = 1.0f;
+        float offsetX = 0.0f;
+        float offsetY = 0.0f;
+        uint16_t display_char = ch;
+        
+        // 小文字処理
+        if (_enableSmallCharHandling && isSmallChar(ch)) {
+            display_char = getCorrespondingLargeChar(ch);
+            scale = _smallCharSettings.scale;
+            offsetY = getCharMetrics(display_char).height * 0.3f;
+        }
+        
+        CharMetrics metrics = getCharMetrics(display_char);
+        
+        // 折り返し処理
+        if (_wrap && (_currentX + metrics.width > _width)) {
+            _currentX = 0;
+            _currentY += metrics.height + _lineSpacing;
+        }
+        
+        // 描画範囲チェック
+        if (_currentY + metrics.height > _height) {
+            break;
+        }
+        
+        // 統一描画関数を直接呼ぶ（コールスタック削減）
+        drawUnifiedCharacter(display_char, _currentX, _currentY, 
+                           scale, 0.0f, offsetX, offsetY);
+        
+        // 次の文字位置へ
+        _currentX += static_cast<int>(metrics.setWidth * scale) + _charSpacing;
     }
 }
 
-// ===  Step1: 文字カテゴリ判定の更新（小文字対応） ===
-CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
+// ========================================
+// 縦書きテキスト描画（簡略化版）
+// ========================================
+void TypoWrite::drawVerticalText(const std::string &text)
 {
-    //  最初に小文字判定をチェック（最優先）
-    if (isSmallChar(unicode_char)) {
-        return CharCategory::SMALL_CHAR;
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    
+    // 右端から開始
+    int column_width = getCharMetrics(0x3000).height;
+    _currentX = _width - column_width - 10;
+    _currentY = 0;
+    
+    ESP_LOGI(TAG, "Starting vertical text at X=%d", _currentX);
+    
+    for (uint16_t ch : unicode_chars) {
+        // 改行処理（左に移動）
+        if (ch == '\n') {
+            _currentX -= column_width + _columnSpacing + _lineSpacing;
+            _currentY = 0;
+            continue;
+        }
+        
+        // 縦書き用グリフ変換
+        uint16_t display_char = convertToVerticalGlyph(ch);
+        
+        // 描画パラメータの決定
+        float scale = 1.1f;
+        float rotation = 0.0f;
+        float offsetX = 0.0f;
+        float offsetY = 0.0f;
+        
+        // 小文字処理（最優先）
+        if (_enableSmallCharHandling && isSmallChar(ch)) {
+            display_char = getCorrespondingLargeChar(ch);
+            scale = _smallCharSettings.scale;
+            offsetX = getCharMetrics(display_char).width * _smallCharSettings.offsetX;
+            offsetY = getCharMetrics(display_char).height * _smallCharSettings.offsetY;
+        }
+        // 回転が必要な文字
+        else if (shouldRotateInVertical(display_char)) {
+            rotation = 90.0f;
+        }
+        
+        CharMetrics metrics = getCharMetrics(display_char);
+        int char_height = (rotation != 0.0f) ? metrics.width : metrics.height;
+        
+        // 折り返し処理
+        if (_wrap && (_currentY + char_height > _height)) {
+            _currentX -= column_width + _columnSpacing + _lineSpacing;
+            _currentY = 0;
+        }
+        
+        // 描画範囲チェック
+        if (_currentX < 0) {
+            break;
+        }
+        
+        // 統一描画関数を直接呼ぶ
+        drawUnifiedCharacter(display_char, _currentX, _currentY,
+                           scale, rotation, offsetX, offsetY);
+        
+        // 次の文字位置へ
+        _currentY += static_cast<int>(char_height * scale) + _charSpacing;
     }
-
-    // 既存の判定処理（句読点、括弧等）
-    if (unicode_char == 0x3001 || unicode_char == 0x3002) {
-        return CharCategory::PUNCTUATION;
-    }
-
-    if ((unicode_char >= 0x3008 && unicode_char <= 0x3011) ||
-        (unicode_char >= 0x300C && unicode_char <= 0x300F) ||
-        unicode_char == 0x0028 || unicode_char == 0x0029 ||
-        unicode_char == 0x005B || unicode_char == 0x005D ||
-        unicode_char == 0x007B || unicode_char == 0x007D) {
-        return CharCategory::BRACKET;
-    }
-
-    if (unicode_char == 0x30FC || unicode_char == 0x2014 ||
-        unicode_char == 0x2013 || unicode_char == 0x2015 ||
-        unicode_char == 0xFF0D || unicode_char == 0x005F) {
-        return CharCategory::HORIZONTAL_BAR;
-    }
-
-    return CharCategory::NORMAL;
 }
 
-// UTF-8文字列をUnicodeコードポイントの配列に変換
+// ========================================
+// その他の既存メソッド（必要最小限のみ実装）
+// ========================================
+
+// 文字変換ヘルパー
 std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
 {
     std::vector<uint16_t> unicode_chars;
@@ -242,30 +420,25 @@ std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
     size_t len = utf8_string.length();
     size_t i = 0;
 
-    while (i < len)
-    {
+    while (i < len) {
         uint16_t unicode_char = 0;
 
-        if ((str[i] & 0x80) == 0)
-        {
+        if ((str[i] & 0x80) == 0) {
             // 1バイト文字 (ASCII)
             unicode_char = str[i];
             i++;
         }
-        else if ((str[i] & 0xE0) == 0xC0)
-        {
+        else if ((str[i] & 0xE0) == 0xC0) {
             // 2バイト文字
             unicode_char = ((str[i] & 0x1F) << 6) | (str[i + 1] & 0x3F);
             i += 2;
         }
-        else if ((str[i] & 0xF0) == 0xE0)
-        {
+        else if ((str[i] & 0xF0) == 0xE0) {
             // 3バイト文字
             unicode_char = ((str[i] & 0x0F) << 12) | ((str[i + 1] & 0x3F) << 6) | (str[i + 2] & 0x3F);
             i += 3;
         }
-        else
-        {
+        else {
             // 4バイト文字は16ビットに収まらないのでスキップ
             i += 4;
             continue;
@@ -277,24 +450,20 @@ std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
     return unicode_chars;
 }
 
-// UnicodeコードポイントをUTF-8文字列に変換
 std::string TypoWrite::unicodeToUtf8(uint16_t unicode_char)
 {
     std::string utf8_str;
 
-    if (unicode_char <= 0x7F)
-    {
+    if (unicode_char <= 0x7F) {
         // 1バイト文字
         utf8_str += (char)unicode_char;
     }
-    else if (unicode_char <= 0x7FF)
-    {
+    else if (unicode_char <= 0x7FF) {
         // 2バイト文字
         utf8_str += (char)(0xC0 | (unicode_char >> 6));
         utf8_str += (char)(0x80 | (unicode_char & 0x3F));
     }
-    else
-    {
+    else {
         // 3バイト文字
         utf8_str += (char)(0xE0 | (unicode_char >> 12));
         utf8_str += (char)(0x80 | ((unicode_char >> 6) & 0x3F));
@@ -304,822 +473,217 @@ std::string TypoWrite::unicodeToUtf8(uint16_t unicode_char)
     return utf8_str;
 }
 
-// 縦書き用グリフ変換
-uint16_t convertToVerticalGlyph(uint16_t unicode_char)
+// ヘルパー関数
+uint16_t TypoWrite::convertToVerticalGlyph(uint16_t unicode_char)
 {
-    uint16_t vertical_code = unicode_char;
-
-    switch (unicode_char)
-    {
-    // 句読点
-    case 0x3001: // 、（読点）
-        vertical_code = 0xFE11;
-        break;
-    case 0x3002: // 。（句点）
-        vertical_code = 0xFE12;
-        break;
-
-    // 日本語の括弧
-    case 0x300C: // 「
-        vertical_code = 0xFE41;
-        break;
-    case 0x300D: // 」
-        vertical_code = 0xFE42;
-        break;
-    case 0x300E: // 『
-        vertical_code = 0xFE43;
-        break;
-    case 0x300F: // 』
-        vertical_code = 0xFE44;
-        break;
-
-    // 半角括弧類
-    case 0x0028: // (
-        vertical_code = 0xFE35;
-        break;
-    case 0x0029: // )
-        vertical_code = 0xFE36;
-        break;
-    case 0x005B: // [
-        vertical_code = 0xFE47;
-        break;
-    case 0x005D: // ]
-        vertical_code = 0xFE48;
-        break;
-    case 0x007B: // {
-        vertical_code = 0xFE37;
-        break;
-    case 0x007D: // }
-        vertical_code = 0xFE38;
-        break;
-
-    // 山括弧類
-    case 0x3008: // 〈
-        vertical_code = 0xFE3F;
-        break;
-    case 0x3009: // 〉
-        vertical_code = 0xFE40;
-        break;
-    case 0x300A: // 《
-        vertical_code = 0xFE3D;
-        break;
-    case 0x300B: // 》
-        vertical_code = 0xFE3E;
-        break;
-
-    // その他の括弧
-    case 0x3010: // 【
-        vertical_code = 0xFE3B;
-        break;
-    case 0x3011: // 】
-        vertical_code = 0xFE3C;
-        break;
-    case 0x3014: // 〔 (亀甲括弧)
-        vertical_code = 0xFE39;
-        break;
-    case 0x3015: // 〕
-        vertical_code = 0xFE3A;
-        break;
-
-    // ダッシュ・区切り線類
-    case 0x2014: // —（EMダッシュ）
-        vertical_code = 0xFE31;
-        break;
-    case 0x2013: // –（ENダッシュ）
-        vertical_code = 0xFE32;
-        break;
-    case 0x2015:                // ―（水平バー）
-        vertical_code = 0xFE31; // EMダッシュの縦書き版に変換
-        break;
-    case 0x005F: // _（アンダースコア）
-        vertical_code = 0xFE33;
-        break;
-    case 0x2025: // ‥（2ドットリーダー）
-        vertical_code = 0xFE30;
-        break;
-    case 0x2026: // …
-        vertical_code = 0xFE19;
-        break;
-
-    // 全角ダッシュ・記号
-    case 0xFF0D:                // －（全角ハイフンマイナス）
-        vertical_code = 0xFE32; // ENダッシュの縦書き版に変換
-        break;
-    case 0x30FC:                // ー（長音記号）
-        vertical_code = 0xFE31; // EMダッシュの縦書き版に変換（縦棒になる）
-        break;
-
-    default:
-        break;
+    auto it = _verticalGlyphMap.find(unicode_char);
+    if (it != _verticalGlyphMap.end()) {
+        return it->second;
     }
-
-    return vertical_code;
+    return unicode_char;  // 変換なし
 }
 
-// 縦書きで回転が必要な文字かどうかを判定
+bool TypoWrite::isSmallChar(uint16_t unicode_char) const
+{
+    return _smallToLargeMap.find(unicode_char) != _smallToLargeMap.end();
+}
+
+uint16_t TypoWrite::getCorrespondingLargeChar(uint16_t small_char) const
+{
+    auto it = _smallToLargeMap.find(small_char);
+    if (it != _smallToLargeMap.end()) {
+        return it->second;
+    }
+    return small_char;  // 見つからない場合は元の文字
+}
+
 bool TypoWrite::shouldRotateInVertical(uint16_t unicode_char)
 {
     // 縦書き用グリフが存在する文字は回転させない
-    if (convertToVerticalGlyph(unicode_char) != unicode_char)
-    {
+    if (_verticalGlyphMap.find(unicode_char) != _verticalGlyphMap.end()) {
         return false;
     }
-
-    // ASCII文字（半角英数字）は回転させる
-    if (unicode_char >= 0x0020 && unicode_char <= 0x007E)
-    {
+    
+    // ASCII文字（半角英数字）は回転
+    if (unicode_char >= 0x0020 && unicode_char <= 0x007E) {
         return true;
     }
-
-    // その他の半角カナなども回転させる
-    if (unicode_char >= 0xFF61 && unicode_char <= 0xFF9F)
-    {
+    
+    // 半角カナも回転
+    if (unicode_char >= 0xFF61 && unicode_char <= 0xFF9F) {
         return true;
     }
-
+    
     return false;
 }
 
-// 文字の幅を取得
-int32_t TypoWrite::getCharacterWidth(uint16_t unicode_char) {
-    // VLWパーサーが利用可能な場合は優先使用
-    if (_useVLWParser && _vlwParser) {
-        return getCharacterWidthVLW(unicode_char);
-    }
-    
-    // 既存のM5GFX実装
-    lgfx::FontMetrics metrics;
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
-    _font->updateFontMetric(&metrics, unicode_char);
-    return metrics.x_advance * _fontSize;
-}
+// ========================================
+// 公開設定メソッドの実装
+// ========================================
 
-// 文字の高さを取得
-int32_t TypoWrite::getCharacterHeight(uint16_t unicode_char) {
-    // VLWパーサーが利用可能な場合は優先使用
-    if (_useVLWParser && _vlwParser) {
-        return getCharacterHeightVLW(unicode_char);
-    }
-    
-    // 既存のM5GFX実装
-    lgfx::FontMetrics metrics;
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
-    _font->updateFontMetric(&metrics, unicode_char);
-    return metrics.y_advance * _fontSize;
-}
-
-// フォントの幅を取得
-int32_t TypoWrite::getFontWidth() {
-    // VLWパーサーが利用可能な場合は優先使用
-    if (_useVLWParser && _vlwParser) {
-        return getFontWidthVLW();
-    }
-    
-    // 既存のM5GFX実装
-    lgfx::FontMetrics metrics;
-    uint16_t full_width_space = 0x3000; // 全角スペース
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
-    _font->updateFontMetric(&metrics, full_width_space);
-    return metrics.x_advance * _fontSize;
-}
-
-// フォントの高さを取得
-int32_t TypoWrite::getFontHeight() {
-    // VLWパーサーが利用可能な場合は優先使用
-    if (_useVLWParser && _vlwParser) {
-        return getFontHeightVLW();
-    }
-    
-    // 既存のM5GFX実装
-    lgfx::FontMetrics metrics;
-    uint16_t full_width_space = 0x3000; // 全角スペース
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
-    _font->updateFontMetric(&metrics, full_width_space);
-    return metrics.y_advance * _fontSize;
-}
-
-int32_t TypoWrite::getFontHeightVLW(){
-    if (_useVLWParser && _vlwParser) {
-        return static_cast<int32_t>(_vlwParser->getFontHeight() * _fontSize);
-    }
-    
-    // フォールバック：既存のM5GFX方式
-    return getFontHeight();
-}
-
-int32_t TypoWrite::getFontWidthVLW(){
-    if (_useVLWParser && _vlwParser) {
-        return static_cast<int32_t>(_vlwParser->getFontWidth() * _fontSize);
-    }
-    
-    // フォールバック：既存のM5GFX方式
-    return getFontWidth();
-}
-
-int32_t TypoWrite::getCharacterWidthVLW(uint16_t unicode_char){
-    if (_useVLWParser && _vlwParser) {
-        return static_cast<int32_t>(_vlwParser->getCharWidth(unicode_char) * _fontSize);
-    }
-    
-    // フォールバック：既存のM5GFX方式
-    return getCharacterWidth(unicode_char);
-}
-
-int32_t TypoWrite::getCharacterHeightVLW(uint16_t unicode_char){
-    if (_useVLWParser && _vlwParser) {
-        return static_cast<int32_t>(_vlwParser->getCharHeight(unicode_char) * _fontSize);
-    }
-    
-    // フォールバック：既存のM5GFX方式
-    return getCharacterHeight(unicode_char);
-}
-
-int32_t TypoWrite::getCharacterSetWidthVLW(uint16_t unicode_char){
-    if (_useVLWParser && _vlwParser) {
-        return static_cast<int32_t>(_vlwParser->getCharSetWidth(unicode_char) * _fontSize);
-    }
-    
-    // フォールバック：既存の方式（通常の文字幅を使用）
-    return getCharacterWidthVLW(unicode_char);
-}
-
-// 横書き用の一文字描画
-void TypoWrite::drawCharacterHorizontal(uint16_t unicode_char, int x, int y)
+// 描画先の設定
+void TypoWrite::setDrawTarget(lgfx::LGFX_Sprite *sprite) 
 {
-    //  小文字の特別処理（横書きでも対応）
-    if (_enableSmallCharHandling && isSmallChar(unicode_char)) {
-        ESP_LOGD(TAG, "Drawing small char U+%04X horizontally with scaling", unicode_char);
-        drawSmallCharacterHorizontal(unicode_char, x, y);
-        return;
-    }
+    _drawTarget = sprite;
+    ESP_LOGI(TAG, "Draw target set to %s", sprite ? "sprite" : "display");
+}
 
-    // 従来の処理（通常文字）
-    std::string utf8_char = unicodeToUtf8(unicode_char);
-
-    if (_drawTarget) {
-        // スプライトに描画
-        if (_isCustomFont && _vlwFont) {
-            _drawTarget->loadFont(_vlwFont);
-        } else if (_font) {
-            _drawTarget->setFont(_font);
-        }
-        _drawTarget->setTextSize(_fontSize);
-        _drawTarget->setTextColor(_color, _bgColor);
-        _drawTarget->drawString(utf8_char.c_str(), _x + x, _y + y);
-        if (_isCustomFont && _vlwFont) {
-            _drawTarget->unloadFont();
-        }
+// VLWパーサーの設定
+void TypoWrite::setVLWParser(VLWFontParser* parser) 
+{
+    _vlwParser = parser;
+    _useVLWParser = (parser != nullptr && parser->isInitialized());
+    
+    if (_useVLWParser) {
+        ESP_LOGI(TAG, "VLW parser enabled for font metrics");
     } else {
-        // ディスプレイに描画
-        if (_isCustomFont && _vlwFont) {
-            _display->loadFont(_vlwFont);
-        } else if (_font) {
-            _display->setFont(_font);
-        }
-        _display->setTextSize(_fontSize);
-        _display->setTextColor(_color, _bgColor);
-        _display->drawString(utf8_char.c_str(), _x + x, _y + y);
-        if (_isCustomFont && _vlwFont) {
-            _display->unloadFont();
-        }
+        ESP_LOGI(TAG, "VLW parser disabled, using M5GFX metrics");
     }
 }
 
-// 縦書き用の一文字描画
-void TypoWrite::drawCharacterVertical(uint16_t unicode_char, int x, int y)
-{
-    //  小文字の特別処理（縦書き時の最優先処理）
-    if (_enableSmallCharHandling && isSmallChar(unicode_char)) {
-        ESP_LOGD(TAG, "Drawing small char U+%04X vertically with scaling", unicode_char);
-        drawSmallCharacterVertical(unicode_char, x, y);
-        return;
-    }
+// ========== 基本設定メソッド ==========
 
-    // 縦書き用グリフに変換
-    uint16_t display_char = convertToVerticalGlyph(unicode_char);
-
-    // 回転が必要かチェック
-    if (shouldRotateInVertical(unicode_char)) {
-        // 90度回転して描画
-        drawRotatedCharacter(display_char, x, y);
-    } else {
-        // そのまま描画
-        drawCharacterHorizontal(display_char, x, y);
-    }
-}
-
-void TypoWrite::drawSmallCharacterVertical(uint16_t small_char, int x, int y)
-{
-    // 対応する大文字を取得
-    uint16_t large_char = getCorrespondingLargeChar(small_char);
-    
-    // 文字の基本サイズを取得
-    int char_width = getCharacterWidth(large_char);
-    int char_height = getCharacterHeight(large_char);
-    
-    //  縦書き用位置調整計算
-    float offsetX = char_width * _smallCharSettings.offsetX;   // 右方向オフセット
-    float offsetY = char_height * _smallCharSettings.offsetY;  // 上方向オフセット
-    
-    // 実際の描画位置を計算
-    int draw_x = x + static_cast<int>(offsetX);
-    int draw_y = y + static_cast<int>(offsetY);
-    
-    ESP_LOGD(TAG, "Small char vertical: U+%04X->U+%04X at (%d,%d) scale=%.2f offset=(%.1f,%.1f)", 
-             small_char, large_char, draw_x, draw_y, _smallCharSettings.scale, offsetX, offsetY);
-    
-    //  縮小描画実行
-    drawScaledCharacter(large_char, draw_x, draw_y, _smallCharSettings.scale, 0, 0);
-}
-
-// ===  新実装2: 横書き小文字描画 ===
-void TypoWrite::drawSmallCharacterHorizontal(uint16_t small_char, int x, int y)
-{
-    // 対応する大文字を取得
-    uint16_t large_char = getCorrespondingLargeChar(small_char);
-    
-    // 文字の基本サイズを取得
-    int char_height = getCharacterHeight(large_char);
-    
-    //  横書き用位置調整（下寄せ）
-    float offsetY = char_height * 0.3f;  // 下に30%オフセット
-    
-    // 実際の描画位置を計算
-    int draw_x = x;
-    int draw_y = y + static_cast<int>(offsetY);
-    
-    ESP_LOGD(TAG, "Small char horizontal: U+%04X->U+%04X at (%d,%d) scale=%.2f offset=(0,%.1f)", 
-             small_char, large_char, draw_x, draw_y, _smallCharSettings.scale, offsetY);
-    
-    // 縮小描画実行
-    drawScaledCharacter(large_char, draw_x, draw_y, _smallCharSettings.scale, 0, 0);
-}
-
-// === 縮小文字描画（コア機能） ===
-void TypoWrite::drawScaledCharacter(uint16_t unicode_char, int x, int y, 
-                                  float scale, float offsetX, float offsetY)
-{
-    // 文字の基本サイズを取得
-    int char_width = getCharacterWidth(unicode_char);
-    int char_height = getCharacterHeight(unicode_char);
-    
-    // 縮小後のサイズを計算
-    int scaled_width = static_cast<int>(char_width * scale);
-    int scaled_height = static_cast<int>(char_height * scale);
-    
-    ESP_LOGD(TAG, "Scaling char U+%04X: %dx%d -> %dx%d (scale=%.2f)", 
-             unicode_char, char_width, char_height, scaled_width, scaled_height, scale);
-    
-    //  一時スプライトを作成
-    lgfx::LGFX_Sprite* tempSprite;
-    if (_drawTarget) {
-        tempSprite = new lgfx::LGFX_Sprite(_drawTarget);
-        tempSprite->setColorDepth(_drawTarget->getColorDepth());
-    } else {
-        tempSprite = new lgfx::LGFX_Sprite(_display);
-        tempSprite->setColorDepth(_display->getColorDepth());
-    }
-    
-    // スプライトサイズを少し大きめに設定（余白確保）
-    int sprite_width = char_width + 10;
-    int sprite_height = char_height + 10;
-    
-    if (!tempSprite->createSprite(sprite_width, sprite_height)) {
-        ESP_LOGE(TAG, "Failed to create temp sprite for scaled char");
-        delete tempSprite;
-        
-        // 🔄 フォールバック：通常描画
-        std::string utf8_char = unicodeToUtf8(unicode_char);
-        if (_drawTarget) {
-            _drawTarget->drawString(utf8_char.c_str(), _x + x, _y + y);
-        } else {
-            _display->drawString(utf8_char.c_str(), _x + x, _y + y);
-        }
-        return;
-    }
-    
-    // 背景をクリア
-    if (_transparentBg) {
-        tempSprite->fillSprite(TFT_TRANSPARENT);
-    } else {
-        tempSprite->fillSprite(_bgColor);
-    }
-    
-    //  元のサイズで文字を描画
-    if (_isCustomFont && _vlwFont) {
-        tempSprite->loadFont(_vlwFont);
-    } else if (_font) {
-        tempSprite->setFont(_font);
-    }
-    tempSprite->setTextSize(_fontSize);
-    tempSprite->setTextColor(_color, _bgColor);
-    
-    std::string utf8_char = unicodeToUtf8(unicode_char);
-    tempSprite->drawString(utf8_char.c_str(), 5, 5);  // 余白を考慮した位置
-    
-    if (_isCustomFont && _vlwFont) {
-        tempSprite->unloadFont();
-    }
-    
-    //  縮小してターゲットに描画
-    int center_x = _x + x + scaled_width / 2;
-    int center_y = _y + y + scaled_height / 2;
-    
-    ESP_LOGD(TAG, "PushRotateZoom to center (%d,%d) with scale %.2f", center_x, center_y, scale);
-    
-    if (_drawTarget) {
-        tempSprite->pushRotateZoom(_drawTarget, 
-                                  center_x, center_y,
-                                  0,      // 回転角度（0度）
-                                  scale,  // X方向スケール
-                                  scale,  // Y方向スケール
-                                  _transparentBg ? TFT_TRANSPARENT : _bgColor);
-    } else {
-        tempSprite->pushRotateZoom(_display, 
-                                  center_x, center_y,
-                                  0,      // 回転角度（0度）
-                                  scale,  // X方向スケール
-                                  scale,  // Y方向スケール
-                                  _transparentBg ? TFT_TRANSPARENT : _bgColor);
-    }
-    
-    // 一時スプライトを削除
-    tempSprite->deleteSprite();
-    delete tempSprite;
-    
-    ESP_LOGD(TAG, "Scaled character drawing completed");
-}
-
-// 回転した文字の描画
-void TypoWrite::drawRotatedCharacter(uint16_t unicode_char, int x, int y)
-{
-    // 文字のサイズを取得
-    int char_width = getCharacterWidth(unicode_char);
-    int char_height = getCharacterHeight(unicode_char);
-
-    // 一時的なスプライトを作成（回転用）
-    lgfx::LGFX_Sprite *tempSprite;
-    if (_drawTarget)
-    {
-        tempSprite = new lgfx::LGFX_Sprite(_drawTarget);
-        tempSprite->setColorDepth(_drawTarget->getColorDepth());
-    }
-    else
-    {
-        tempSprite = new lgfx::LGFX_Sprite(_display);
-        tempSprite->setColorDepth(_display->getColorDepth());
-    }
-
-    tempSprite->createSprite(char_width + 10, char_height + 10);
-
-    // 背景をクリア
-    if (_transparentBg)
-    {
-        tempSprite->fillSprite(TFT_TRANSPARENT);
-    }
-    else
-    {
-        tempSprite->fillSprite(_bgColor);
-    }
-
-    // フォント設定と描画
-    if (_isCustomFont && _vlwFont)
-    {
-        tempSprite->loadFont(_vlwFont);
-    }
-    else if (_font)
-    {
-        tempSprite->setFont(_font);
-    }
-    tempSprite->setTextSize(_fontSize);
-    tempSprite->setTextColor(_color, _bgColor);
-    std::string utf8_char = unicodeToUtf8(unicode_char);
-    tempSprite->drawString(utf8_char.c_str(), 5, 5);
-    if (_isCustomFont && _vlwFont)
-    {
-        tempSprite->unloadFont();
-    }
-
-    // 90度回転して描画
-    tempSprite->setPivot(tempSprite->width() / 2, tempSprite->height() / 2);
-
-    if (_drawTarget)
-    {
-        tempSprite->pushRotateZoom(_drawTarget, _x + x + char_height / 2, _y + y + char_width / 2,
-                                   90, 1.0, 1.0, _transparentBg ? TFT_TRANSPARENT : _bgColor);
-    }
-    else
-    {
-        tempSprite->pushRotateZoom(_display, _x + x + char_height / 2, _y + y + char_width / 2,
-                                   90, 1.0, 1.0, _transparentBg ? TFT_TRANSPARENT : _bgColor);
-    }
-
-    // 一時スプライトを削除
-    tempSprite->deleteSprite();
-    delete tempSprite;
-}
-
-// 横書きテキストの描画
-void TypoWrite::drawHorizontalText(const std::string &text)
-{
-    // UTF-8をUnicodeに変換
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
-
-    _currentX = 0;
-    _currentY = 0;
-
-    for (uint16_t ch : unicode_chars)
-    {
-        // 改行処理
-        if (ch == '\n')
-        {
-            _currentX = 0;
-            _currentY += getFontHeight() + _lineSpacing;
-            continue;
-        }
-
-        // 文字の幅を取得
-        int char_width = getCharacterWidth(ch);
-
-        // 折り返し処理
-        if (_wrap && (_currentX + char_width > _width))
-        {
-            _currentX = 0;
-            _currentY += getFontHeight() + _lineSpacing;
-        }
-
-        // 描画範囲チェック
-        if (_currentY + getFontHeight() > _height)
-        {
-            break;
-        }
-
-        // 文字を描画
-        drawCharacterHorizontal(ch, _currentX, _currentY);
-
-        // 次の文字位置へ
-        _currentX += char_width + _charSpacing;
-    }
-}
-
-// 縦書きテキストの描画
-void TypoWrite::drawVerticalText(const std::string &text)
-{
-    // UTF-8をUnicodeに変換
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
-
-    // 最初の列の位置を計算（右端から開始）
-    int column_width = getFontHeight();     // 縦書きでは文字の高さが列の幅になる
-    _currentX = _width - column_width - 10; // 右端から少し余白を設けて開始
-    _currentY = 0;
-
-    ESP_LOGI(TAG, "Starting vertical text at X=%d, width=%d, column_width=%d",
-             _currentX, _width, column_width);
-
-    for (uint16_t ch : unicode_chars)
-    {
-        // 改行処理（縦書きでは左に移動）
-        if (ch == '\n')
-        {
-            _currentX -= column_width + _columnSpacing + _lineSpacing;
-            _currentY = 0;
-            ESP_LOGI(TAG, "New line at X=%d", _currentX);
-            continue;
-        }
-
-        // 文字の実際のサイズを取得
-        int char_width = getCharacterWidth(ch);
-        int char_height = getFontHeight();
-
-        // 縦書きでは高さと幅が入れ替わる可能性がある
-        if (shouldRotateInVertical(ch))
-        {
-            std::swap(char_width, char_height);
-        }
-
-        // 折り返し処理
-        if (_wrap && (_currentY + char_height > _height))
-        {
-            _currentX -= column_width + _columnSpacing + _lineSpacing;
-            _currentY = 0;
-            ESP_LOGI(TAG, "Wrap to new column at X=%d", _currentX);
-        }
-
-        // 描画範囲チェック
-        if (_currentX < 0)
-        {
-            ESP_LOGI(TAG, "Out of bounds, stopping at X=%d", _currentX);
-            break;
-        }
-
-        // 文字を描画
-        ESP_LOGD(TAG, "Drawing char at (%d, %d)", _currentX, _currentY);
-        drawCharacterVertical(ch, _currentX, _currentY);
-
-        // 次の文字位置へ
-        _currentY += char_height + _charSpacing;
-    }
-}
-
-// テキストサイズの計算
-void TypoWrite::calculateTextSize(const std::string &text, int &width, int &height)
-{
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
-
-    width = 0;
-    height = 0;
-
-    if (_direction == TextDirection::HORIZONTAL)
-    {
-        int current_line_width = 0;
-        int line_count = 1;
-
-        for (uint16_t ch : unicode_chars)
-        {
-            if (ch == '\n')
-            {
-                width = std::max(width, current_line_width);
-                current_line_width = 0;
-                line_count++;
-            }
-            else
-            {
-                current_line_width += getCharacterWidth(ch) + _charSpacing;
-            }
-        }
-
-        width = std::max(width, current_line_width);
-        height = line_count * (getFontHeight() + _lineSpacing) - _lineSpacing;
-    }
-    else
-    { // VERTICAL
-        int current_column_height = 0;
-        int column_count = 1;
-        int max_char_width = 0;
-
-        for (uint16_t ch : unicode_chars)
-        {
-            if (ch == '\n')
-            {
-                height = std::max(height, current_column_height);
-                current_column_height = 0;
-                column_count++;
-            }
-            else
-            {
-                // 縦書きでは文字の高さが縦方向のサイズ
-                int char_height = getFontHeight();
-                int char_width = getCharacterWidth(ch);
-
-                // 回転する文字は幅と高さが入れ替わる
-                if (shouldRotateInVertical(ch))
-                {
-                    std::swap(char_width, char_height);
-                }
-
-                current_column_height += char_height + _charSpacing;
-                max_char_width = std::max(max_char_width, char_width);
-            }
-        }
-
-        height = std::max(height, current_column_height);
-        // 列数 × (最大文字幅 + 列間隔)
-        width = column_count * (max_char_width + _columnSpacing + _lineSpacing) - _lineSpacing;
-    }
-}
-
-// 設定メソッドの実装
+// テキスト方向の設定
 void TypoWrite::setDirection(TextDirection direction)
 {
     _direction = direction;
+    ESP_LOGD(TAG, "Text direction set to %s", 
+             direction == TextDirection::HORIZONTAL ? "HORIZONTAL" : "VERTICAL");
 }
 
+// テキスト揃えの設定
 void TypoWrite::setAlignment(TextAlignment alignment)
 {
     _alignment = alignment;
+    ESP_LOGD(TAG, "Text alignment set");
 }
 
+// 描画位置の設定
 void TypoWrite::setPosition(int x, int y)
 {
     _x = x;
     _y = y;
+    ESP_LOGD(TAG, "Position set to (%d, %d)", x, y);
 }
 
+// 描画領域の設定
 void TypoWrite::setArea(int width, int height)
 {
     _width = width;
     _height = height;
+    ESP_LOGD(TAG, "Area set to %dx%d", width, height);
 }
 
+// テキスト色の設定
 void TypoWrite::setColor(uint16_t color)
 {
     _color = color;
+    ESP_LOGD(TAG, "Text color set to 0x%04X", color);
 }
 
+// 背景色の設定
 void TypoWrite::setBackgroundColor(uint16_t bgColor)
 {
     _bgColor = bgColor;
+    ESP_LOGD(TAG, "Background color set to 0x%04X", bgColor);
 }
 
+// 折り返しの設定
+void TypoWrite::setWrap(bool wrap)
+{
+    _wrap = wrap;
+    ESP_LOGD(TAG, "Text wrap set to %s", wrap ? "enabled" : "disabled");
+}
+
+// ========== フォント設定メソッド ==========
+
+// フォントサイズの設定
 void TypoWrite::setFontSize(float size)
 {
     _fontSize = size;
+    // メトリクスキャッシュをクリア（サイズが変わったため）
+    _metricsCache.clear();
+    ESP_LOGD(TAG, "Font size set to %.2f", size);
 }
 
+// フォントの設定
 void TypoWrite::setFont(const lgfx::IFont *font)
 {
     _font = font;
     _isCustomFont = false;
     _vlwFont = nullptr;
-}
-
-void TypoWrite::setLineSpacing(int spacing)
-{
-    _lineSpacing = spacing;
-}
-
-void TypoWrite::setCharSpacing(int spacing)
-{
-    _charSpacing = spacing;
-}
-
-void TypoWrite::setWrap(bool wrap)
-{
-    _wrap = wrap;
+    // メトリクスキャッシュをクリア（フォントが変わったため）
+    _metricsCache.clear();
+    ESP_LOGD(TAG, "Font changed to built-in font");
 }
 
 // カスタムフォントの読み込み
 bool TypoWrite::loadFontFromArray(const uint8_t *fontArray)
 {
-    if (!_display)
+    if (!_display) {
+        ESP_LOGE(TAG, "Display not initialized");
         return false;
+    }
 
     // フォントを読み込み
     bool result = _display->loadFont(fontArray);
-    if (result)
-    {
+    if (result) {
         // 読み込んだフォントを現在のフォントとして設定
-        _font = nullptr; // VLWフォントの場合はIFontを使わない
+        _font = nullptr;  // VLWフォントの場合はIFontを使わない
         _isCustomFont = true;
         _vlwFont = fontArray;
+        // メトリクスキャッシュをクリア
+        _metricsCache.clear();
         ESP_LOGI(TAG, "Font loaded successfully from array");
-    }
-    else
-    {
+    } else {
         ESP_LOGE(TAG, "Failed to load font from array");
     }
 
     return result;
 }
 
+// ========== スペーシング設定 ==========
+
+// 行間の設定
+void TypoWrite::setLineSpacing(int spacing)
+{
+    _lineSpacing = spacing;
+    ESP_LOGD(TAG, "Line spacing set to %d pixels", spacing);
+}
+
+// 文字間の設定
+void TypoWrite::setCharSpacing(int spacing)
+{
+    _charSpacing = spacing;
+    ESP_LOGD(TAG, "Character spacing set to %d pixels", spacing);
+}
+
+// ========== メインテキスト描画メソッド ==========
+
 // テキスト描画
 void TypoWrite::drawText(const std::string &text)
 {
     // クリッピング領域を設定
-    if (_drawTarget)
-    {
-        _drawTarget->setClipRect(_x, _y, _width, _height);
-
-        // 背景をクリア（透明でない場合）
-        if (!_transparentBg)
-        {
-            _drawTarget->fillRect(_x, _y, _width, _height, _bgColor);
-        }
+    lgfx::LovyanGFX* target = _drawTarget ? 
+        static_cast<lgfx::LovyanGFX*>(_drawTarget) : 
+        static_cast<lgfx::LovyanGFX*>(_display);
+    
+    target->setClipRect(_x, _y, _width, _height);
+    
+    // 背景をクリア（透明でない場合）
+    if (!_transparentBg) {
+        target->fillRect(_x, _y, _width, _height, _bgColor);
     }
-    else
-    {
-        _display->setClipRect(_x, _y, _width, _height);
-
-        // 背景をクリア（透明でない場合）
-        if (!_transparentBg)
-        {
-            _display->fillRect(_x, _y, _width, _height, _bgColor);
-        }
-    }
-
+    
     // テキスト描画
-    if (_direction == TextDirection::HORIZONTAL)
-    {
+    if (_direction == TextDirection::HORIZONTAL) {
         drawHorizontalText(text);
-    }
-    else
-    {
+    } else {
         drawVerticalText(text);
     }
-
+    
     // クリッピング領域を解除
-    if (_drawTarget)
-    {
-        _drawTarget->clearClipRect();
-    }
-    else
-    {
-        _display->clearClipRect();
-    }
+    target->clearClipRect();
 }
 
 // 中央揃えでテキスト描画
@@ -1128,35 +692,34 @@ void TypoWrite::drawTextCentered(const std::string &text)
     // テキストサイズを計算
     int text_width, text_height;
     calculateTextSize(text, text_width, text_height);
-
+    
     // 元の位置を保存
     int original_x = _x;
     int original_y = _y;
     TextAlignment original_alignment = _alignment;
-
+    
     // 中央揃えに設定
     _alignment = TextAlignment::CENTER;
-
+    
     // 中央位置を計算
-    if (_direction == TextDirection::HORIZONTAL)
-    {
+    if (_direction == TextDirection::HORIZONTAL) {
+        _x = original_x + (_width - text_width) / 2;
+        _y = original_y + (_height - text_height) / 2;
+    } else {
         _x = original_x + (_width - text_width) / 2;
         _y = original_y + (_height - text_height) / 2;
     }
-    else
-    {
-        _x = original_x + (_width - text_width) / 2;
-        _y = original_y + (_height - text_height) / 2;
-    }
-
+    
     // テキスト描画
     drawText(text);
-
+    
     // 設定を元に戻す
     _x = original_x;
     _y = original_y;
     _alignment = original_alignment;
 }
+
+// ========== サイズ計算メソッド ==========
 
 // テキスト幅の取得
 int TypoWrite::getTextWidth(const std::string &text)
@@ -1174,27 +737,205 @@ int TypoWrite::getTextHeight(const std::string &text)
     return height;
 }
 
-// 描画領域のクリア
-void TypoWrite::clearArea(uint16_t color)
+// テキストサイズの計算（内部メソッド）
+void TypoWrite::calculateTextSize(const std::string &text, int &width, int &height)
 {
-    if (_drawTarget)
-    {
-        _drawTarget->fillRect(_x, _y, _width, _height, color);
-    }
-    else
-    {
-        _display->fillRect(_x, _y, _width, _height, color);
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    
+    width = 0;
+    height = 0;
+    
+    if (_direction == TextDirection::HORIZONTAL) {
+        int current_line_width = 0;
+        int line_count = 1;
+        
+        for (uint16_t ch : unicode_chars) {
+            if (ch == '\n') {
+                width = std::max(width, current_line_width);
+                current_line_width = 0;
+                line_count++;
+            } else {
+                CharMetrics metrics = getCharMetrics(ch);
+                current_line_width += metrics.setWidth + _charSpacing;
+            }
+        }
+        
+        width = std::max(width, current_line_width);
+        height = line_count * (getCharMetrics(0x3000).height + _lineSpacing) - _lineSpacing;
+    } 
+    else {  // VERTICAL
+        int current_column_height = 0;
+        int column_count = 1;
+        int max_char_width = 0;
+        
+        for (uint16_t ch : unicode_chars) {
+            if (ch == '\n') {
+                height = std::max(height, current_column_height);
+                current_column_height = 0;
+                column_count++;
+            } else {
+                CharMetrics metrics = getCharMetrics(ch);
+                int char_height = metrics.height;
+                int char_width = metrics.width;
+                
+                // 回転する文字は幅と高さが入れ替わる
+                if (shouldRotateInVertical(ch)) {
+                    std::swap(char_width, char_height);
+                }
+                
+                current_column_height += char_height + _charSpacing;
+                max_char_width = std::max(max_char_width, char_width);
+            }
+        }
+        
+        height = std::max(height, current_column_height);
+        // 列数 × (最大文字幅 + 列間隔)
+        width = column_count * (max_char_width + _columnSpacing + _lineSpacing) - _lineSpacing;
     }
 }
 
-// メトリクス情報の更新
-bool TypoWrite::updateMetricsForChar(uint16_t unicode_char) const
+// ========== 描画領域管理 ==========
+
+// 描画領域のクリア
+void TypoWrite::clearArea(uint16_t color)
 {
-    if (!_font || !_display)
-        return false;
+    lgfx::LovyanGFX* target = _drawTarget ? 
+        static_cast<lgfx::LovyanGFX*>(_drawTarget) : 
+        static_cast<lgfx::LovyanGFX*>(_display);
+    
+    target->fillRect(_x, _y, _width, _height, color);
+}
 
-    _display->setFont(_font);
-    _display->setTextSize(_fontSize);
+// ========== 文字カテゴリ判定 ==========
 
-    return _font->updateFontMetric(&_metrics, unicode_char);
+CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
+{
+    // 最初に小文字判定をチェック（最優先）
+    if (isSmallChar(unicode_char)) {
+        return CharCategory::SMALL_CHAR;
+    }
+    
+    // 句読点
+    if (unicode_char == 0x3001 || unicode_char == 0x3002) {
+        return CharCategory::PUNCTUATION;
+    }
+    
+    // 括弧類
+    if ((unicode_char >= 0x3008 && unicode_char <= 0x3011) ||
+        (unicode_char >= 0x300C && unicode_char <= 0x300F) ||
+        unicode_char == 0x0028 || unicode_char == 0x0029 ||
+        unicode_char == 0x005B || unicode_char == 0x005D ||
+        unicode_char == 0x007B || unicode_char == 0x007D) {
+        return CharCategory::BRACKET;
+    }
+    
+    // 横棒・長音記号類
+    if (unicode_char == 0x30FC || unicode_char == 0x2014 ||
+        unicode_char == 0x2013 || unicode_char == 0x2015 ||
+        unicode_char == 0xFF0D || unicode_char == 0x005F) {
+        return CharCategory::HORIZONTAL_BAR;
+    }
+    
+    return CharCategory::NORMAL;
+}
+
+// ========== デバッグメソッド ==========
+
+// 小文字マッピングテーブルのデバッグ表示
+void TypoWrite::debugPrintSmallCharMap() const
+{
+    ESP_LOGI(TAG, "=== Small Character Mapping Table ===");
+    ESP_LOGI(TAG, "Small char handling: %s", 
+             _enableSmallCharHandling ? "ENABLED" : "DISABLED");
+    ESP_LOGI(TAG, "Settings: scale=%.2f, offsetX=%.2f, offsetY=%.2f",
+             _smallCharSettings.scale, 
+             _smallCharSettings.offsetX, 
+             _smallCharSettings.offsetY);
+    
+    ESP_LOGI(TAG, "Hiragana mappings:");
+    for (const auto& pair : _smallToLargeMap) {
+        if (pair.first >= 0x3041 && pair.first <= 0x308E) {
+            ESP_LOGI(TAG, "  U+%04X -> U+%04X", pair.first, pair.second);
+        }
+    }
+    
+    ESP_LOGI(TAG, "Katakana mappings:");
+    for (const auto& pair : _smallToLargeMap) {
+        if (pair.first >= 0x30A1 && pair.first <= 0x30F6) {
+            ESP_LOGI(TAG, "  U+%04X -> U+%04X", pair.first, pair.second);
+        }
+    }
+    
+    ESP_LOGI(TAG, "Total: %d mappings", _smallToLargeMap.size());
+    ESP_LOGI(TAG, "=====================================");
+}
+
+// 文字列内の小文字分析
+void TypoWrite::debugAnalyzeSmallChars(const std::string& text)
+{
+    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    
+    ESP_LOGI(TAG, "=== Small Character Analysis ===");
+    ESP_LOGI(TAG, "Text: %s", text.c_str());
+    
+    int small_count = 0;
+    for (uint16_t ch : unicode_chars) {
+        if (isSmallChar(ch)) {
+            uint16_t large = getCorrespondingLargeChar(ch);
+            std::string char_str = unicodeToUtf8(ch);
+            std::string large_str = unicodeToUtf8(large);
+            ESP_LOGI(TAG, "  Small char found: %s (U+%04X) -> %s (U+%04X)", 
+                     char_str.c_str(), ch, large_str.c_str(), large);
+            small_count++;
+        }
+    }
+    
+    ESP_LOGI(TAG, "Total small characters: %d", small_count);
+    ESP_LOGI(TAG, "================================");
+}
+
+// 縦書きグリフマッピングのデバッグ表示
+void TypoWrite::debugPrintVerticalGlyphMap() const
+{
+    ESP_LOGI(TAG, "=== Vertical Glyph Mapping Table ===");
+    ESP_LOGI(TAG, "Total mappings: %d", _verticalGlyphMap.size());
+    
+    ESP_LOGI(TAG, "Punctuation mappings:");
+    for (const auto& pair : _verticalGlyphMap) {
+        if (pair.first == 0x3001 || pair.first == 0x3002) {
+            ESP_LOGI(TAG, "  U+%04X -> U+%04X", pair.first, pair.second);
+        }
+    }
+    
+    ESP_LOGI(TAG, "Bracket mappings:");
+    for (const auto& pair : _verticalGlyphMap) {
+        if ((pair.first >= 0x3008 && pair.first <= 0x3015) ||
+            (pair.first >= 0x0028 && pair.first <= 0x0029)) {
+            ESP_LOGI(TAG, "  U+%04X -> U+%04X", pair.first, pair.second);
+        }
+    }
+    
+    ESP_LOGI(TAG, "=====================================");
+}
+
+// メトリクスキャッシュのデバッグ表示
+void TypoWrite::debugPrintMetricsCache() const
+{
+    ESP_LOGI(TAG, "=== Metrics Cache Status ===");
+    ESP_LOGI(TAG, "Cached characters: %d", _metricsCache.size());
+    
+    if (!_metricsCache.empty()) {
+        ESP_LOGI(TAG, "Sample cached metrics:");
+        int count = 0;
+        for (const auto& pair : _metricsCache) {
+            if (count++ >= 5) break;  // 最初の5個だけ表示
+            ESP_LOGI(TAG, "  U+%04X: w=%ld, h=%ld, sw=%ld", 
+                     pair.first, 
+                     pair.second.width, 
+                     pair.second.height, 
+                     pair.second.setWidth);
+        }
+    }
+    
+    ESP_LOGI(TAG, "============================");
 }

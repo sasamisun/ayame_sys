@@ -255,8 +255,9 @@ void textDisplayDemo()
         verticalWriter.setDirection(TextDirection::VERTICAL);
         verticalWriter.setFontSize(1.0);
         verticalWriter.setLineSpacing(6);
+        verticalWriter.setCharSpacing(-8);
 
-        verticalWriter.drawText("新しいシンプル\nトランジション\nシステムで\n美しい画面遷移を\n実現しました。");
+        verticalWriter.drawText("ジャン・フィリップ・トゥーサン\nおはよう。いんたぁねっと\nフォンふぉんfon");
     }
     else
     {
@@ -655,7 +656,7 @@ void setup()
 {
     ESP_LOGI(TAG, "Initializing M5Paper S3 with Simple Transition...");
     display.begin();
-    display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_fastest);
+    display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
     display.setColorDepth(1);
     display.fillScreen(TFT_BLACK);
 
