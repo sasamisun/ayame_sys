@@ -51,7 +51,7 @@ struct SmallCharSettings {
         return {
             0.75f,   // 75%に縮小
             0.35f,   // 右に35%オフセット（縦書き用）
-            -0.2f    // 上に20%オフセット（縦書き用）
+            -0.1f    // 上に20%オフセット（縦書き用）
         };
     }
 };
@@ -204,15 +204,6 @@ public:
     // 列間の設定（縦書き用）
     void setColumnSpacing(int spacing);
     
-    // ========================================
-    // 小文字処理設定メソッド
-    // ========================================
-    
-    // 小文字処理の有効/無効設定
-    void setSmallCharHandling(bool enable);
-    
-    // 小文字描画設定
-    void setSmallCharSettings(float scale, float offsetX, float offsetY);
     
     // ========================================
     // メインテキスト描画メソッド
@@ -262,17 +253,7 @@ private:
     // 内部初期化メソッド
     // ========================================
     
-    // 小文字マッピングテーブルの初期化
-    void initializeSmallCharMap();
-    
-    // 縦書きグリフマッピングテーブルの初期化
-    void initializeVerticalGlyphMap();
-    
-    // 固定値による文字種別調整テーブルの初期化
-    void initializeFixedCharTypeAdjustments();
-    
-    // 文字メトリクスキャッシュの初期化
-    void initializeCharTypeAdjustments();
+    void initializeAllTables();
 
     // ========================================
     // 内部描画メソッド
@@ -305,17 +286,9 @@ private:
                                         float widthScale, float heightScale,
                                         float rotation);
     
-    // 統一文字描画関数（既存）
-    void drawUnifiedCharacter(uint16_t unicode_char, int x, int y, 
-                             float scale, float rotation,
-                             float offsetX, float offsetY);
-    
     // 直接描画（既存）
     void drawDirectCharacter(uint16_t unicode_char, int x, int y);
     
-    // スプライトを使った描画（既存）
-    void drawSpriteCharacter(uint16_t unicode_char, int x, int y,
-                            float scale, float rotation);
     
     // ========================================
     // 内部計算・判定メソッド
