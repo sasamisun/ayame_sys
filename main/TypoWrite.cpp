@@ -14,51 +14,51 @@ namespace TypoWriteConstants
     // 小文字（ひらがな・カタカナ）の調整値
     namespace SmallChar
     {
-        constexpr float WIDTH_SCALE = 0.75f;  // 幅75%
-        constexpr float HEIGHT_SCALE = 0.75f; // 高さ75%
-        constexpr int SPACING_OFFSET = -1;    // 字間-1px
-        constexpr int VERTICAL_OFFSET = 2;    // 縦位置+2px
-        constexpr int HORIZONTAL_OFFSET = 3;  // 横位置+3px
+        constexpr float WIDTH_SCALE = 1.1f;
+        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr int SPACING_OFFSET = 0;
+        constexpr int VERTICAL_OFFSET = 0;
+        constexpr int HORIZONTAL_OFFSET = 0;
     }
 
     // 句読点の調整値
     namespace Punctuation
     {
-        constexpr float WIDTH_SCALE = 0.7f;  // 幅70%
-        constexpr float HEIGHT_SCALE = 1.0f; // 高さそのまま
-        constexpr int SPACING_OFFSET = -2;   // 字間-2px
-        constexpr int VERTICAL_OFFSET = 0;   // 縦位置そのまま
-        constexpr int HORIZONTAL_OFFSET = 4; // 横位置+4px
+        constexpr float WIDTH_SCALE = 1.1f;
+        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr int SPACING_OFFSET = 0;
+        constexpr int VERTICAL_OFFSET = 0;
+        constexpr int HORIZONTAL_OFFSET = 0;
     }
 
     // 括弧類の調整値
     namespace Bracket
     {
-        constexpr float WIDTH_SCALE = 0.85f; // 幅85%
-        constexpr float HEIGHT_SCALE = 1.0f; // 高さそのまま
-        constexpr int SPACING_OFFSET = -1;   // 字間-1px
-        constexpr int VERTICAL_OFFSET = 0;   // 縦位置そのまま
-        constexpr int HORIZONTAL_OFFSET = 1; // 横位置+1px
+        constexpr float WIDTH_SCALE = 1.1f;
+        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr int SPACING_OFFSET = 0;
+        constexpr int VERTICAL_OFFSET = 0;
+        constexpr int HORIZONTAL_OFFSET = 0;
     }
 
     // 横棒・長音記号の調整値
     namespace HorizontalBar
     {
-        constexpr float WIDTH_SCALE = 1.0f;  // 幅そのまま
-        constexpr float HEIGHT_SCALE = 0.8f; // 高さ80%
-        constexpr int SPACING_OFFSET = 0;    // 字間そのまま
-        constexpr int VERTICAL_OFFSET = 3;   // 縦位置+3px
-        constexpr int HORIZONTAL_OFFSET = 0; // 横位置そのまま
+        constexpr float WIDTH_SCALE = 1.1f;
+        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr int SPACING_OFFSET = 0;
+        constexpr int VERTICAL_OFFSET = 0;
+        constexpr int HORIZONTAL_OFFSET = 0;
     }
 
     // 通常文字（調整なし）
     namespace Normal
     {
-        constexpr float WIDTH_SCALE = 1.0f;  // 幅そのまま
-        constexpr float HEIGHT_SCALE = 1.0f; // 高さそのまま
-        constexpr int SPACING_OFFSET = 0;    // 字間そのまま
-        constexpr int VERTICAL_OFFSET = 0;   // 縦位置そのまま
-        constexpr int HORIZONTAL_OFFSET = 0; // 横位置そのまま
+        constexpr float WIDTH_SCALE = 1.1f;
+        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr int SPACING_OFFSET = 0;
+        constexpr int VERTICAL_OFFSET = 0;
+        constexpr int HORIZONTAL_OFFSET = 0;
     }
 
     // 枠線表示のデフォルト設定
@@ -108,13 +108,27 @@ TypoWrite::TypoWrite(M5GFX *display)
     initializeSmallCharMap();
     initializeVerticalGlyphMap();
 
-    // 固定値による文字種別調整テーブルの初期化
-    initializeFixedCharTypeAdjustments();
+    // 固定値による文字種別調整テーブルの直接初期化（namespace統一）
+    _charAdjustments = {
+        // 小文字の調整（namespace値を直接使用）
+        {CharCategory::SMALL_CHAR, {TypoWriteConstants::SmallChar::WIDTH_SCALE, TypoWriteConstants::SmallChar::HEIGHT_SCALE, TypoWriteConstants::SmallChar::SPACING_OFFSET, TypoWriteConstants::SmallChar::VERTICAL_OFFSET, TypoWriteConstants::SmallChar::HORIZONTAL_OFFSET}},
+
+        // 句読点の調整（namespace値を直接使用）
+        {CharCategory::PUNCTUATION, {TypoWriteConstants::Punctuation::WIDTH_SCALE, TypoWriteConstants::Punctuation::HEIGHT_SCALE, TypoWriteConstants::Punctuation::SPACING_OFFSET, TypoWriteConstants::Punctuation::VERTICAL_OFFSET, TypoWriteConstants::Punctuation::HORIZONTAL_OFFSET}},
+
+        // 括弧類の調整（namespace値を直接使用）
+        {CharCategory::BRACKET, {TypoWriteConstants::Bracket::WIDTH_SCALE, TypoWriteConstants::Bracket::HEIGHT_SCALE, TypoWriteConstants::Bracket::SPACING_OFFSET, TypoWriteConstants::Bracket::VERTICAL_OFFSET, TypoWriteConstants::Bracket::HORIZONTAL_OFFSET}},
+
+        // 横棒・長音記号の調整（namespace値を直接使用）
+        {CharCategory::HORIZONTAL_BAR, {TypoWriteConstants::HorizontalBar::WIDTH_SCALE, TypoWriteConstants::HorizontalBar::HEIGHT_SCALE, TypoWriteConstants::HorizontalBar::SPACING_OFFSET, TypoWriteConstants::HorizontalBar::VERTICAL_OFFSET, TypoWriteConstants::HorizontalBar::HORIZONTAL_OFFSET}},
+
+        // 通常文字（namespace値を直接使用）
+        {CharCategory::NORMAL, {TypoWriteConstants::Normal::WIDTH_SCALE, TypoWriteConstants::Normal::HEIGHT_SCALE, TypoWriteConstants::Normal::SPACING_OFFSET, TypoWriteConstants::Normal::VERTICAL_OFFSET, TypoWriteConstants::Normal::HORIZONTAL_OFFSET}}};
 
     // 文字描画用スプライトを事前作成（再利用用）
     _charSprite = new lgfx::LGFX_Sprite(display);
 
-    ESP_LOGI(TAG, "TypoWrite initialized with fixed adjustment values");
+    ESP_LOGI(TAG, "TypoWrite initialized with namespace-unified adjustment values");
     ESP_LOGI(TAG, "Small char: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
              TypoWriteConstants::SmallChar::WIDTH_SCALE,
              TypoWriteConstants::SmallChar::HEIGHT_SCALE,
@@ -177,82 +191,6 @@ void TypoWrite::initializeSmallCharMap()
     };
 
     ESP_LOGI(TAG, "Small character map: %d entries", _smallToLargeMap.size());
-}
-
-// ========================================
-// 文字種別調整テーブル初期化
-// ========================================
-void TypoWrite::initializeCharTypeAdjustments()
-{
-    // ひらがな小文字の調整
-    CharTypeAdjustment hiraganaSmall = {0.0f, 0.0f, 0, 0, 0};
-    _charAdjustments[CharCategory::SMALL_CHAR] = hiraganaSmall;
-
-    // 句読点の調整
-    CharTypeAdjustment punctuation = {0.0f, 0.0f, 0, 0, 0};
-    _charAdjustments[CharCategory::PUNCTUATION] = punctuation;
-
-    // 括弧類の調整
-    CharTypeAdjustment bracket = {0.0f, 0.0f, 0, 0, 0};
-    _charAdjustments[CharCategory::BRACKET] = bracket;
-
-    // 横棒・長音記号の調整
-    CharTypeAdjustment horizontalBar = {0.0f, 0.0f, 0, 0, 0};
-    _charAdjustments[CharCategory::HORIZONTAL_BAR] = horizontalBar;
-
-    // 通常文字（デフォルト）
-    CharTypeAdjustment normal = {0.0f, 0.0f, 0, 0, 0};
-    _charAdjustments[CharCategory::NORMAL] = normal;
-
-    ESP_LOGI(TAG, "Character type adjustments initialized");
-}
-
-// ========================================
-// 固定値による文字種別調整テーブル初期化
-// ========================================
-void TypoWrite::initializeFixedCharTypeAdjustments()
-{
-    // 小文字の調整（固定値）
-    _charAdjustments[CharCategory::SMALL_CHAR] = {
-        TypoWriteConstants::SmallChar::WIDTH_SCALE,
-        TypoWriteConstants::SmallChar::HEIGHT_SCALE,
-        TypoWriteConstants::SmallChar::SPACING_OFFSET,
-        TypoWriteConstants::SmallChar::VERTICAL_OFFSET,
-        TypoWriteConstants::SmallChar::HORIZONTAL_OFFSET};
-
-    // 句読点の調整（固定値）
-    _charAdjustments[CharCategory::PUNCTUATION] = {
-        TypoWriteConstants::Punctuation::WIDTH_SCALE,
-        TypoWriteConstants::Punctuation::HEIGHT_SCALE,
-        TypoWriteConstants::Punctuation::SPACING_OFFSET,
-        TypoWriteConstants::Punctuation::VERTICAL_OFFSET,
-        TypoWriteConstants::Punctuation::HORIZONTAL_OFFSET};
-
-    // 括弧類の調整（固定値）
-    _charAdjustments[CharCategory::BRACKET] = {
-        TypoWriteConstants::Bracket::WIDTH_SCALE,
-        TypoWriteConstants::Bracket::HEIGHT_SCALE,
-        TypoWriteConstants::Bracket::SPACING_OFFSET,
-        TypoWriteConstants::Bracket::VERTICAL_OFFSET,
-        TypoWriteConstants::Bracket::HORIZONTAL_OFFSET};
-
-    // 横棒・長音記号の調整（固定値）
-    _charAdjustments[CharCategory::HORIZONTAL_BAR] = {
-        TypoWriteConstants::HorizontalBar::WIDTH_SCALE,
-        TypoWriteConstants::HorizontalBar::HEIGHT_SCALE,
-        TypoWriteConstants::HorizontalBar::SPACING_OFFSET,
-        TypoWriteConstants::HorizontalBar::VERTICAL_OFFSET,
-        TypoWriteConstants::HorizontalBar::HORIZONTAL_OFFSET};
-
-    // 通常文字（調整なし）
-    _charAdjustments[CharCategory::NORMAL] = {
-        TypoWriteConstants::Normal::WIDTH_SCALE,
-        TypoWriteConstants::Normal::HEIGHT_SCALE,
-        TypoWriteConstants::Normal::SPACING_OFFSET,
-        TypoWriteConstants::Normal::VERTICAL_OFFSET,
-        TypoWriteConstants::Normal::HORIZONTAL_OFFSET};
-
-    ESP_LOGI(TAG, "Fixed character type adjustments initialized");
 }
 
 // ========================================
@@ -683,7 +621,7 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
         }
 
         // 調整された位置で文字描画
-        int draw_x = _currentX + adjustment.horizontalOffset;
+        int draw_x = _currentX + adjustment.horizontalOffset - getMaxCharWidth();
         int draw_y = _currentY + adjustment.verticalOffset;
 
         drawEnhancedCharacterWithRotation(display_char, draw_x, draw_y,

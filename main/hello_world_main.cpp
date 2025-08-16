@@ -256,7 +256,7 @@ void textDisplayDemo()
         verticalWriter.setLineSpacing(6);
         verticalWriter.setCharSpacing(-8);
 
-        verticalWriter.drawText("ジャン・フィリップ・トゥーサン\nおはよう。いんたぁねっと\nフォンふぉんfon");
+        verticalWriter.drawText("ジャン・フィリップ・トゥーサン\nおはよう。いんたぁねっと\nフォンふぉんfon\nぁぃぅぇぉヵゃゅょゎっぁぃぅぇぉちゃんちゃん\nベイクドもチョモチョ");
     }
     else
     {
