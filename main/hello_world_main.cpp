@@ -251,7 +251,6 @@ void textDisplayDemo()
         verticalWriter.setArea(130, 700);
         verticalWriter.setColor(TFT_WHITE);
         verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
-        verticalWriter.setTransparentBg(true);
         verticalWriter.setDirection(TextDirection::VERTICAL);
         verticalWriter.setFontSize(1.0);
         verticalWriter.setLineSpacing(6);

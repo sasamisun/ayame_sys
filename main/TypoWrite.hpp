@@ -1,4 +1,4 @@
-// main/TypoWrite.hpp - リファクタリング版ヘッダー
+// main/TypoWrite.hpp - 固定値微調整版ヘッダー
 #ifndef _TYPO_WRITE_HPP_
 #define _TYPO_WRITE_HPP_
 
@@ -64,6 +64,15 @@ struct CharMetrics {
     int32_t baseline;   // ベースライン位置
 };
 
+// 文字種別の微調整設定構造体（固定値版）
+struct CharTypeAdjustment {
+    float widthScale;     // 幅の調整倍率
+    float heightScale;    // 高さの調整倍率
+    int spacingOffset;    // 字間オフセット（ピクセル）
+    int verticalOffset;   // 縦位置オフセット（ピクセル）
+    int horizontalOffset; // 横位置オフセット（ピクセル）
+};
+
 // ========================================
 // TypoWriteクラス定義
 // ========================================
@@ -77,147 +86,280 @@ private:
     // ========== 描画設定 ==========
     TextDirection _direction;            // テキスト方向
     TextAlignment _alignment;            // テキスト揃え
-    int _x, _y;                         // 描画開始座標
+    int _x, _y;                         // 描画開始位置
     int _width, _height;                // 描画領域のサイズ
     uint16_t _color;                    // テキスト色
     uint16_t _bgColor;                  // 背景色
     bool _transparentBg;                // 背景透明フラグ
-    bool _wrap;                         // テキスト折り返しフラグ
+    bool _wrap;                         // 折り返しフラグ
     
     // ========== フォント設定 ==========
-    float _fontSize;                    // フォントサイズ倍率
-    const lgfx::IFont* _font;           // 使用フォント
-    const uint8_t* _vlwFont;            // VLWフォントデータ
-    bool _isCustomFont;                 // カスタムフォント使用フラグ
-    VLWFontParser* _vlwParser;          // VLWパーサー
-    bool _useVLWParser;                 // VLWパーサー使用フラグ
+    float _fontSize;                    // フォントサイズ
+    const lgfx::IFont* _font;          // フォント
+    const uint8_t* _vlwFont;           // VLWフォントデータ
+    bool _isCustomFont;                // カスタムフォントフラグ
+    VLWFontParser* _vlwParser;         // VLWパーサー（外部から設定）
+    bool _useVLWParser;                // VLWパーサー使用フラグ
     
     // ========== スペーシング設定 ==========
-    int _lineSpacing;                   // 行間（ピクセル）
-    int _charSpacing;                   // 文字間（ピクセル）
-    int _columnSpacing;                 // 縦書き時の列間隔
+    int _lineSpacing;                  // 行間
+    int _charSpacing;                  // 文字間
+    int _columnSpacing;                // 列間（縦書き用）
     
-    // ========== 現在位置管理 ==========
-    int _currentX;                      // 現在のX座標（描画領域内の相対位置）
-    int _currentY;                      // 現在のY座標（描画領域内の相対位置）
+    // ========== 描画状態 ==========
+    int _currentX, _currentY;          // 現在の描画位置
     
-    // ========== 小文字システム ==========
-    bool _enableSmallCharHandling;     // 小文字特別処理の有効/無効
-    SmallCharSettings _smallCharSettings;  // 小文字描画設定
-    std::unordered_map<uint16_t, uint16_t> _smallToLargeMap;  // 小文字→大文字マッピング
+    // ========== 小文字処理設定 ==========
+    bool _enableSmallCharHandling;     // 小文字処理有効フラグ
+    SmallCharSettings _smallCharSettings; // 小文字描画設定
     
-    // ========== 縦書きシステム ==========
+    // ========== 固定値微調整機能 ==========
+    bool _showBorder;                  // 枠線表示フラグ
+    uint16_t _borderColor;             // 枠線色
+    bool _enableCharAdjustment;        // 文字調整有効フラグ（固定値適用の ON/OFF）
+    std::unordered_map<CharCategory, CharTypeAdjustment> _charAdjustments; // 固定値調整テーブル
+    
+    // ========== マッピングテーブル ==========
+    std::unordered_map<uint16_t, uint16_t> _smallToLargeMap;   // 小文字→大文字マッピング
     std::unordered_map<uint16_t, uint16_t> _verticalGlyphMap;  // 縦書き用グリフマッピング
     
-    // ========== キャッシュシステム ==========
-    mutable std::unordered_map<uint16_t, CharMetrics> _metricsCache;  // メトリクスキャッシュ
+    // ========== パフォーマンス最適化 ==========
+    std::unordered_map<uint16_t, CharMetrics> _metricsCache;   // メトリクスキャッシュ
+
+public:
+    // ========================================
+    // コンストラクタ・デストラクタ
+    // ========================================
+    TypoWrite(M5GFX *display);
+    ~TypoWrite();
     
     // ========================================
-    // 内部メソッド（プライベート）
+    // 基本設定メソッド
     // ========================================
     
-    // 初期化メソッド
-    void initializeSmallCharMap();      // 小文字マッピング初期化
-    void initializeVerticalGlyphMap();  // 縦書きグリフマッピング初期化
+    // 描画先の設定
+    void setDrawTarget(lgfx::LGFX_Sprite *sprite);
     
-    // 統一文字描画メソッド（全描画を一元化）
-    void drawUnifiedCharacter(uint16_t unicode_char, int x, int y,
-                             float scale = 1.0f, float rotation = 0.0f,
-                             float offsetX = 0.0f, float offsetY = 0.0f);
+    // VLWパーサーの設定
+    void setVLWParser(VLWFontParser* parser);
     
-    // 直接描画メソッド（最速パス、スケール1.0・回転なし専用）
+    // テキスト方向の設定
+    void setDirection(TextDirection direction);
+    
+    // テキスト揃えの設定
+    void setAlignment(TextAlignment alignment);
+    
+    // 描画位置の設定
+    void setPosition(int x, int y);
+    
+    // 描画領域の設定
+    void setArea(int width, int height);
+    
+    // テキスト色の設定
+    void setColor(uint16_t color);
+    
+    // 背景色の設定
+    void setBackgroundColor(uint16_t bgColor);
+        
+    // 折り返しの設定
+    void setWrap(bool wrap);
+
+
+    
+    // ========================================
+    // 固定値微調整機能設定（簡易版）
+    // ========================================
+    
+    // 枠線表示の簡易切り替え（色は固定値 TFT_RED を使用）
+    void setBorderDisplay(bool show, uint16_t color = TFT_WHITE);
+    
+    // 文字調整機能の簡易切り替え（固定値の適用 ON/OFF）
+    void setCharacterAdjustment(bool enable);
+
+    // 固定値による文字種別調整の取得
+    CharTypeAdjustment getCharAdjustment(uint16_t unicode_char);
+    // ========================================
+    // フォント設定メソッド
+    // ========================================
+    
+    // フォントサイズの設定
+    void setFontSize(float size);
+    
+    // フォントの設定
+    void setFont(const lgfx::IFont *font);
+    
+    // カスタムフォントの読み込み
+    bool loadFontFromArray(const uint8_t *fontArray);
+    
+    // ========================================
+    // スペーシング設定メソッド
+    // ========================================
+    
+    // 行間の設定
+    void setLineSpacing(int spacing);
+    
+    // 文字間の設定
+    void setCharSpacing(int spacing);
+    
+    // 列間の設定（縦書き用）
+    void setColumnSpacing(int spacing);
+    
+    // ========================================
+    // 小文字処理設定メソッド
+    // ========================================
+    
+    // 小文字処理の有効/無効設定
+    void setSmallCharHandling(bool enable);
+    
+    // 小文字描画設定
+    void setSmallCharSettings(float scale, float offsetX, float offsetY);
+    
+    // ========================================
+    // メインテキスト描画メソッド
+    // ========================================
+    
+    // テキスト描画（固定値調整適用版）
+    void drawText(const std::string &text);
+    
+    // 中央揃えでテキスト描画
+    void drawTextCentered(const std::string &text);
+    
+    // ========================================
+    // サイズ計算メソッド
+    // ========================================
+    
+    // テキスト幅の取得
+    int getTextWidth(const std::string &text);
+    
+    // テキスト高さの取得
+    int getTextHeight(const std::string &text);
+    
+    // ========================================
+    // 描画領域管理メソッド
+    // ========================================
+    
+    // 描画領域のクリア
+    void clearArea(uint16_t color = TFT_BLACK);
+    
+    // ========================================
+    // デバッグメソッド
+    // ========================================
+    
+    // 小文字マッピングテーブルのデバッグ表示
+    void debugPrintSmallCharMap() const;
+    
+    // 文字列内の小文字分析
+    void debugAnalyzeSmallChars(const std::string& text);
+    
+    // 固定値調整設定のデバッグ表示
+    void debugShowFixedAdjustments();
+
+
+    void debugShowCharAdjustments();
+
+private:
+    // ========================================
+    // 内部初期化メソッド
+    // ========================================
+    
+    // 小文字マッピングテーブルの初期化
+    void initializeSmallCharMap();
+    
+    // 縦書きグリフマッピングテーブルの初期化
+    void initializeVerticalGlyphMap();
+    
+    // 固定値による文字種別調整テーブルの初期化
+    void initializeFixedCharTypeAdjustments();
+    
+    // 文字メトリクスキャッシュの初期化
+    void initializeCharTypeAdjustments();
+
+    // ========================================
+    // 内部描画メソッド
+    // ========================================
+    
+    // 横書きテキスト描画（固定値調整適用版）
+    void drawHorizontalTextEnhanced(const std::string &text);
+    
+    // 縦書きテキスト描画（固定値調整適用版）
+    void drawVerticalTextEnhanced(const std::string &text);
+    
+    // 枠線描画
+    void drawAreaBorder();
+    
+    // 文字描画（スケール調整対応）
+    void drawEnhancedCharacter(uint16_t unicode_char, int x, int y,
+                              float widthScale = 1.0f, float heightScale = 1.0f);
+    
+    // 回転付き文字描画（スケール調整対応）
+    void drawEnhancedCharacterWithRotation(uint16_t unicode_char, int x, int y,
+                                          float widthScale, float heightScale,
+                                          float rotation);
+    
+    // スケール調整文字描画
+    void drawScaledCharacter(uint16_t unicode_char, int x, int y,
+                            float widthScale, float heightScale);
+    
+    // スケール調整＋回転文字描画
+    void drawScaledCharacterWithRotation(uint16_t unicode_char, int x, int y,
+                                        float widthScale, float heightScale,
+                                        float rotation);
+    
+    // 統一文字描画関数（既存）
+    void drawUnifiedCharacter(uint16_t unicode_char, int x, int y, 
+                             float scale, float rotation,
+                             float offsetX, float offsetY);
+    
+    // 直接描画（既存）
     void drawDirectCharacter(uint16_t unicode_char, int x, int y);
     
-    // スプライト描画メソッド（スケール・回転対応）
+    // スプライトを使った描画（既存）
     void drawSpriteCharacter(uint16_t unicode_char, int x, int y,
                             float scale, float rotation);
     
-    // テキスト描画実装
-    void drawHorizontalText(const std::string& text);
-    void drawVerticalText(const std::string& text);
+    // ========================================
+    // 内部計算・判定メソッド
+    // ========================================
     
-    // 文字判定・変換メソッド
-    bool isSmallChar(uint16_t unicode_char) const;
-    uint16_t getCorrespondingLargeChar(uint16_t small_char) const;
-    uint16_t convertToVerticalGlyph(uint16_t unicode_char);
-    bool shouldRotateInVertical(uint16_t unicode_char);
+    // テキストサイズの計算
+    void calculateTextSize(const std::string &text, int &width, int &height);
     
-    // メトリクス取得（統一化）
+    // 文字メトリクスの取得
     CharMetrics getCharMetrics(uint16_t unicode_char);
     
-    // テキストサイズ計算
-    void calculateTextSize(const std::string& text, int& width, int& height);
+    // 固定値による文字種別調整取得
+    CharTypeAdjustment getFixedCharAdjustment(uint16_t unicode_char);
     
-    // 文字カテゴリ判定
+    // 文字カテゴリの判定
     CharCategory getCharCategory(uint16_t unicode_char);
     
-public:
+    // 小文字判定
+    bool isSmallChar(uint16_t unicode_char) const;
+    
+    // 小文字の対応する大文字を取得
+    uint16_t getCorrespondingLargeChar(uint16_t small_char) const;
+    
+    // 縦書き時の回転判定
+    bool shouldRotateInVertical(uint16_t unicode_char);
+    
+    // 縦書き用グリフへの変換
+    uint16_t convertToVerticalGlyph(uint16_t unicode_char);
+    
     // ========================================
-    // パブリックインターフェース
+    // ヘルパーメソッド
     // ========================================
     
-    // コンストラクタ・デストラクタ
-    TypoWrite(M5GFX* display);
-    ~TypoWrite();
+    // UTF-8からUnicodeへの変換
+    std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
     
-    // ========== 文字変換ヘルパー ==========
-    std::vector<uint16_t> utf8ToUnicode(const std::string& utf8_string);
+    // UnicodeからUTF-8への変換
     std::string unicodeToUtf8(uint16_t unicode_char);
     
-    // ========== 描画先設定 ==========
-    void setDrawTarget(lgfx::LGFX_Sprite* sprite);  // nullptrでディスプレイに直接描画
+    // 行の高さを取得
+    int getLineHeight();
     
-    // ========== 基本設定メソッド ==========
-    void setDirection(TextDirection direction);
-    void setAlignment(TextAlignment alignment);
-    void setPosition(int x, int y);
-    void setArea(int width, int height);
-    void setColor(uint16_t color);
-    void setBackgroundColor(uint16_t bgColor);
-    void setTransparentBg(bool transparent) { _transparentBg = transparent; }
-    void setWrap(bool wrap);
-    
-    // ========== フォント設定メソッド ==========
-    void setFontSize(float size);
-    void setFont(const lgfx::IFont* font);
-    void setIsCustomFont(bool isCustom) { _isCustomFont = isCustom; }
-    bool loadFontFromArray(const uint8_t* fontArray);
-    void setVLWParser(VLWFontParser* parser);
-    
-    // ========== スペーシング設定 ==========
-    void setLineSpacing(int spacing);
-    void setCharSpacing(int spacing);
-    void setColumnSpacing(int spacing) { _columnSpacing = spacing; }
-    
-    // ========== テキスト描画メソッド ==========
-    void drawText(const std::string& text);
-    void drawTextCentered(const std::string& text);
-    
-    // ========== サイズ計算メソッド ==========
-    int getTextWidth(const std::string& text);
-    int getTextHeight(const std::string& text);
-    
-    // ========== 描画位置取得 ==========
-    int getCurrentX() const { return _x; }
-    int getCurrentY() const { return _y; }
-    
-    // ========== フォント情報取得 ==========
-    bool isCustomFont() const { return _isCustomFont; }
-    
-    // ========== 描画領域管理 ==========
-    void clearArea(uint16_t color = 0);
-    
-    // ========== 小文字システム公開メソッド ==========
-    void setSmallCharHandling(bool enable) { _enableSmallCharHandling = enable; }
-    bool isSmallCharHandlingEnabled() const { return _enableSmallCharHandling; }
-    void setSmallCharSettings(const SmallCharSettings& settings) { _smallCharSettings = settings; }
-    const SmallCharSettings& getSmallCharSettings() const { return _smallCharSettings; }
-    
-    // ========== デバッグメソッド ==========
-    void debugPrintSmallCharMap() const;
-    void debugAnalyzeSmallChars(const std::string& text);
-    void debugPrintVerticalGlyphMap() const;
-    void debugPrintMetricsCache() const;
+    // 最大文字幅を取得（縦書き用）
+    int getMaxCharWidth();
 };
 
 #endif // _TYPO_WRITE_HPP_
