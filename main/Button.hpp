@@ -79,22 +79,18 @@ private:
     SwipeCallback _onSwipeRight; // 右スワイプのコールバック
 
     /**
-     * @brief Canvas（lgfx::LGFX_Sprite）への描画処理
-     * @param canvas 描画先Canvas
+     * @brief 描画先への描画処理（Canvas / Display 共通）
+     *
+     * lgfx::LGFX_Sprite と M5GFX はいずれも lgfx::LovyanGFX の派生なので、
+     * 基底クラスのポインタで受けて1本の実装で処理する。
+     * （以前は drawToCanvas() / drawToDisplay() として同一内容を2重に持っていた）
+     *
+     * @param target 描画先
      * @param bgColor 背景色
      * @param textColor テキスト色
      * @param borderColor 枠線色
      */
-    void drawToCanvas(lgfx::LGFX_Sprite* canvas, uint32_t bgColor, uint32_t textColor, uint32_t borderColor);
-
-    /**
-     * @brief Display（M5GFX）への描画処理
-     * @param display 描画先Display
-     * @param bgColor 背景色
-     * @param textColor テキスト色
-     * @param borderColor 枠線色
-     */
-    void drawToDisplay(M5GFX* display, uint32_t bgColor, uint32_t textColor, uint32_t borderColor);
+    void drawTo(lgfx::LovyanGFX* target, uint32_t bgColor, uint32_t textColor, uint32_t borderColor);
 
 public:
     /**
@@ -125,13 +121,8 @@ public:
      */
     void draw();
 
-    /**
-     * @brief 状態更新関数 - ExtendedTouchPointを使用
-     * @param touchPoint タッチ座標情報
-     * @param isTouched タッチされているかのフラグ
-     * @return 状態が変更された場合はtrue
-     */
-    bool update(const ExtendedTouchPoint &touchPoint, bool isTouched);
+    // 注: update(const ExtendedTouchPoint&, bool) は ButtonManager::update() と
+    //     同じ状態遷移の2重実装だったため削除した。入力処理は ButtonManager::update() に一本化。
 
     // ゲッターとセッター
     int getX() const { return _x; }
@@ -171,8 +162,11 @@ public:
     void setOnReleased(TouchCallback callback) { _onReleased = callback; }
 
     // イベントハンドラを取得
-    TouchCallback getOnPressed() const { return _onPressed; }
-    TouchCallback getOnReleased() const { return _onReleased; }
+    // const参照で返す。値返しだと呼び出し側の
+    // 「if (getOnPressed()) getOnPressed()(btn);」というパターンで
+    // std::function のコピー（ヒープ確保を伴う場合がある）が毎イベント発生していた。
+    const TouchCallback &getOnPressed() const { return _onPressed; }
+    const TouchCallback &getOnReleased() const { return _onReleased; }
 
     // スワイプイベントハンドラを設定
     void setOnSwipeUp(SwipeCallback callback) { _onSwipeUp = callback; }
@@ -180,11 +174,11 @@ public:
     void setOnSwipeLeft(SwipeCallback callback) { _onSwipeLeft = callback; }
     void setOnSwipeRight(SwipeCallback callback) { _onSwipeRight = callback; }
 
-    // スワイプイベントハンドラを取得
-    SwipeCallback getOnSwipeUp() const { return _onSwipeUp; }
-    SwipeCallback getOnSwipeDown() const { return _onSwipeDown; }
-    SwipeCallback getOnSwipeLeft() const { return _onSwipeLeft; }
-    SwipeCallback getOnSwipeRight() const { return _onSwipeRight; }
+    // スワイプイベントハンドラを取得（同様にconst参照で返す）
+    const SwipeCallback &getOnSwipeUp() const { return _onSwipeUp; }
+    const SwipeCallback &getOnSwipeDown() const { return _onSwipeDown; }
+    const SwipeCallback &getOnSwipeLeft() const { return _onSwipeLeft; }
+    const SwipeCallback &getOnSwipeRight() const { return _onSwipeRight; }
 
     /**
      * @brief スワイプイベントを処理
@@ -215,6 +209,8 @@ public:
 
     /**
      * @brief デストラクタ
+     *
+     * 保持しているボタンは delete しない（下記「所有権」を参照）。
      */
     ~ButtonManager();
 
@@ -232,21 +228,34 @@ public:
     lgfx::LGFX_Sprite *getDrawTarget() const { return _drawTarget; }
 
     /**
-     * @brief ボタンの追加
-     * @param button 追加するボタンオブジェクト
+     * @brief ボタンの追加（参照を保持するだけで所有はしない）
+     *
+     * ＝＝ 所有権について ＝＝
+     * ButtonManager は登録された Button を **所有しない**。
+     * 生成と破棄は呼び出し側の責任で、本クラスは参照を保持するだけである。
+     * デストラクタ・clearButtons()・removeButton() のいずれも delete しない。
+     *
+     * 組み込みではボタンを起動時に生成して常駐させる使い方が普通であり、
+     * 実際に main も setup() で new したまま解放していない。
+     * そのため非所有を正とし、その旨をここに明記する。
+     * 所有させたい場合は unique_ptr を受け取る API に変更すること
+     * （生ポインタを保持したまま delete する設計は、
+     *   呼び出し側が同じポインタを持ち続けるため危険）。
+     *
+     * @param button 追加するボタンオブジェクト（寿命は呼び出し側が管理）
      * @return 成功時はtrue
      */
     bool addButton(Button *button);
 
     /**
-     * @brief ボタンの削除
-     * @param button 削除するボタンオブジェクト
+     * @brief ボタンの登録解除（delete はしない）
+     * @param button 解除するボタンオブジェクト
      * @return 成功時はtrue
      */
     bool removeButton(Button *button);
 
     /**
-     * @brief 全ボタンのクリア
+     * @brief 全ボタンの登録解除（delete はしない）
      */
     void clearButtons();
 
@@ -256,22 +265,26 @@ public:
      */
     void drawButtons();
 
-    /**
-     * @brief 指定したCanvas/Displayに全ボタンを描画
-     * 一時的に描画先を変更して描画する
-     * @param target 描画先Canvas/Display
-     */
-    void drawButtonsToTarget(lgfx::LGFX_Sprite *target);
+    // 注: drawButtonsToTarget() は呼び出し元が存在しない死蔵コードだったため削除した。
+
+    // 注: handleTouch() は呼び出し元が存在しない死蔵コードだったため削除した。
 
     /**
-     * @brief タッチイベントの処理
-     * 非推奨：update()メソッドを使用してください
-     */
-    void handleTouch();
-
-    /**
-     * @brief 定期的な更新処理
-     * メインループから呼び出す
+     * @brief 入力イベントをボタンへ配送する
+     *
+     * **呼び出す前に `TouchHandler::update()` を1回だけ実行しておくこと。**
+     * 本メソッドは内部でポーリングせず、`TouchHandler` が保持している
+     * 現在のイベント状態を読むだけである。
+     *
+     * `TouchHandler::update()` はハードウェアを読んで内部状態を更新し
+     * イベントを1回だけ返す破壊的メソッドなので、1ループにつき1回しか呼べない。
+     * 本メソッドがポーリングまで行うと、呼び出し側が別途ポーリングした際に
+     * どちらかがイベントを取りこぼす。
+     *
+     * ```cpp
+     * touchHandler.update();      // ポーリングは呼び出し側で1回だけ
+     * buttonManager->update();    // その結果を配送する
+     * ```
      */
     void update();
 

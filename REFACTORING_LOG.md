@@ -1,17 +1,142 @@
-# ayame_sys プログラム仕様書
+# ayame_sys 改修記録
+
+本書は 2026-07-30 に既存ソースを読み取って作成した**初版の仕様書**と、
+そこに記載した Todo を順に修正していった**作業記録**である。
+
+- **プログラムの現在の仕様を知りたい場合は [PROGRAM_SPEC.md](PROGRAM_SPEC.md) を参照すること。**
+- 本書は「何がどう壊れていて、なぜそう直したか」「初版の記述のどこが誤っていたか」
+  を残すためのものであり、仕様書としては読みにくい。
+  記述の多くは修正前の状態を説明しているため、現在のコードとは一致しない。
+
+各項目の凡例:
+
+| 表記 | 意味 |
+|---|---|
+| ~~取り消し線~~ + `対応済み（日付）` | 修正済み。取り消し線部分は修正前の状態 |
+| `一部対応` | 一部のみ修正。残りの理由を併記 |
+| `【訂正】` | 初版の記述自体が誤りだったもの |
+| `未対応` | 未着手。理由を併記 |
+
+---
+
 
 M5Paper S3（ESP32-S3 + 電子ペーパー）向け、日本語縦書き表示機能を持つアドベンチャーゲーム系システムの
 `main/` コンポーネント仕様書。
 
 - 対象ディレクトリ: `main/`
-- 作成日: 2026-07-30
-- 本書はリバースエンジニアリング（既存ソースの読み取り）によって作成したものであり、**コードの修正は行っていない**。
+- 作成日: 2026-07-30（初版）／最終更新: 2026-07-30
+- 初版はリバースエンジニアリング（既存ソースの読み取り）によって作成した。
+  その後、記載した Todo を順に修正しており、対応済み項目には
+  `対応済み（日付）` を、初版の記述自体が誤っていたものには
+  `【訂正】` を付記している。
 - 各メソッドの章末に、実装上の疑問点・非効率箇所を `Todo:` として記載している。
+
+---
+
+## 0. 対応状況サマリ（2026-07-30 時点）
+
+### 0.1 修正方針
+
+利用者の指示により、以下の範囲で進めている。
+
+| 範囲 | 方針 |
+|---|---|
+| `main/hello_world_main.cpp` の処理フロー | **調整中のため変更しない**（§4.2 の到達不能コードと未使用includeのみ対応済み） |
+| `main/fonts/` のフォントヘッダ | **調整中のため以降は保留**（§2.2 の整理までで停止） |
+| `CanvasTest`（§11） | **保留** |
+| 設計変更を伴うもの | Todo として残し、個別の実装修正を優先 |
+
+### 0.2 検証方法
+
+各修正ごとに ESP-IDF v5.4.3 でフルビルドし、
+exit code・コンパイラ警告・バイナリサイズの変化を確認している。
+アルゴリズムを変更した箇所（VLW二分探索）は、実データに対する
+網羅テストで従来実装との一致を確認した。
+
+**ただし実機（M5Paper S3）での動作確認は行えていない。**
+以下は実機テストが必要:
+
+| 項目 | 確認すべきこと |
+|---|---|
+| USB MSC（§5.7） | PC からの認識、有効化→無効化→有効化のトグル、無効化後にSDが読めるか |
+| タッチ／スワイプ（§6.3, §7.6） | 押下→スワイプ時にボタン表示が戻るか、スワイプが正しく配送されるか |
+| 縦書き描画（§9） | 字間・位置・文字サイズ。下記「見た目の変化」を参照 |
+| トランジション（§10.9） | クリップ矩形方式での部分転送が正しく描画されるか |
+
+### 0.3 見た目に影響する変更
+
+| 変更 | 内容 | 対応する調整 |
+|---|---|---|
+| 縦書きの字間 | 可変（−4〜7px、負の値では**逆行していた**）→ em固定送り（一律 `setWidth`＋`charSpacing`） | `main` の `setCharSpacing(-8)` は旧送り前提。要再調整 |
+| 縦書きの水平位置 | 1列目が右端から2em内側 → 1em内側（右へ16px移動） | — |
+| 文字サイズ | 横1.0倍／縦1.1倍の不一致 → 両方1.0倍（縦書きは約9%小さくなる） | 戻すなら `setFontSize()` |
+| 描画領域の背景 | `TFT_TRANSPARENT`(0x0120) で塗りつぶし → 透過（塗らない） | 呼び出し側の意図どおり |
+
+### 0.4 既知の不具合: ESP-IDF 5.4.3 で画面が縞模様になる（未解決）
+
+**症状**: `fillScreen()` を含むあらゆる描画で、1ラインおきに白線が入り白黒の縞模様になる。
+起動直後から常時発生する。M5Stack の Factory Test は正常表示されるため**ハードウェアは正常**。
+
+**原因**: ESP-IDF の版差。**5.3.2 では正常、5.4.3 で発生**する。
+
+本書の修正作業に着手した時点で `build/` は v5.3.2 構成だったが、
+その v5.3.2 が既にアンインストールされていたため v5.4.3 で再構成せざるを得なかった。
+この版差が持ち込まれた。
+
+**切り分け済みの事実**:
+
+| 検証 | 結果 |
+|---|---|
+| 原本ソース（`git stash` で全修正を退避）+ IDF 5.4.3 | **再現する** → 本書のソース修正は無関係 |
+| ボード自動検出 | `[Autodetect] board_M5PaperS3` 正常 |
+| PSRAM | 8MB検出・80MHz・メモリテストOK |
+| パネル/バス初期化 | エラーなし |
+
+**検証して否定された仮説**:
+
+| 仮説 | 検証方法 | 結果 |
+|---|---|---|
+| `CONFIG_SPIRAM_RODATA=y` による PSRAM 帯域競合 | 無効化して実機確認（PSRAMプールが 6784K→8192K になったことで有効化を確認） | **無関係**。症状変わらず |
+| IDF 5.4 で追加された `esp_lcd_panel_io_tx_color()` のアライメント検査で転送が無言で失敗 | `Bus_EPD::writeScanLine()` に戻り値ログを仕込んで実機確認 | **無関係**。エラーは1件も出ず、転送は成功している |
+
+**関連する構造上の注意点**（今回の原因ではないが記録）:
+
+- `Bus_EPD::writeScanLine()` は `esp_lcd_panel_io_tx_color()` の戻り値を検査していない。
+  失敗しても無言で、完了コールバックが来ないため `_bus_busy` が true のまま残り
+  `wait()` が無限ループしうる。
+- `Panel_EPD` の DMA バッファは `heap_caps_malloc(dma_len, MALLOC_CAP_DMA)` で確保され、
+  `dma_len = memory_w/4 + line_padding = 248` バイト（16の倍数ではない）。
+  IDF 5.4 で追加された `esp_lcd_i80_alloc_draw_buffer()` は使っていない。
+- `Panel_EPD` の EPD 更新タスクは `task_pinned_core = -1` のため
+  **常に `display.begin()` を呼んだコアと逆のコア**に張り付く。
+  M5GFX 自身が「コアが異なる場合は PSRAM のキャッシュ同期が要る」とコメントしている。
+
+**M5GFX の状態**（別途要対応）:
+
+- `components/M5GFX` は **git 管理外**（untracked かつ `.gitignore` にも無い）。
+  誤って削除すると復元できない。
+- 版情報が不整合: `library.json` / `library.properties` は 0.2.6、
+  `idf_component.yml` は 0.1.15。ファイル日付は 2025-04-29。
+- 最新版で IDF 5.4 対応が入っている可能性があるため、更新を試す価値がある。
+
+**現時点の対処**: ESP-IDF 5.3.2 に戻す。
+
+### 0.5 初版の記述で誤っていたもの（訂正済み）
+
+| 箇所 | 初版の記述 | 実際 |
+|---|---|---|
+| §12.1 #1 / §8.4 | 大きな確保が内部RAMを使い失敗する | `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` により16KB超はPSRAMから確保され成功する |
+| §2.1 | TinyUSB が IDF同梱とマネージドの二系統 | IDF v5.4.3 に `components/tinyusb` は存在しない。`EXTRA_COMPONENT_DIRS` が死んだ指定だった |
+| §2.2 | `maruminya_mini.h` と `marumiya_mini.h` は同種の重複 | 別サイズ（5pt / 10pt）かつ Adafruit GFX 形式で VLW ではない |
+| §4.2 | `freertos/idf_additions.h` が未使用 | `xTaskCreatePinnedToCore` の宣言元で**必須** |
+| §12.4 #59 | `detectSwipe()` の AND 条件が不適切 | 採用軸は必ず `max` なので閾値は常に満たされる。現行ロジックは妥当 |
+| §9.7 | 回転文字が二重スケーリングされている | 真因は回転**なし**版がスケールを適用していなかったこと |
 
 ---
 
 ## 目次
 
+0. [対応状況サマリ](#0-対応状況サマリ2026-07-30-時点)
 1. [システム概要](#1-システム概要)
 2. [ビルド構成](#2-ビルド構成)
 3. [全体アーキテクチャ](#3-全体アーキテクチャ)
@@ -42,7 +167,7 @@ M5Paper S3（ESP32-S3 + 電子ペーパー）向け、日本語縦書き表示�
 | SoC | ESP32-S3 | `CONFIG_IDF_TARGET="esp32s3"` |
 | PSRAM | 有効 / Octal / 80MHz | `CONFIG_SPIRAM_MODE_OCT=y` |
 | ディスプレイ | 電子ペーパー 540 × 960 | M5GFX 経由 |
-| 色深度 | 1bpp（モノクロ） | `display.setColorDepth(1)` |
+| 色深度 | **grayscale_8bit（8bitグレースケール）** | `display.setColorDepth(1)` は呼ばれているが、`Panel_EPD::setColorDepth()` が要求値を無視して `_write_depth`/`_read_depth` を常に `grayscale_8bit` に固定するため**事実上no-op**（§0.5 参照） |
 | EPD描画モード | `epd_quality` | 全画面リフレッシュ品質優先 |
 | タッチパネル | M5GFX 内蔵ドライバ | `display.getTouch()` |
 | SDカード | SPI接続（SPI2_HOST） | MISO=40 / MOSI=38 / SCK=39 / CS=47 |
@@ -75,33 +200,139 @@ M5Paper S3（ESP32-S3 + 電子ペーパー）向け、日本語縦書き表示�
 
 `ScreenTransition.cpp` はビルド対象からコメントアウトされている（`SimpleTransition` に置換済み）。
 
+### 2.1.1 検証環境（実測）
+
+| 項目 | 値 |
+|---|---|
+| ESP-IDF | v5.4.3（`C:\Users\amiha\esp\v5.4.3\esp-idf`） |
+| ビルド結果 | 成功（exit 0） |
+| `ayame_sys.bin` | 1,862,368 bytes (0x1c6ae0) / app パーティション 0xa80000 の17% |
+| `bootloader.bin` | 22,368 bytes (0x5760) |
+| TinyUSB 実体 | `managed_components/espressif__tinyusb` 0.18.0~2 + `espressif__esp_tinyusb` 1.7.2 |
+| `main/` の警告 | 6件 = `SDcard.cpp` の未使用MSCコールバック5件（§12.3 #30 を実証）＋ `hello_world_main.cpp:833` の `unused variable 'point'`（§4.11 参照） |
+
+`.vscode/settings.json` の `idf.espIdfPathWin` は削除済みの v5.3.2 を指したままで、
+`idf.currentSetup` のみ v5.4.3 になっている（要修正だがビルドには影響しない）。
+なお ESP-IDF の `export.sh` は MSys/Git Bash を拒否するため、ビルドは PowerShell から
+`export.ps1` を読む必要がある。
+
+**IDF 5.3.2 → 5.4.3 への切り替えに伴う自動再生成（意図的な設定変更ではない）**
+
+元の `build/` は v5.3.2 で構成されていたが v5.3.2 は既に削除済みのため、
+v5.4.3 で再構成せざるを得なかった。その結果、以下2ファイルが自動更新された。
+
+| ファイル | 変更内容 |
+|---|---|
+| `sdkconfig` | ヘッダの版表記が 5.3.2→5.4.3。`CONFIG_SOC_*`（ハード能力フラグ）の追加。5.4で改名/廃止された旧シンボル（`CONFIG_ESP32S3_BROWNOUT_DET`, `CONFIG_ESP32_WIFI_*` 等）の除去 |
+| `dependencies.lock` | `idf: version` が 5.3.2→5.4.3 |
+
+プロジェクト固有の設定は変わっていないことを確認済み
+（`CONFIG_IDF_TARGET` / `CONFIG_SPIRAM` / `CONFIG_SPIRAM_MODE_OCT` / `CONFIG_SPIRAM_SPEED` /
+`CONFIG_FREERTOS_HZ` / `CONFIG_ESP_MAIN_TASK_STACK_SIZE` /
+`CONFIG_PARTITION_TABLE_CUSTOM_FILENAME` / `CONFIG_ESPTOOLPY_FLASHSIZE` すべて同値。
+`CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` も維持されており、
+ファイル内の位置が移動しただけ）。
+
+**メモリ関連の実測値**（§10.9 / §12.1 #1 の判断根拠）
+
+| 設定 | 値 | 意味 |
+|---|---|---|
+| `CONFIG_SPIRAM_USE_MALLOC` | `y` | 通常の `malloc`/`new` が PSRAM も使う |
+| `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` | `16384` | **16KB超の確保はPSRAMへ回る** |
+| `CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL` | `32768` | 内部RAMを32KB確保用に留保 |
+| `CONFIG_COMPILER_CXX_EXCEPTIONS` | 未設定 | 例外無効 → `new` 失敗時は nullptr を返さず `abort()` |
+
 > **Todo（ビルド構成）**
-> - `ScreenTransition.cpp` / `.hpp` はビルド対象外だがファイルが残存。`ScreenTransition.old`（44KB）、
->   `TypoWrite.old.txt`（47KB）も同様。Git管理下の死蔵ファイルであり、削除または `archive/` への移動を検討。
-> - `REQUIRES` に `tinyusb` と `esp_tinyusb` の両方が指定されている。ルート `CMakeLists.txt` で
->   `EXTRA_COMPONENT_DIRS` に IDF 同梱の `tinyusb/additions` を追加しつつ、`idf_component.yml` で
->   `espressif/esp_tinyusb: ^1.7.2` をマネージドコンポーネントとして取得しており、
->   TinyUSB の実体が二系統存在する構成になっている。どちらか一方に統一すべき。
-> - `REQUIRES`（公開依存）に置く必要がないものが多い。`fatfs` / `driver` / `esp_timer` 等は
->   `PRIV_REQUIRES` で足りるため、ビルド依存グラフを不要に広げている。
+> - ~~`ScreenTransition.cpp` / `.hpp` / `.old`、`TypoWrite.old.txt` が死蔵~~
+>   → **対応済み（2026-07-30）**: 4ファイル（計約100KB）を削除。Git履歴から復元可能。
+>   バイナリサイズはベースラインと完全一致（0x1c6ae0）で、機能変更なしを確認。
+> - ~~TinyUSB の実体が二系統~~ → **対応済み（2026-07-30）**: 調査の結果、
+>   IDF v5.4.3 には `components/tinyusb` が**そもそも存在せず**、
+>   ルート `CMakeLists.txt` の `set(EXTRA_COMPONENT_DIRS $ENV{IDF_PATH}/components/tinyusb/additions)` は
+>   **二重に無効**だった —
+>   (a) 参照先パスが存在しない、
+>   (b) `project()` の**後**に置かれているため IDF の仕様上そもそも評価されない。
+>   実体は managed_components 側の1系統のみ。当該行を削除し、経緯をコメントに置換した。
+> - **未対応（保留）**: `REQUIRES`（公開依存）に置く必要がないものが多い。
+>   `fatfs` / `driver` / `esp_timer` 等は `PRIV_REQUIRES` で足りるため、
+>   ビルド依存グラフを不要に広げている。
+> - **新規（上記削除に伴う）**: `main/CMakeLists.txt:9` の `#"ScreenTransition.cpp"` は
+>   削除済みファイルを指すコメントになった。コメントなのでビルドへの影響はないが、
+>   併せて整理するのが望ましい。
 
 ### 2.2 フォントリソース
 
 `main/fonts/` に VLW をCヘッダ化した配列が格納されている。
+各ヘッダは生成元 `.vlw` のファイル名と元データサイズをコメントに保持しており、
+配列は `__attribute__((section(".rodata.font")))` に配置される。
 
-| ファイル | 用途 |
-|---|---|
-| `shippori_16.h` | **現在使用中**（`textDisplayDemo()` が参照） |
-| `shippori.h`, `mplus2_16.h`, `mplus2_18.h`, `mplus2_32.h`, `genshin.h`, `myfont.h` | 未使用 |
+**整理後（2026-07-30）の `main/fonts/`:**
 
-`append/font/` 配下には VLW 生成用の Python スクリプト（`font_glyph_extractor.py`）、
-TTF、および生成済み `.vlw` / `.h` が置かれている（ビルド対象外の作業用ディレクトリ）。
+| ファイル | シンボル | 生成元 | VLW実測 |
+|---|---|---|---|
+| `shippori_16.h` | `shippori` | `ShipporiMincho-Regular-16.vlw` | fontSize=16 / 4414グリフ / ascent=19 / descent=-5 |
+
+`main/fonts/` は 62MB → 7.4MB になった。使用箇所は
+`hello_world_main.cpp:19` の `#include "fonts/shippori_16.h"` と、
+`textDisplayDemo()` 内の `shippori` 参照3箇所のみ。
+
+**`append/font/` へ移動した未使用6本**（VLWヘッダを実測してデコードした結果）:
+
+| ファイル | シンボル | 生成元 | VLW実測 |
+|---|---|---|---|
+| `shippori.h` | `shippori` ⚠ | `shippori_18.vlw` | fontSize=18 / 4203グリフ |
+| `mplus2_16.h` | `mplus2` ⚠ | `Mplus2-Light-16.vlw` | **fontSize=32**（ファイル名と不一致） / 4414グリフ |
+| `mplus2_18.h` | `mplus2` ⚠ | `mplus2_18.vlw` | fontSize=18 / 3909グリフ |
+| `mplus2_32.h` | `mplus2` ⚠ | `Mplus2-Light-32.vlw` | **fontSize=38**（ファイル名と不一致） / 4414グリフ |
+| `genshin.h` | `genshin` | `genshin.vlw` | fontSize=18 / 4430グリフ |
+| `myfont.h` | `myfont` | `myfont.vlw` | **VLWとして解釈不能**（下記） |
+
+`append/font/` 配下には VLW 生成用の Python スクリプト群
+（`font_glyph_extractor.py`, `ttf2vlw.py`, `f2d.py`, `bin2header.py` 等）、
+生成元TTF/OTF（`ShipporiMincho-Regular.ttf`, `Mplus2-Light.ttf`, `ipaexg.ttf`,
+`ipaexm.ttf`, `SourceHanSansJP-Light.otf`, `x12y12pxMaruMinya.ttf`,
+`x12y16pxMaruMonica.ttf`）、グリフリスト、および生成済み `.vlw` / `.h` が置かれている
+（ビルド対象外の作業用ディレクトリ）。
 
 > **Todo（フォントリソース）**
-> - 未使用フォントヘッダが6本ある。Cの配列として `.rodata` に載るのは
->   `#include` されたものだけなのでFlashは消費しないが、どれが正解かわからない状態。
->   使用中の1本を残し、他は `append/font/` へ移すのが望ましい。
-> - `append/font/` に `maruminya_mini.h` と `marumiya_mini.h`（綴りの異なる同種ファイル）が併存している。
+> - ~~未使用フォントヘッダが6本ある~~ → **対応済み（2026-07-30）**:
+>   6本（計約55MB）を `git mv` で `append/font/` へ移動。gitはすべてリネームとして
+>   記録したため履歴は保持されている。`main/fonts/` は 62MB → 7.4MB。
+> - ~~`maruminya_mini.h` と `marumiya_mini.h`（綴りの異なる同種ファイル）が併存~~
+>   → **調査の結果、当初の記述は誤りだったため訂正**。両者は重複ではなく
+>   **別サイズかつ Adafruit GFX 形式**（`GFXfont` / `GFXglyph` / `PROGMEM`）であり、
+>   VLW ではない:
+>   - `maruminya_mini.h` → `x12y12pxMaruMinya**5pt**8b`
+>   - `marumiya_mini.h` → `x12y12pxMaruMinya**10pt**8b`
+>   GFX 形式は `main/` のどこでも使われておらず（`VLWFontParser` は解釈できない）、
+>   両ファイルは未追跡のWIPとして `append/font/` に残置した。
+>   ただしファイル名の綴りが `maruminya` / `marumiya` で不統一（TTF名 `x12y12pxMaruMinya`
+>   に照らすと後者が誤り）で、かつ名前にサイズが入っていないため、
+>   どちらが何ptか判別できない。命名の統一を推奨。
+>
+> **移動によって副次的に解消した問題（当初は未検出）**
+> - **シンボル名の衝突**: `shippori.h` と `shippori_16.h` が**どちらも
+>   `const uint8_t shippori[]`** を定義し、`mplus2_16.h` / `mplus2_18.h` /
+>   `mplus2_32.h` は**3本すべてが `const uint8_t mplus2[]`** を定義していた。
+>   ファイル名にはサイズが入るがシンボル名には入らないため、
+>   `vlwParser.init(shippori, sizeof(shippori))` というコードを読んでも
+>   どのサイズのフォントを使っているのか判別できなかった。
+>   さらに2本を同時に `#include` すれば重複定義でリンクエラーになる。
+>   未使用6本を移動した結果、`main/fonts/` に残るのは1本のみとなり衝突は消滅した。
+>   （`append/font/mplus2.h` も `mplus2` を定義しているが、ビルド対象外）
+>
+> **未対応（要判断）**
+> - `mplus2_16.h` / `mplus2_32.h` は VLWヘッダの `fontSize` フィールドが
+>   それぞれ 32 / 38 で、ファイル名および生成元 `.vlw` 名（16 / 32）と一致しない。
+>   他の4本は一致しているため、この2本のみ生成時の指定と実データがずれている疑いがある。
+>   再利用する際は実測値を確認すること。
+> - `myfont.h` は先頭が `00 5f 0b 41 40 00 00 00 ...` で、VLW v11 として解釈すると
+>   glyphCount=6228801 / version=0x40000000 となり破綻する。
+>   glyphCount が `VLWFontParser::parseHeader()` の上限 65536 を超えるため、
+>   仮に使用しても `init()` は必ず false を返す。
+>   また 8バイト間隔で `00 00 00 20` / `00 00 00 21` / `00 00 00 22`（U+0020〜）が
+>   並んでおり、28バイト単位の標準VLWグリフヘッダとは構造が異なる。
+>   別形式か破損データと考えられるため、削除するか正体を確認すべき。
 
 ---
 
@@ -197,15 +428,28 @@ graph TD
 | ループ | `setup()` 1回 → `for(;;) { loop(); vTaskDelay(1); }` |
 
 > **Todo**
-> - `runMainLoop()` 末尾の `vTaskDelete(g_handle)` は `for(;;)` の後ろにあり**到達不能コード**。
-> - `vTaskDelay(1)` は `CONFIG_FREERTOS_HZ=100` のため実質 **10ms** 周期。
->   `loop()` 内で `esp_timer_get_time()` による5秒間隔ポーリングをしているので実害は小さいが、
->   タッチの取りこぼし（後述のダブルポーリング問題）を悪化させる要因になる。
-> - スタック 8192B のタスク内で `std::function` / `std::unordered_map` / `std::string` を
->   多用するモジュール（`TypoWrite`）を呼んでいる。`textDisplayDemo()` はスタック上に
->   `TypoWrite` を構築するため、スタック消費のワーストケースが読みにくい。
+> - ~~`runMainLoop()` 末尾の `vTaskDelete(g_handle)` は `for(;;)` の後ろにあり**到達不能コード**~~
+>   → **対応済み（2026-07-30）**: 当該行を削除し、ループが常駐であることをコメントで明示。
+>   バイナリサイズ不変（0x1c6ae0）。
+> - ~~`esp_task_wdt.h` / `freertos/idf_additions.h` を include しているが未使用~~
+>   → **一部対応済み（2026-07-30）／一部は初版の記述が誤り**:
+>   - `esp_task_wdt.h` は実際に未使用だったため削除した。
+>   - `freertos/idf_additions.h` は**未使用ではなく必須**だった。
+>     `xTaskCreatePinnedToCore()` の宣言はこのヘッダにしかなく、
+>     IDF v5.4.3 の `freertos/task.h` は `idf_additions.h` を include していない
+>     （確認済み）。そのため削除するとビルドが壊れる。
+>     誤って外されないよう、include 行に理由をコメントとして付記した。
+> - **未対応（挙動変更を伴うため保留）**: `vTaskDelay(1)` は `CONFIG_FREERTOS_HZ=100` のため
+>   実質 **10ms** 周期。`loop()` 内で `esp_timer_get_time()` による5秒間隔ポーリングを
+>   しているので実害は小さいが、タッチの取りこぼし（後述のダブルポーリング問題）を
+>   悪化させる要因になる。
+> - **未対応（計測が必要）**: スタック 8192B のタスク内で `std::function` /
+>   `std::unordered_map` / `std::string` を多用するモジュール（`TypoWrite`）を呼んでいる。
+>   `textDisplayDemo()` はスタック上に `TypoWrite` を構築するため、
+>   スタック消費のワーストケースが読みにくい。
 >   `uxTaskGetStackHighWaterMark()` での実測を推奨。
-> - `esp_task_wdt.h` / `freertos/idf_additions.h` を include しているが未使用。
+>   なお `CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y` なので、
+>   必要ならタスクスタックをPSRAMに置く選択肢もある（§2.1.1参照）。
 
 ### 4.3 `setup()`
 
@@ -430,15 +674,17 @@ M5GFX の画像デコーダへ直接渡せる。
 成功時はカード名・容量・セクタサイズをログ出力。既に初期化済みなら即 `true`。
 
 > **Todo**
-> - **失敗時に SPI バスを解放していない**: `esp_vfs_fat_sdspi_mount()` が失敗しても
->   `spi_bus_free(SPI2_HOST)` を呼ばないため、リトライすると
->   `spi_bus_initialize()` が `ESP_ERR_INVALID_STATE` を返して永久に失敗する。
->   カード未挿入時の挿抜リトライが不可能。
-> - `max_transfer_sz = 4000` がマジックナンバー。`allocation_unit_size = 16*1024` と
->   整合しておらず、根拠がコメントされていない。
-> - `_config` に設定を保存する処理が、成功/失敗を判定する前に行われる。
+> - ~~**失敗時に SPI バスを解放していない**~~ → **対応済み（2026-07-30）**:
+>   マウント失敗時に `_card = nullptr` としたうえで `spi_bus_free(SPI2_HOST)` を呼び、
+>   初期化前の状態へ戻すようにした。解放結果も `ESP_LOGW` で記録する。
+>   これによりカード未挿入で失敗した後の挿抜リトライが可能になる
+>   （従来は2回目以降の `spi_bus_initialize()` が `ESP_ERR_INVALID_STATE` で
+>   永久に失敗していた）。バイナリ +96バイト。
+> - **未対応**: `max_transfer_sz = 4000` がマジックナンバー。
+>   `allocation_unit_size = 16*1024` と整合しておらず、根拠がコメントされていない。
+> - **未対応**: `_config` に設定を保存する処理が、成功/失敗を判定する前に行われる。
 >   失敗しても壊れた設定が残る。
-> - `SDSPI_HOST_DEFAULT()` のクロック設定を変更していないため、
+> - **未対応**: `SDSPI_HOST_DEFAULT()` のクロック設定を変更していないため、
 >   カード相性で失敗した場合に低速リトライする手段がない。
 
 ### 5.4 `open(path)` / `close()` / `read()` / `skip()` / `seek()` / `tell()`
@@ -455,9 +701,11 @@ M5GFX の画像デコーダへ直接渡せる。
 >   2GB超のオフセットで破綻する（実用上は問題になりにくい）。
 > - `open()` は失敗時に `_file` が nullptr のままだが、`close()` を先に呼ぶため
 >   直前に開いていたファイルが失われる。失敗時に元の状態へ戻す保証がない。
-> - パス正規化ロジック（`strncmp` でプレフィックス判定 → `snprintf` で連結）が
->   `open` / `exists` / `mkdir` / `remove` / `size` / `listDir` の **6箇所に重複**している。
->   `bool buildFullPath(const char* path, char* out, size_t outSize)` として共通化すべき。
+> - ~~パス正規化ロジックが6箇所に重複~~ → **対応済み（2026-07-30）**:
+>   private メソッド
+>   `bool buildFullPath(const char* path, char* out, size_t outSize) const`
+>   を新設し、`open` / `exists` / `mkdir` / `remove` / `size` / `listDir` の
+>   6箇所すべてを置き換えた。切り詰めを検出したら `ESP_LOGE` を出して false を返す。
 
 ### 5.5 `exists()` / `mkdir()` / `remove()` / `size()`
 
@@ -465,14 +713,16 @@ M5GFX の画像デコーダへ直接渡せる。
 「`stat`/`mkdir`/`remove` 実行」→「ログ出力」の同一パターン。
 
 > **Todo**
-> - 前述のパス構築重複に加え、`else` 側で `strncpy(full_path, path, sizeof(full_path))` を
->   使っているが、`strncpy` は切り詰め時に NUL 終端を保証しない。
->   256文字以上のパスでバッファオーバーランを起こす（`snprintf` に統一すべき）。
-> - `size()` の戻り値が `uint32_t` で、`st.st_size`（`off_t`）を切り詰めている。
+> - ~~`strncpy` が切り詰め時に NUL 終端を保証しない~~ → **対応済み（2026-07-30）**:
+>   `buildFullPath()` への統一により `SDcard.cpp` から `strncpy` を全廃した
+>   （`grep` で残存0件を確認）。`snprintf` は常にNUL終端し、
+>   戻り値がバッファサイズ以上なら切り詰めと判定して失敗を返すため、
+>   256文字超のパスでバッファ外を読む経路が閉じた。
+> - **未対応**: `size()` の戻り値が `uint32_t` で、`st.st_size`（`off_t`）を切り詰めている。
 >   4GB超のファイルで誤った値を返す。
-> - `exists()` は毎回 `ESP_LOGI` で結果を出力する。ファイル探索ループから呼ばれると
->   ログが溢れる。`ESP_LOGD` が適切。
-> - `mkdir()` は中間ディレクトリを作らない（`mkdir -p` 相当がない）。
+> - **未対応**: `exists()` は毎回 `ESP_LOGI` で結果を出力する。
+>   ファイル探索ループから呼ばれるとログが溢れる。`ESP_LOGD` が適切。
+> - **未対応**: `mkdir()` は中間ディレクトリを作らない（`mkdir -p` 相当がない）。
 
 ### 5.6 `listDir(path)` / `freeDirInfo(dirInfo)`
 
@@ -480,20 +730,31 @@ M5GFX の画像デコーダへ直接渡せる。
 `readdir` + `stat` でメタ情報取得。`freeDirInfo()` で `files` と本体を `free`。
 
 > **Todo**
-> - **ディレクトリを2回走査している**: 件数カウント目的で全体を読み、閉じてから開き直している。
->   FATFS + SPI では走査コストが高い。`realloc` による動的拡張、または
->   固定上限（例: 64件）の1パス走査に変更すべき。
-> - **2回の走査間の不整合**: 1回目と2回目でエントリ数が変わっても
->   `dirInfo->count` は1回目の値のまま。減っていた場合、末尾要素は**未初期化メモリ**として
->   呼び出し側に渡る（`index < file_count` のループを抜けても `count` を補正していない）。
-> - 2回目の `opendir()` の戻り値を**チェックしていない**。失敗すると `readdir(nullptr)` になる。
-> - `strncpy(dirInfo->path, path, sizeof(...))` と
->   `strncpy(files[i].name, entry->d_name, sizeof(...))` はいずれも NUL 終端非保証。
-> - `.` / `..` を除外しないため、呼び出し側が毎回フィルタする必要がある。
-> - `malloc`/`free` を直接使っており、`DirInfo` の解放を呼び出し側の規律に依存している。
->   `std::vector<FileInfo>` を返すか、RAIIラッパにすれば `freeDirInfo()` は不要になる。
-> - `ESP_LOGI(..., "%d files found", dirInfo->count)` の `count` は `size_t` なので
->   書式指定子は `%zu` が正しい。
+> - ~~**2回の走査間の不整合で未初期化メモリを返す**~~ → **対応済み（2026-07-30）**:
+>   `dirInfo->count` を最初 0 に置き、読み取りループ終了後に
+>   **実際に読めた件数 `index`** で確定するようにした。
+>   1パス目と2パス目で件数が食い違った場合は `ESP_LOGW` で警告する。
+>   これで末尾要素が未初期化のまま呼び出し側に渡る経路が閉じた。
+> - ~~2回目の `opendir()` の戻り値を**チェックしていない**~~ → **対応済み（2026-07-30）**:
+>   戻り値を検査し、失敗時は `ESP_LOGE` を出して `nullptr` を返すようにした
+>   （従来は `readdir(nullptr)` を呼ぶ可能性があった）。
+> - ~~`strncpy` による NUL 終端非保証（`dirInfo->path` と `files[i].name`）~~
+>   → **対応済み（2026-07-30）**: 双方 `snprintf` に置換。
+> - **新規対応**: 空ディレクトリで `malloc(0)` を呼ばないよう、
+>   `file_count == 0` のときは `files = nullptr` とした
+>   （`freeDirInfo()` は `files` の null を既に許容している）。
+> - **未対応**: **ディレクトリを2回走査している**。件数カウント目的で全体を読み、
+>   閉じてから開き直している。FATFS + SPI では走査コストが高い。
+>   `realloc` による動的拡張、または固定上限（例: 64件）の1パス走査に変更すべき。
+>   なお上記の `count = index` 修正により、2回走査でも安全性は確保されている
+>   （過剰に確保される可能性が残るだけ）。
+> - **未対応**: `.` / `..` を除外しないため、呼び出し側が毎回フィルタする必要がある。
+>   除外すると表示内容が変わるため、方針決定が必要（今回は挙動を変えないよう保留）。
+> - **未対応**: `malloc`/`free` を直接使っており、`DirInfo` の解放を呼び出し側の規律に
+>   依存している。`std::vector<FileInfo>` を返すか、RAIIラッパにすれば
+>   `freeDirInfo()` は不要になる。
+> - ~~`ESP_LOGI(..., "%d files found", ...)` の書式指定子~~ → **対応済み（2026-07-30）**:
+>   `unsigned` へ明示キャストして `%u` で出力するようにした。
 
 ### 5.7 `initMSC()` / `enableUSBMSC()` / `disableUSBMSC()` / `isUSBMSCConnected()`
 
@@ -502,22 +763,39 @@ M5GFX の画像デコーダへ直接渡せる。
 無効化時は `tinyusb_msc_storage_mount()` → `tud_disconnect()`。
 
 > **Todo**
-> - **TinyUSB の二重初期化**: `tinyusb_driver_install()` は内部で TinyUSB タスクを起動し
->   `tud_init()` 相当を済ませている。その後に明示的に `tud_init(TUD_OPT_RHPORT)` を
->   呼んでいるのは重複で、実装によっては未定義動作になる。
-> - **無効化が対称でない**: `disableUSBMSC()` は `tud_disconnect()` するだけで
->   `tinyusb_driver_uninstall()` を呼ばない。そのため再度 `enableUSBMSC()` すると
->   `tinyusb_driver_install()` が `ESP_ERR_INVALID_STATE` で失敗し、
->   **有効化→無効化→有効化のトグルが2回目で壊れる**。
->   `initMSC()` の実行済みフラグを持つか、uninstall を対で呼ぶ必要がある。
-> - **MSCコールバック5関数が完全な死蔵コード**: `onMscRead()` / `onMscWrite()` /
->   `onMscIsReady()` / `onMscGetBlockCount()` / `onMscGetBlockSize()` は
->   プロトタイプ宣言と実装があるだけで、どこにも登録・参照されていない
->   （`tinyusb_msc_storage_init_sdmmc()` が内部処理するため不要になった残骸）。
->   約60行が無駄で、`-Wunused-function` の警告源。削除すべき。
-> - `onMscGetBlockCount()` が `card->csd.capacity` を返しているが、これはセクタ数であり
->   実装意図としては正しい一方、`onMscRead/Write` の `offset` 引数は無視されている。
->   将来コールバックを有効化する場合は不正なデータ転送になる。
+> - ~~**TinyUSB の二重初期化**~~ → **対応済み（2026-07-30）**:
+>   `enableUSBMSC()` の `tud_init(TUD_OPT_RHPORT)` を削除した。
+>   `managed_components/espressif__esp_tinyusb/tinyusb.c` を読んで確認したところ、
+>   `tinyusb_driver_install()` は内部で `tusb_init()` と `tusb_run_task()` を呼ぶ。
+>   本プロジェクトの `sdkconfig` は
+>   `CONFIG_TINYUSB_INIT_IN_DEFAULT_TASK` / `CONFIG_TINYUSB_NO_DEFAULT_TASK`
+>   がいずれも未設定なので両方が実際に実行され、`tud_init()` は明確に二重初期化だった。
+> - ~~**無効化が対称でない**~~ → **対応済み（2026-07-30）**:
+>   `disableUSBMSC()` を「再マウント → `tinyusb_msc_storage_deinit()` →
+>   `tinyusb_driver_uninstall()`」というセットアップの逆順に変更した。
+>   `enableUSBMSC()` の失敗パスにも同じ巻き戻しを追加した。
+>   これで有効化→無効化→有効化のトグルが2周目以降も成立するはず。
+>   順序の根拠: `tinyusb_msc_storage_deinit()` は実装を確認した結果
+>   `s_storage_handle` を `free` するだけで **FATFS をアンマウントしない**ため、
+>   先に `tinyusb_msc_storage_mount()` を済ませておけば
+>   以降もアプリから `/sdcard` を読める。
+>   使用API（`tinyusb_driver_uninstall` / `tinyusb_msc_storage_deinit`）は
+>   esp_tinyusb 1.7.2 のヘッダに存在することを確認済み。
+>   バイナリ +1088バイト（`tusb_teardown` / `usb_del_phy` / `tusb_stop_task` が
+>   新たにリンクされたため）。
+>
+>   > ⚠ **未検証**: 本修正はコンパイル成功までしか確認できていない。
+>   > USB MSC の実挙動（PCからの認識、トグルの2周目、マウント状態の維持）は
+>   > 実機（M5Paper S3 + USBホスト + SDカード）でのテストが必要。
+> - ~~**MSCコールバック5関数が完全な死蔵コード**~~ → **対応済み（2026-07-30）**:
+>   `onMscRead()` / `onMscWrite()` / `onMscIsReady()` / `onMscGetBlockCount()` /
+>   `onMscGetBlockSize()` のプロトタイプ5行と実装約57行を削除し、経緯をコメントで残した。
+>   削除前に全ツリーを grep して参照0件を再確認済み
+>   （`onMscMountChanged` は `tinyusb_msc_sdmmc_config_t.callback_mount_changed` に
+>   登録されているため保持）。
+>   **`SDcard.cpp` の警告は5件 → 0件**になった。
+>   なおバイナリは縮まなかった（未参照の static 関数はリンカが既に破棄していたため）。
+> - ~~`onMscGetBlockCount()` の `offset` 引数無視~~ → 上記削除により消滅。
 > - `disableUSBMSC()` は `tinyusb_msc_storage_mount()` の失敗を「続行する」とコメントして
 >   無視するが、その結果 `_usbMscEnabled = false` になり、アプリは
 >   マウントされていないSDへアクセスしようとする。
@@ -559,12 +837,18 @@ M5GFX の画像デコーダへ直接渡せる。
 5. 戻り値 = `_lastEvent != None`
 
 > **Todo**
-> - **Release と Swipe が排他になっている**: スワイプ成立時に `_lastEvent` を
->   `Swipe` へ上書きするため、`isReleaseEvent()` が false になる。
->   結果として `ButtonManager::update()` のリリース処理が走らず、
->   **ボタンを押したまま少し指が動くと `onReleased` コールバックが発火しない**
->   （ボタンが押下状態の描画で固まる）。イベントはビットフラグにするか、
->   Release と Swipe を別々に通知すべき。
+> - ~~**Release と Swipe が排他になっている**~~ → **対応済み（2026-07-30）**:
+>   スワイプの有無を `_lastEvent` ではなく `_lastSwipe` で表現するように変更した。
+>   - `TouchEvent` から `Swipe` を削除し、`_lastEvent` は `Touch` / `Release` のみを取る
+>     （スワイプ成立時も `Release`）。
+>   - `isSwipeEvent()` は `_lastSwipe != SwipeDirection::None` を返すようにした。
+>     よって `isReleaseEvent()` と `isSwipeEvent()` は同時に true になりうる。
+>   - **併せて発見した別の不具合も修正**: `_lastSwipe` はリリース時にしか
+>     代入されておらず、一度スワイプすると次のリリースまで
+>     `getLastSwipe()` / `isSwipeUp()` 等が古い方向を返し続けていた。
+>     `update()` 冒頭で `_lastEvent` と同様にクリアするようにした。
+>   - 消費側（`ButtonManager::update()`）も同時に修正が必要だった（§7.6 参照）。
+>   これによりボタンが押下表示のまま固まる症状が解消されるはず（実機未検証）。
 > - **破壊的メソッドである点が呼び出し側に伝わっていない**: 1ループで2回呼ぶと
 >   2回目は必ず `None` を返し、`_wasTouched` も潰れる（4.11 のダブルポーリング問題）。
 >   `poll()` と `getEvent()` に分離するのが望ましい。
@@ -583,14 +867,23 @@ dx, dy の絶対値がともに `_minSwipeDistance`（既定30、main で50に�
 それ以外は絶対値の大きい軸の符号で4方向に判定。
 
 > **Todo**
-> - 判定条件が `absDx < min && absDy < min` の AND なので、
->   「dx=45, dy=5」でも（min=50 のとき）`None` になるが、
->   「dx=45, dy=55」だと `absDy >= min` で条件を抜け、`absDx > absDy` が false のため
->   `Down` と判定される。斜め入力の扱いが直感に反する。
->   採用する軸の距離のみを閾値と比較すべき。
-> - 斜め45度付近で `absDx > absDy` の1票差で方向が決まるため、判定が不安定。
->   アスペクト比（例: 主軸が副軸の1.5倍以上）による判定を推奨。
-> - `abs()` は `<cstdlib>` を明示 include せず、M5GFX 経由の推移的 include に依存している。
+> - ~~判定条件の AND が原因で斜め入力の扱いが直感に反する~~
+>   → **【訂正】本書初版の指摘は誤りだったため取り下げる**。
+>   `if (absDx < min && absDy < min) return None;` を通過する条件は
+>   `absDx >= min || absDy >= min`。その後に採用されるのは
+>   `max(absDx, absDy)` の軸であり、`max` は両者以上なので
+>   **採用軸の距離は必ず閾値以上**になる。
+>   初版で挙げた例（min=50, dx=45, dy=55 → `Down`）も、
+>   Y方向の移動が55pxで閾値を超えかつY優勢なので `Down` が正しい判定であり、
+>   不具合ではなかった。現行ロジックは
+>   「主軸の移動量が閾値以上か」と等価で妥当。
+> - **未対応（堅牢性の改善余地。不具合ではない）**: 斜め45度付近では
+>   `absDx > absDy` の僅差で方向が決まるため判定が揺れやすい。
+>   アスペクト比（例: 主軸が副軸の1.5倍以上のときのみ確定）による
+>   判定にすると安定するが、操作感が変わるため要判断。
+> - ~~`abs()` が `<cstdlib>` の明示 include に依存していない~~
+>   → **対応済み（2026-07-30）**: `#include <cstdlib>` を追加し、
+>   M5GFX 経由の推移的 include への依存を解消した。
 
 ### 6.5 `calibrate()` / `drawCircleAtTouch()`
 
@@ -641,11 +934,15 @@ dx, dy の絶対値がともに `_minSwipeDistance`（既定30、main で50に�
 `middle_center` でのラベル中央寄せを行う。
 
 > **Todo**
-> - **`drawToCanvas()` と `drawToDisplay()` が完全な重複**（約50行 × 2）。
->   `lgfx::LGFX_Sprite` と `M5GFX` はともに `lgfx::LovyanGFX` を基底に持つため、
->   `void drawTo(lgfx::LovyanGFX* target, ...)` の1本に統合できる。
->   `TypoWrite` では実際に `static_cast<lgfx::LovyanGFX*>` で統一しており、
->   モジュール間で方針が一致していない。
+> - ~~**`drawToCanvas()` と `drawToDisplay()` が完全な重複**（約50行 × 2）~~
+>   → **対応済み（2026-07-30）**: `void drawTo(lgfx::LovyanGFX* target, ...)` の
+>   1本に統合した。`LGFX_Sprite : public LovyanGFX` と
+>   `M5GFX : public lgfx::LGFX_Device`（`LovyanGFX` 派生）を確認し、
+>   使用する9メソッド（`fillRoundRect` / `drawRoundRect` / `fillRect` / `drawRect` /
+>   `setFont` / `setTextColor` / `setTextSize` / `setTextDatum` / `drawString`）が
+>   すべて `LGFXBase` にあることも確認済み。
+>   `draw()` 側は描画先を基底ポインタに束ねてから1回呼ぶ形にした。
+>   **`Button.cpp` は 551行 → 510行、バイナリは −448バイト**。
 > - 枠線を `borderWidth` 回のループで1pxずつ描いている。
 >   `drawRect` を N 回呼ぶより、外形塗り→内側塗りの2回で済む。
 >   角丸の場合、内側の `cornerRadius` を一定にしているため
@@ -684,11 +981,13 @@ dx, dy の絶対値がともに `_minSwipeDistance`（既定30、main で50に�
 >   `isVisible()` を別途チェックしており、判定が二重になっている。
 > - `handleSwipe()` の `switch` 4分岐は、コールバックを配列
 >   （`SwipeCallback _onSwipe[4]`）にすればインデックス参照1行で済む。
-> - `getOnPressed()` / `getOnReleased()` が `std::function` を**値で返す**。
->   `ButtonManager::update()` は
->   `_buttons[i]->getOnPressed()(_buttons[i])` と呼ぶため、
->   毎イベントで `std::function` のコピー（ヒープ確保を伴う可能性あり）が発生する。
->   `const&` を返すか、`invokePressed()` のようなメソッドにすべき。
+> - ~~`getOnPressed()` / `getOnReleased()` が `std::function` を**値で返す**~~
+>   → **対応済み（2026-07-30）**: `const TouchCallback&` を返すよう変更した。
+>   `ButtonManager::update()` の
+>   `if (getOnPressed()) getOnPressed()(btn);` というパターンで
+>   毎イベント2回発生していた `std::function` のコピーが消えた。
+>   `getOnSwipeUp/Down/Left/Right()` も同様に `const SwipeCallback&` へ統一
+>   （こちらは現状呼び出し元なし）。
 > - `setState()` が状態を変えても再描画しないため、呼び出し側が `draw()` を
 >   忘れると表示と実体がずれる。
 
@@ -768,9 +1067,19 @@ version が11以外は警告のみ、fontSize が0なら16で代替。
 >   境界チェックで `return false` する際 `_glyphTable` を `free` しない。
 >   呼び出し元 `init()` が `cleanup()` を呼ぶので実害はないが、
 >   このメソッド単体では leak する構造。
-> - `GlyphInfo` は 1グリフ 28バイト。日本語フォントで 3000 グリフなら **84KB** を
->   内部RAMから確保する。PSRAM（`heap_caps_malloc(MALLOC_CAP_SPIRAM)`）を
->   使うべき。しかも `textDisplayDemo()` が呼ばれるたびに再確保される（4.7参照）。
+> - **【訂正】** 本書初版では「グリフテーブルを内部RAMに `malloc` している。
+>   PSRAM を使うべき」と記述したが、これは誤り。
+>   `CONFIG_SPIRAM_USE_MALLOC=y` かつ `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384`
+>   のため（§2.1.1）、16KBを超える確保は既に **PSRAM から行われている**。
+>   `shippori_16` は 4414グリフ ×（アライメント込み32バイト）≈ 138KB で
+>   閾値を大きく上回るため、現行の `malloc()` で自動的にPSRAMに載る。
+>   明示的に `heap_caps_malloc(MALLOC_CAP_SPIRAM)` にすると
+>   PSRAM枯渇時に内部RAMへフォールバックしなくなるため、
+>   現状のままのほうが望ましい。**コード変更不要**。
+> - **未対応（実害あり）**: `textDisplayDemo()` が呼ばれるたびに
+>   `init()` → `cleanup()` → `malloc()` で約138KBを再確保し、
+>   全グリフヘッダを再パースしている（§4.7参照）。
+>   フォントデータは不変なので初期化は1回で十分。
 > - `malloc` + 手動 `free` の管理。`std::unique_ptr` か `std::vector` が適切。
 > - `glyph.unicode` を `uint16_t` へキャストしているため、BMP外（U+10000以降）の
 >   グリフを含むフォントでは値が壊れる。検出も警告もしていない。
@@ -784,14 +1093,24 @@ U+3000（全角スペース）の `setWidth` を代表幅とする（無けれ�
 `fontHeight = ascent + |descent|`。
 
 > **Todo**
-> - U+3000 が U+0020 より先に走査されるか後になるかで結果が変わる。
->   U+0020 側の条件が `representativeWidth == fontSize`（＝まだ未設定）なので、
->   グリフ順が「U+0020 → U+3000」なら正しく上書きされるが、
->   逆順なら U+0020 の分岐は評価されない。**グリフの並び順に依存**しており脆い。
->   走査後に優先順で決定すべき。
-> - `representativeWidth` の初期値が `fontSize`（ポイント値）。
->   ピクセル幅とポイントサイズを同一視しており、単位が混ざっている。
-> - `maxCharWidth` / `maxCharHeight` を計算しているが、`TypoWrite` は
+> - **【重要な実測結果】`shippori_16` には U+3000（全角スペース）も
+>   U+0020（半角スペース）も存在しない**（グリフ範囲は U+0021〜U+FF9F）。
+>   そのため `representativeWidth` は2つの `if` のどちらも成立せず、
+>   **初期値の `_fontMetrics.fontSize`（= 16）がそのまま `fontWidth` になる**。
+>   結果として:
+>   - `fontWidth` = 16（em幅と一致するため結果的に妥当な値になっている）
+>   - `TypoWrite::getMaxCharWidth()` = `getCharMetrics(0x3000).width` → 16（フォールバック）
+>   - `TypoWrite::getLineHeight()` = `getCharMetrics(0x3000).height` → 24（フォールバック）
+>
+>   つまり初版で指摘した「グリフの並び順に依存して脆い」問題は、
+>   **このフォントではそもそも両分岐が実行されない**ため現れない。
+>   ただし代表文字が存在するフォントに差し替えた瞬間に挙動が変わるため、
+>   脆さ自体は残っている（走査後に優先順で決定すべき）。
+> - **未対応**: `representativeWidth` の初期値が `fontSize`（ポイント値）で、
+>   ピクセル幅と単位が混ざっている。上記のとおり
+>   **現在はこの初期値がそのまま使われている**唯一の経路なので、
+>   意図を明示するコメントか、`fontSize` ではない明示的な既定値が必要。
+> - **未対応**: `maxCharWidth` / `maxCharHeight` を計算しているが、`TypoWrite` は
 >   これらを使わず自前で U+3000 のメトリクスを引いている（9.9参照）。
 >   計算した値の利用者がいない。
 
@@ -800,30 +1119,56 @@ U+3000（全角スペース）の `setWidth` を代表幅とする（無けれ�
 グリフテーブルを**線形検索**する。コメントに「大きなフォントではバイナリサーチを検討」とある。
 
 > **Todo**
-> - **最も重大な性能問題**: 線形検索であり、`getCharWidth()` /
->   `getCharHeight()` / `getCharSetWidth()` / `hasChar()` / `getCharMetrics()` が
->   それぞれ独立に `findGlyph()` を呼ぶ。
->   `TypoWrite::getCharMetrics()` は1文字につき3回呼ぶため、
->   グリフ数 N・文字数 M のテキストで **O(3 × N × M)**。
->   3000グリフ × 50文字なら45万回の比較。
->   VLW のグリフは通常 unicode 昇順に並んでいるので二分探索（O(log N)）が可能。
->   あるいは `std::unordered_map<uint16_t, const GlyphInfo*>` を
->   `buildGlyphTable()` で構築すべき。
-> - `TypoWrite` 側のメトリクスキャッシュ（256件）で緩和されているが、
->   キャッシュは `TypoWrite` インスタンスごとに破棄されるため（4.7参照）
->   実効性が低い。
+> - ~~**最も重大な性能問題**: 線形検索~~ → **対応済み（2026-07-30）**:
+>   **二分探索（O(log N)）を実装**した。
+>   - 実データ検証: `shippori_16.h` のグリフ表は
+>     **厳密昇順かつ重複なし**（4414件、U+0021〜U+FF9F）であることを確認。
+>   - ただし昇順はVLW仕様上の保証ではないため、`buildGlyphTable()` の末尾で
+>     昇順かどうかを判定して `_glyphTableSorted` に保持し、
+>     崩れている場合は `ESP_LOGW` を出して**線形検索へフォールバック**する。
+>     どちらを使うかは初期化時のログに出る。
+>   - `low`/`high` が `uint32_t` のため、`high = mid - 1` のアンダーフローを
+>     `mid == 0` で打ち切ってガードしている。
+>   - **網羅検証済み**: 実フォント4414グリフに対し全65536コードで
+>     線形検索と結果が完全一致（不一致0件）。
+>     空・1件・2件・3件・5件の境界ケースも一致。無限ループなし。
+>   - 比較回数は最悪 4414回 → **13回**。
+> - **未対応**: `getCharWidth()` / `getCharHeight()` / `getCharSetWidth()` /
+>   `hasChar()` / `getCharMetrics()` がそれぞれ独立に `findGlyph()` を呼ぶ構造は
+>   そのまま。`TypoWrite::getCharMetrics()` は1文字につき3回呼ぶため、
+>   二分探索でも 3 × 13 = 39回の比較になる。
+>   `getCharMetrics()` 1回で済ませれば 13回に減る（§9.10 参照）。
+> - **未対応**: `TypoWrite` 側のメトリクスキャッシュ（256件）は
+>   `TypoWrite` インスタンスごとに破棄されるため（4.7参照）実効性が低い。
 
 ### 8.7 `getCharMetrics()` / `getCharWidth()` / `getCharHeight()` / `getCharSetWidth()` / `hasChar()`
 
 グリフが見つかればその値、見つからなければフォント全体の既定値を返す。
 
 > **Todo**
-> - **`getCharHeight()` の定義が他と不整合**: `glyph->height + glyph->topExtent` を返す。
->   `height` はビットマップ高、`topExtent` はベースラインからの距離であり、
->   両者の和には幾何的な意味がない（`topExtent` が負なら高さが縮む）。
->   一方 `getCharMetrics()` は `metrics.height = glyph->height` とそのまま返す。
->   **同じ「高さ」を2つの異なる定義で提供している**ため、
->   `TypoWrite` の縦書き行送りがずれる原因になりうる。
+> - ~~**`getCharHeight()` の定義が他と不整合**~~ → **対応済み（2026-07-30）**:
+>   `glyph->height + glyph->topExtent` → **`glyph->height`** に統一し、
+>   `getCharMetrics().height` と同じ定義（ビットマップ高）にした。
+>   グリフ欠落時のフォールバックも `getCharMetrics()` と同じ
+>   `_fontMetrics.fontHeight` に揃えてある。
+>
+>   実測での影響（`shippori_16`, fontSize=16 / ascent=19 / descent=-5 / fontHeight=24）:
+>
+>   | 文字 | h | setW | top | 旧 `h+top` | 新 `h` |
+>   |---|---|---|---|---|---|
+>   | あ U+3042 | 15 | 17 | 13 | 28 | 15 |
+>   | ぁ U+3041 | 13 | 17 | 11 | 24 | 13 |
+>   | ー U+30FC | 7 | 17 | 7 | 14 | 7 |
+>   | 、U+3001 | 4 | 17 | 3 | 7 | 4 |
+>   | 「U+300C | 14 | 17 | 14 | 28 | 14 |
+>
+>   旧実装の `h+top` は **7〜28** とばらつき、行の高さ24を超えるものもあった。
+>   縦書きの送りがこの値だったため字間が文字ごとに激しく変動していた。
+>   **ただし新しい `h` も文字ごとに変動する**（15/13/7/4…）ため、
+>   縦書きの字間ばらつき自体は解消していない。
+>   全角の `setWidth` は全文字 **17 で一定**なので、
+>   縦書きの送りを固定値（`setWidth` か `fontHeight`）にする対応が別途必要
+>   → §9.9 の未対応Todoとして切り出した。
 > - `getCharMetrics()` のフォールバック時のみ `ESP_LOGD` を出す。
 >   欠落文字が多いテキストでログが溢れる。
 > - 5つのアクセサが個別に `findGlyph()` を呼ぶ。`getCharMetrics()` を1回呼んで
@@ -883,16 +1228,29 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 | `_charAdjustments` | 5 | カテゴリ別の微調整値 |
 
 > **Todo**
-> - **`_charAdjustments` の5カテゴリの値が全て同一**
->   （`widthScale=1.1, heightScale=1.1, spacingOffset=0, verticalOffset=0, horizontalOffset=0`）。
->   カテゴリ判定（`getCharCategory()`）、テーブル引き（`getCharAdjustment()`）、
->   `TypoWriteConstants` の5つの名前空間という仕組み全体が、
->   結果として **「全文字を1.1倍する」以外の効果を持たない**。
->   意味のある値を入れるか、仕組みを撤去して単一のスケール値にすべき。
-> - **副作用として全文字が低速パスを通る**: `widthScale = 1.1 != 1.0` のため、
->   `drawEnhancedCharacter()` の「スケール不要なら直接描画」判定が常に false になり、
->   **1文字ごとにスプライト生成 → 塗りつぶし → 文字描画 → pushSprite** の
->   重い経路を通る（9.6参照）。`1.0` にすれば最速パスに乗る。
+> - ~~**`_charAdjustments` の5カテゴリの値が全て同一（1.1）**~~
+>   → **対応済み（2026-07-30）**: 5カテゴリすべての
+>   `WIDTH_SCALE` / `HEIGHT_SCALE` を **1.1 → 1.0**（＝調整なし）に変更した。
+>   名前空間の構造は「個別に調整したくなったときの拡張点」として残し、
+>   経緯を `TypoWriteConstants` 冒頭のコメントに記録した。
+> - ~~**副作用として全文字が低速パスを通る**~~ → **上記変更で解消（2026-07-30）**。
+>   倍率が 1.0 になったため `drawEnhancedCharacter()` /
+>   `drawEnhancedCharacterWithRotation()` の「スケール不要なら直接描画」判定が
+>   成立するようになった。変更後の経路:
+>
+>   | 文字種 | 倍率 | 経路 |
+>   |---|---|---|
+>   | 横書き 通常 | 1.0 | **直接描画（最速）** |
+>   | 縦書き 通常・非回転 | 1.0 | **直接描画（最速）** |
+>   | 縦書き 小文字 | 0.75 | スプライト（正しく縮小される） |
+>   | 縦書き 回転文字 | 1.0 | スプライト（従来の1.1倍膨張が解消） |
+>
+>   縦書き日本語の大半が最速パスに乗るようになった。
+>
+>   **見た目に出る変化**: 変更前は横書きが 1.0倍、縦書きが 1.1倍
+>   （小文字 0.825倍）という不一致があった。変更後は両方 1.0倍
+>   （小文字 0.75倍）に揃うため、**縦書きは従来より約9%小さくなる**。
+>   元の大きさに戻したい場合は `setFontSize()` で調整する。
 > - テーブルは3つとも定数データだが、`unordered_map` としてコンストラクタで
 >   毎回ヒープ上に構築される。53エントリ分のノード確保が
 >   インスタンス生成ごとに発生する。`static const` なテーブル
@@ -912,13 +1270,28 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 デストラクタで `deleteSprite()` + `delete`。
 
 > **Todo**
-> - **`_transparentBg` を設定するAPIが存在しない**: メンバは `false` で初期化され、
->   以後どこからも変更されない。`setBackgroundColor(TFT_TRANSPARENT)` は
->   `_bgColor` に `TFT_TRANSPARENT` の数値を代入するだけで
->   `_transparentBg` は false のまま。結果:
->   - `drawText()` が `fillRect(..., TFT_TRANSPARENT)` で領域を塗る
->   - 各文字の背景も `TFT_TRANSPARENT` 相当の色で塗られる
->   透過描画は事実上未実装。`setTransparentBackground(bool)` が必要。
+> - ~~**`_transparentBg` を設定するAPIが存在しない**~~ → **対応済み（2026-07-30）**:
+>   `TFT_TRANSPARENT` は M5GFX 内で `static constexpr int TFT_TRANSPARENT = 0x0120`
+>   と定義された**実在の色値**であり、透明を表すフラグではないことを確認した。
+>   そのため従来は 0x0120 という色で領域と文字背景が塗られていた。
+>   - `setBackgroundColor()` が `TFT_TRANSPARENT` を受けたとき
+>     `_transparentBg = true` を自動的に立てるようにした
+>     （`main` 側の既存呼び出し `setBackgroundColor(TFT_TRANSPARENT)` が
+>     そのまま意図どおり動くようにするため。`main` は変更していない）。
+>   - 明示用に `setTransparentBackground(bool)` と
+>     `isTransparentBackground()` を追加した。
+>   - `drawDirectCharacter()` が透明モードで1引数版 `setTextColor(_color)` を
+>     使うようにした。LovyanGFX は前景色と背景色が同一のとき背景を塗らない
+>     （`LGFXBase.hpp` の実装で確認）。
+>   - スプライト経路（`drawScaledCharacter` /
+>     `drawScaledCharacterWithRotation`）は、`fillSprite` の色と
+>     `pushSprite` / `pushRotateZoom` の透過キーを同一のローカル変数
+>     `fillColor` から取るようにして整合させた
+>     （従来は前者が `TFT_TRANSPARENT`、後者が `_bgColor` と別経路だった）。
+>
+>   **見た目に出る変化**: `drawText()` の
+>   `if (!_transparentBg) fillRect(...)` が実際にスキップされるようになったため、
+>   描画領域が 0x0120 で塗りつぶされなくなる。これは呼び出し側の意図どおりの挙動。
 > - `_charSprite` は `new` するが `createSprite()` は呼ばない（サイズ0のまま）。
 >   最初の描画時に遅延生成される設計だが、生成失敗時の扱いがない。
 > - コンストラクタで `_display` の null チェックをしていない。
@@ -950,15 +1323,16 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 - `drawScaledCharacter()`: `_charSprite` に1文字描いて `pushSprite()`。
 
 > **Todo**
-> - **`drawScaledCharacter()` は名前に反してスケーリングしていない**:
->   スプライトサイズを `metrics.width * widthScale + 4` で確保し、
->   `setTextSize(_fontSize)`（スケール未適用）で文字を描き、
->   最後に `pushSprite(target, x, y, _bgColor)` で**等倍転送**している。
->   `widthScale` / `heightScale` はスプライトの確保サイズにしか影響せず、
->   見た目は `drawDirectCharacter()` と同じ。
->   拡大するなら `pushRotateZoom()` か `setTextSize(_fontSize * scale)` が必要。
->   → 現状「全文字 1.1倍」の設定は、**余計なスプライト経由のコストだけを払って
->   見た目は変わらない**という最悪の組み合わせになっている。
+> - ~~**`drawScaledCharacter()` は名前に反してスケーリングしていない**~~
+>   → **対応済み（2026-07-30）**: 最後の転送が `pushSprite()` による等倍転送
+>   だったため `widthScale` / `heightScale` がスプライトの確保サイズにしか
+>   効いていなかった。拡大縮小は `pushRotateZoom()` を使う
+>   `drawScaledCharacterWithRotation()` 側で正しく行われているので、
+>   **回転角0度として同メソッドへ委譲**する形に一本化した。
+>   これで名前と挙動が一致し、約55行の重複も解消した（バイナリ −480バイト）。
+>   なお倍率を1.0に統一した（§9.3）結果、既定の描画では
+>   このメソッド自体が呼ばれなくなっている（カテゴリ別に1.0以外を
+>   設定したときのみ通る潜在経路）。
 > - **スプライトの再生成コストが高い**: 現在のスプライトより大きい文字が来ると
 >   `deleteSprite()` → `createSprite()` を実行する。異なる文字幅が混在する
 >   日本語テキストでは、1文字ごとに数回のヒープ確保/解放が起こりうる。
@@ -982,15 +1356,19 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 `pushRotateZoom(target, cx, cy, rotation, avgScale, avgScale, transp)`。
 
 > **Todo**
-> - **二重スケーリング**: スプライト内には `setTextSize(_fontSize)` で
->   すでに `_fontSize` 倍の文字が描かれている。それを `pushRotateZoom()` で
->   さらに `avgScale` 倍するため、合計 `_fontSize × avgScale` 倍になる。
->   一方 `drawScaledCharacter()`（回転なし版）は等倍転送。
->   **回転する文字と回転しない文字でサイズが揃わない**。
->   これが「微調整がうまくいかない」（コミットメッセージ `aaee1c6`）の
->   原因である可能性が高い。
-> - `avgScale = (widthScale + heightScale) / 2` として縦横のスケールを平均化。
->   `pushRotateZoom()` は X/Y 個別のズーム率を取れるので、平均化は不要な情報損失。
+> - ~~**回転する文字と回転しない文字でサイズが揃わない**~~
+>   → **対応済み（2026-07-30）**: 原因は「二重スケーリング」ではなく、
+>   `drawScaledCharacter()`（回転なし版）が**スケールを適用していなかった**
+>   ことだった（§9.6）。回転あり版は `pushRotateZoom()` で正しく
+>   `_fontSize × スケール` 倍にしていたため、
+>   結果として回転文字 1.1倍 / 非回転文字 1.0倍という不一致が出ていた。
+>   回転なし版を委譲に一本化し、かつ倍率を1.0に統一したことで両者が揃った。
+>   コミットメッセージ `aaee1c6`（微調整うまくいかない）の一因と推定される。
+> - ~~`avgScale = (widthScale + heightScale) / 2` による平均化~~
+>   → **対応済み（2026-07-30）**: `pushRotateZoom()` に
+>   `widthScale` / `heightScale` を個別に渡すようにした。
+>   現在の呼び出し元は常に縦横同値なので見た目は変わらないが、
+>   縦横で異なる倍率を指定できるようになった。
 > - スプライトサイズに `+20` のマージンを、`drawScaledCharacter()` では `+4` を
 >   加えている。根拠不明のマジックナンバーで、値が不一致。
 > - 文字を `(10, 10)` に描画しつつ、中心を `sprite_width / 2` で計算している。
@@ -1031,22 +1409,53 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 半角文字は90°回転。
 
 > **Todo**
-> - **座標計算が読み解けないほど複雑**:
->   `draw_x = _currentX + adjustment.horizontalOffset - getMaxCharWidth()
->   + metrics.width * small_char_offsetX`
->   `_currentX` は開始時に `_width - getMaxCharWidth()` なので、
->   `draw_x` には `getMaxCharWidth()` が**2回減算**される。
->   結果として1文字目が領域左端寄りに描かれる。意図的とは考えにくい。
-> - `getMaxCharWidth()` / `getLineHeight()` を**ループ内で毎文字呼ぶ**
->   （改行時、折り返し判定時、座標計算時）。中身は
->   `getCharMetrics(0x3000)` で、キャッシュヒットしても
->   `unordered_map` 検索が走る。ループ外で1回求めれば済む。
+> - ~~**座標計算で `getMaxCharWidth()` が2回減算される**~~
+>   → **対応済み（2026-07-30）**: `draw_x` 側の `- getMaxCharWidth()` を除去した。
+>   開始位置が `_currentX = _width - columnWidth` なので、
+>   `draw_x` でさらに引くと列幅が二重に減算され、
+>   1列目が領域右端から **2em（このフォントでは32px）内側**に描かれていた。
+>   列の左端は `_currentX` と一致すべきなので減算を削除した。
+>   130px幅の領域では `draw_x` が 98 → **114** になる（右へ16px移動）。
+> - ~~`getMaxCharWidth()` / `getLineHeight()` を**ループ内で毎文字呼ぶ**~~
+>   → **対応済み（2026-07-30）**: `drawVerticalTextEnhanced()` の冒頭で
+>   `columnWidth`（= `getMaxCharWidth()`）と
+>   `columnStep`（= `columnWidth + _columnSpacing + _lineSpacing`）を
+>   const ローカルとして1回だけ求め、改行時・折り返し時・座標計算時で共用するようにした。
+>   `getMaxCharWidth()` の呼び出しは**ループ内3回 → ループ外1回**になった
+>   （中身は `getCharMetrics(0x3000)` で、キャッシュヒットしても
+>   `unordered_map` 検索が走っていた）。
 > - 列送りが `getMaxCharWidth() + _columnSpacing + _lineSpacing`。
 >   `_columnSpacing` は常に0（9.5参照）で、かつ「列間」に `_lineSpacing`（行間）を
 >   足している。縦書きにおける「行間」と「列間」の用語が混同されている。
-> - 回転文字で `std::swap(adjusted_width, adjusted_height)` するが、
->   `adjusted_width` はその後 `draw_x` の計算に使われず捨てられる。
->   swap の効果は行送りにしか及ばない。
+> - ~~回転文字の `std::swap(adjusted_width, adjusted_height)` は
+>   行送りにしか効かず `adjusted_width` は捨てられる~~
+>   → **対応済み（2026-07-30）**: 列方向の送りを
+>   **`metrics.setWidth` による em 固定送り**に変更し、
+>   `adjusted_width` / `adjusted_height` と `std::swap` を撤去した。
+>
+>   変更理由（実測値 shippori_16, `_charSpacing = -8`）:
+>
+>   | 文字 | 旧送り（ビットマップ高 + charSpacing） | 新送り（setWidth + charSpacing） |
+>   |---|---|---|
+>   | あ | 15 − 8 = **7px** | 17 − 8 = 9px |
+>   | ー | 7 − 8 = **−1px（逆行）** | 17 − 8 = 9px |
+>   | 、 | 4 − 8 = **−4px（逆行）** | 17 − 8 = 9px |
+>
+>   旧実装では送りが文字ごとに変動するだけでなく、
+>   `_charSpacing` が負のとき**送りが負になって文字が逆方向に進んでいた**。
+>   全角の `setWidth` はフォント内で一定（17）で、
+>   日本語縦組みの「1文字 = 1em」に一致する。
+>   90度回転する文字（半角英数・半角カナ）は元の横方向送りが
+>   そのまま列方向の送りになるため同じ `setWidth` を使う
+>   （例: `A` は setWidth=14）。
+>   小文字（ぁゃゅ等）も組版上は1emを占めるため縮小率（0.75）は送りに掛けず、
+>   縮小はグリフの描画サイズにのみ効くようにした。
+>   折り返し判定も `advance` を使うよう揃えた。
+>
+>   > ⚠ **要再調整**: `main` の `setCharSpacing(-8)` は
+>   > 旧送り（可変・小さめ）に合わせた値なので、新送りでは
+>   > 一律 9px となり em 幅 17 に対して詰まりすぎている可能性がある。
+>   > 実機で確認のうえ `setCharSpacing()` の値を見直すこと。
 > - 小文字は「大文字に変換して縮小」という方式。フォントに小文字グリフが
 >   存在する場合（`shippori` には通常含まれる）、そのまま描くほうが正しい字形になる。
 >   なぜ変換が必要なのかがコードから読み取れない。
@@ -1063,14 +1472,27 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 未設定時は M5GFX の `updateFontMetric()` でフォールバック。
 
 > **Todo**
-> - **VLWParser 経路で `findGlyph()` を3回呼ぶ**:
->   `getCharWidth()` / `getCharHeight()` / `getCharSetWidth()` がそれぞれ
->   線形検索する（8.6参照）。`getCharMetrics()` を1回呼べば済む。
-> - **M5GFX フォールバック経路が `_display` の状態を破壊する**:
->   `_display->setFont(_font)` と `_display->setTextSize(_fontSize)` を
->   副作用として実行する。メトリクス取得（const的な操作）が
->   ディスプレイ設定を変えるのは危険。しかも `_drawTarget` が
->   スプライトの場合でも `_display` を触る。
+> - ~~**VLWParser 経路で `findGlyph()` を3回呼ぶ**~~
+>   → **対応済み（2026-07-30）**: `_vlwParser->getCharMetrics()` を
+>   **1回だけ**呼び、`VLWCharMetrics` から width / height / setWidth を取り出す形にした。
+>   各アクセサのフォールバック値は `getCharMetrics()` と同一
+>   （width/setWidth は `fontWidth`、height は `fontHeight`）なので**結果は不変**。
+>   二分探索化（§8.6）と合わせて、1文字あたりの比較回数は
+>   最悪 3 × 4414 = 13,242回 → **13回**になった。
+> - ~~**M5GFX フォールバック経路が `_display` の状態を破壊する**~~
+>   → **対応済み（2026-07-30）**: `_display->setFont()` と
+>   `_display->setTextSize()` の呼び出しを削除した。
+>   `updateFontMetric()` は `IFont` 自身の情報から算出するため
+>   ディスプレイ設定は不要で、かつ倍率は後段で `_fontSize` を掛けており
+>   `setTextSize()` は結果に影響していなかった。
+>   これで「サイズを問い合わせるだけ」の処理が描画設定を書き換えなくなった
+>   （`_drawTarget` がスプライトのときに `_display` を触る問題も解消）。
+> - **新規対応（2026-07-30）**: `_font == nullptr` かつ VLWパーサ未設定のときの
+>   分岐を追加した。従来はこの分岐が無く `_font->updateFontMetric()` で
+>   nullptr 参照クラッシュしていた（§12.1 #9）。
+>   `ESP_LOGW` を出したうえで非退化な既定値（`16 × _fontSize`）を返し、
+>   送り幅0で描画ループが止まらないようにしている。
+>   結果はキャッシュされるため、同じ文字で警告が繰り返されることはない。
 > - フォールバック経路の `metrics.width` に `fm.x_advance`（送り幅）を代入している。
 >   `width`（字形幅）と `setWidth`（送り幅）が同じ値になり、
 >   VLW 経路とは意味が変わる。同じ構造体が経路によって違う意味を持つ。
@@ -1091,10 +1513,11 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 > - **`getFixedCharAdjustment()` はヘッダに宣言があるが定義がない**（未実装）。
 >   `getCharAdjustment()`（public）が同じ役割を果たしており、
 >   宣言だけが残った残骸。
-> - **`setCharacterAdjustment(false)` が機能しない**: 無効化時に返す既定値が
->   `TypoWriteConstants::Normal::*`（= `widthScale 1.1`）なので、
->   「調整OFF」でも1.1倍のままスプライト経路を通る。
->   無効時は `{1.0f, 1.0f, 0, 0, 0}` を返すべき。
+> - ~~**`setCharacterAdjustment(false)` が機能しない**~~
+>   → **対応済み（2026-07-30、§9.3 の副次効果）**:
+>   無効化時に返すのは `TypoWriteConstants::Normal::*` だが、
+>   その値が 1.1 → **1.0** になったため、
+>   「調整OFF」が実際に「倍率1.0・オフセット0」＝無調整として機能するようになった。
 > - `getCharCategory()` の括弧判定 `(unicode >= 0x3008 && unicode <= 0x3011)` は
 >   すでに `0x300C〜0x300F` を含むため、直後の
 >   `(unicode >= 0x300C && unicode <= 0x300F)` は**到達しない冗長条件**。
@@ -1114,9 +1537,9 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 `drawAreaBorder()`: 外枠 + 四隅の十字マーク8本。
 
 > **Todo**
-> - `_transparentBg` が常に false のため（9.4参照）、`drawText()` は
->   毎回 `fillRect(_x,_y,_width,_height, TFT_TRANSPARENT)` を実行する。
->   `TFT_TRANSPARENT` を色値として塗りつぶすので、意図しない色になる。
+> - ~~`_transparentBg` が常に false のため `drawText()` が毎回
+>   `fillRect(..., TFT_TRANSPARENT)` を実行する~~ → **対応済み（2026-07-30、§9.4参照）**。
+>   透明モードが正しく立つようになったため `fillRect` はスキップされる。
 > - `target->clearClipRect()` で解除するが、呼び出し前のクリップ矩形は
 >   復元されない。
 > - `drawAreaBorder()` の十字マークは領域**外側**（`_x - markSize`）にも
@@ -1164,12 +1587,14 @@ VLWフォントを用いた日本語組版。横書き／縦書きの切替、
 >   描画先ごとに `loadFont()` を呼び直すので動作はするが、
 >   `_display` に読み込んだフォントを `unloadFont()` する経路がない
 >   （デストラクタでも解放しない）。フォント読み込みのリーク。
-> - `loadFontFromArray()` 成功時に `_font = nullptr` とするため、
->   以後 M5GFX フォールバック経路（`getCharMetrics()` の
->   `_font->updateFontMetric()`）が **nullptr 参照でクラッシュする**。
->   `_useVLWParser` が false かつ `_isCustomFont` が true の組み合わせで発生。
->   `textDisplayDemo()` は両方設定しているので現状は回避されているが、
->   `setVLWParser()` を呼び忘れると即クラッシュする危険な状態。
+> - ~~`loadFontFromArray()` 成功時に `_font = nullptr` とするためクラッシュしうる~~
+>   → **対応済み（2026-07-30）**: 二重に手当てした。
+>   1. `_font = nullptr` の代入を削除した。描画時は `_isCustomFont` / `_vlwFont` が
+>      優先されるので `_font` は使われないが、メトリクスのフォールバック先として
+>      有効な `IFont` を捨てないほうが妥当。
+>   2. `getCharMetrics()` 側にも `_font == nullptr` のガードを追加した（§9.10）。
+>
+>   これで `setVLWParser()` を呼び忘れてもクラッシュしなくなった。
 > - `setFontSize()` はキャッシュをクリアするが、`_charSprite` は再確保しない。
 >   サイズを大きくした後、小さいままのスプライトに描いて切れる可能性がある。
 
@@ -1314,23 +1739,37 @@ progress < 0.3 → 全画面黒、< 0.7 → 上部から段階表示、それ以
 `display->pushImage()` → `delete[]`。
 
 > **Todo**
-> - **毎ステップで最大1MBのヒープを確保・解放している**:
->   `w × h` が 540×960 の場合 `518,400 × 2 = 約1MB`。
->   これを1ステップごとに `new` / `delete[]` する。
->   PSRAM 指定がないので**内部RAM**（`MALLOC_CAP_8BIT`）から確保しようとし、
->   ESP32-S3 の内部RAM（約512KB）では**確実に失敗する**。
-> - **失敗時のフォールバックが機能しない**: `new` は既定で
->   `std::bad_alloc` を投げる（ESP-IDF では例外無効時に abort）。
->   `if (pixel_buffer)` の nullptr チェックは**到達しないデッドコード**であり、
->   用意された行単位フォールバックは実行されない。
->   `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` か `new (std::nothrow)` が必要。
-> - **色深度の不整合**: `uint16_t` バッファ（RGB565前提）で `readRect` するが、
->   Canvas は 1bpp（10.4参照）。`readRect` は変換してくれるが、
->   1bpp → RGB565 → 1bpp の往復変換コストを払っている。
->   Canvas から画面へは `pushSprite(x, y, w, h)` 相当で
->   直接部分転送できるはずで、中間バッファ自体が不要。
-> - バッファを毎回確保するのではなく、`init()` で1本確保して再利用すべき
->   （またはブロック単位に分割して固定サイズバッファで回す）。
+> - ~~**毎ステップで最大1MBのヒープを確保・解放している**~~ /
+>   ~~**失敗時のフォールバックが機能しない**~~ / ~~**色深度の不整合**~~
+>   → **すべて対応済み（2026-07-30）**: **中間バッファを廃止**した。
+>
+>   新実装は描画先にクリップ矩形を設定してキャンバス全体を `pushSprite` するだけ:
+>   ```cpp
+>   _display->setClipRect(x, y, w, h);
+>   _mainCanvas->pushSprite(_display, 0, 0);
+>   _display->clearClipRect();
+>   ```
+>   `LGFX_Sprite::push_sprite()` は `dst->pushImage()` を呼び、
+>   `LGFXBase::pushImage()` は `_clip_l/_clip_r/_clip_t/_clip_b` で
+>   転送範囲を切り詰めてから `_panel->writeImage()` を呼ぶ
+>   （`LGFXBase.cpp` / `LGFX_Sprite.hpp` の実装で確認）。
+>   よって実際に転送されるのは指定領域のみ。
+>
+>   これで一度に3つの問題が解消した:
+>   - 毎ステップ最大1MBの確保/解放（断片化要因）が消えた
+>   - 例外無効（`CONFIG_COMPILER_CXX_EXCEPTIONS` 未設定）のため
+>     `new` は失敗時に nullptr を返さず `abort()` する。
+>     到達不能だった nullptr フォールバックごと不要になった
+>   - **【訂正】** 当初「キャンバスは1bppなのでバッファは16倍」と記述したが誤り。
+>     `M5Canvas` は親の深度を継承せず `rgb565_2Byte`（16bpp・約1MB）で作られるため、
+>     バッファはキャンバス該当領域と同じ2バイト/画素だった。
+>     16倍という差は存在しない。ただし確保/解放の削減という効果は変わらない
+>
+>   `SimpleTransition.cpp` は 491行 → 438行、バイナリ **−1216バイト**。
+>
+>   > 注意: `clearClipRect()` は全画面に戻す実装なので、
+>   > 呼び出し前のクリップ矩形は復元されない。
+>   > 本クラス以外がクリップを設定するようになったら保存/復元が必要。
 > - 引数のクランプ順序（`x` を先にクランプしてから `w` を計算）は正しいが、
 >   `std::min(x, WIDTH)` で `x == WIDTH` を許すため `w = 0` になり
 >   無音で何も描かない。呼び出し側はエラーを検知できない。
@@ -1477,55 +1916,55 @@ PSRAM / 内部RAM の total・used・free をログと画面に出力。
 
 | # | 箇所 | 内容 |
 |---|---|---|
-| 1 | `SimpleTransition::drawOptimizedRegion()` | 毎ステップ最大1MBを内部RAMから `new`。確保失敗が濃厚で、nullptrフォールバックは到達不能。PSRAM確保＋バッファ再利用が必要 |
-| 2 | `TypoWrite::drawScaledCharacter()` | スケール引数が描画に反映されない。全文字が「効果のない重い経路」を通る |
-| 3 | `TypoWrite` 透過背景 | `_transparentBg` を設定するAPIがなく、`TFT_TRANSPARENT` が塗り色として使われる |
-| 4 | `SDCardWrapper::enableUSBMSC/disableUSBMSC` | `tinyusb_driver_uninstall()` を呼ばないため、有効化→無効化→有効化の2周目で失敗 |
-| 5 | `SDCardWrapper::init()` | 失敗時に `spi_bus_free()` しないためリトライ不可 |
+| 1 | ~~`SimpleTransition::drawOptimizedRegion()`~~ | ~~毎ステップ最大1MBを `new`／`delete[]`~~ → **対応済み（2026-07-30）**。**中間バッファ自体を廃止**し、クリップ矩形＋`pushSprite` に置換（§10.9）。毎ステップの1MB確保/解放と到達不能フォールバックが解消。−1216バイト。なお初版の「確実に失敗する」は誤りで、`ALWAYSINTERNAL=16384` によりPSRAMから確保され成功していた |
+| 2 | ~~`TypoWrite::drawScaledCharacter()`~~ | ~~スケール引数が描画に反映されない。全文字が「効果のない重い経路」を通る~~ → **対応済み（2026-07-30）**。回転付き実装へ委譲し名前と挙動を一致させた（−480バイト）。倍率1.0統一で高速パスにも復帰 |
+| 3 | ~~`TypoWrite` 透過背景~~ | ~~`_transparentBg` を設定するAPIがなく、`TFT_TRANSPARENT` が塗り色として使われる~~ → **対応済み（2026-07-30）**。`TFT_TRANSPARENT=0x0120` は実在の色値。`setBackgroundColor()` で自動判定＋`setTransparentBackground()` を追加 |
+| 4 | ~~`SDCardWrapper::enableUSBMSC/disableUSBMSC`~~ | ~~`tinyusb_driver_uninstall()` を呼ばないため、有効化→無効化→有効化の2周目で失敗~~ → **対応済み（2026-07-30、ただし実機未検証）**。あわせて `tud_init()` の二重初期化も除去 |
+| 5 | ~~`SDCardWrapper::init()`~~ | ~~失敗時に `spi_bus_free()` しないためリトライ不可~~ → **対応済み（2026-07-30）** |
 | 6 | `TouchHandler::update()` の多重呼び出し | `loop()` と `ButtonManager::update()` が同じ破壊的メソッドを呼びイベントを取りこぼす |
-| 7 | `TouchHandler` Release/Swipe 排他 | スワイプ成立時に `onReleased` が発火せず、ボタンが押下表示のまま固まる |
+| 7 | ~~`TouchHandler` Release/Swipe 排他~~ | ~~スワイプ成立時に `onReleased` が発火せず、ボタンが押下表示のまま固まる~~ → **対応済み（2026-07-30、実機未検証）**。`_lastSwipe` が毎回クリアされていなかった別バグも同時に修正 |
 | 8 | `onCanvasTestButtonReleased()` | 同期実行のため停止ボタンが押せず、`stopTest()` 機構が構造的に無効 |
-| 9 | `TypoWrite::loadFontFromArray()` | `_font = nullptr` にするため、VLWParser未設定時に nullptr 参照でクラッシュしうる |
-| 10 | `SDCardWrapper::listDir()` | 2パス走査間の不整合で未初期化メモリを返しうる。2回目の `opendir()` 未チェック |
-| 11 | `SimpleTransition` progress 計算 | `_totalSteps == 1` で0除算（NaN） |
-| 12 | 1bpp と色指定の不整合 | `setColorDepth(1)` 下で全モジュールがカラー値を指定。見た目が設計と一致しない |
+| 9 | ~~`TypoWrite::loadFontFromArray()`~~ | ~~`_font = nullptr` にするため、VLWParser未設定時に nullptr 参照でクラッシュしうる~~ → **対応済み（2026-07-30）**。代入を削除＋`getCharMetrics()` にガード追加 |
+| 10 | ~~`SDCardWrapper::listDir()`~~ | ~~2パス走査間の不整合で未初期化メモリを返しうる。2回目の `opendir()` 未チェック~~ → **対応済み（2026-07-30）** |
+| 11 | ~~`SimpleTransition` progress 計算~~ | ~~`_totalSteps == 1` で0除算（NaN）~~ → **対応済み（2026-07-30 / 2026-07-31）**。`calcStepProgress()` に集約（5箇所の重複も解消）。さらに 07-31 に式を `(_currentStep + 1) / _totalSteps` へ変更。従来は step 0 で progress=0.0 となり**最初のステップが必ず空振り**していた（0除算も同時に解消） |
+| 12 | ~~1bpp と色指定の不整合~~ | **【訂正】** `Panel_EPD` が深度を `grayscale_8bit` に固定するため `setColorDepth(1)` はno-op。1bppにはなっていない。ただしEPDはグレースケール表示なので、カラー値が意図どおりに出ない点自体は残る（§0.5） |
 
 ### 12.2 性能・効率（Medium）
 
 | # | 箇所 | 内容 |
 |---|---|---|
-| 13 | `VLWFontParser::findGlyph()` | 線形検索。1文字のメトリクス取得で3回呼ばれ O(3NM) になる。二分探索/ハッシュ化を推奨 |
+| 13 | ~~`VLWFontParser::findGlyph()`~~ | ~~線形検索~~ → **対応済み（2026-07-30）**。二分探索化（昇順検証＋線形フォールバック付き）。全65536コードで線形検索と一致を確認。あわせて `TypoWrite` 側を `getCharMetrics()` 1回呼びに変更し、1文字あたりの比較は **13,242回→13回** |
 | 14 | `textDisplayDemo()` | 呼ばれるたびにVLW再解析＋`TypoWrite`再構築（マップ53件＋スプライト）。インスタンスを常駐化すべき |
-| 15 | `TypoWrite::drawDirectCharacter()` | 1文字ごとに `loadFont`/`setFont`/`setTextSize`/`setTextColor`/`unloadFont` |
-| 16 | `TypoWrite::_charSprite` | 文字ごとに `deleteSprite`/`createSprite` が起こりうる。最大サイズで一度確保すべき |
-| 17 | `SimpleTransition` 各ステップ | 毎ステップ `fillScreen()` ＋部分転送＝2回の画面更新。差分転送にすべき |
-| 18 | `SimpleTransition::drawFadeInStepOptimized()` | progress<0.3 の2ステップが黒画面の再描画のみで完全に無駄 |
-| 19 | `SimpleTransition::update()` 完了時 | 直前に表示済みの画面を `showImmediate()` で再転送 |
-| 20 | 128px ブロック丸め | 540/960 に対して4〜7段階しか変化せず、残りのステップは同じ絵を再描画 |
-| 21 | ログ出力量 | `ESP_LOGI` の多用（`swapCanvases` 100回、全セッター、`exists()` 毎回など） |
+| 15 | ~~`TypoWrite::drawDirectCharacter()`~~ | ~~1文字ごとに `loadFont`/`setFont`/`setTextSize`/`setTextColor`/`unloadFont`~~ → **対応済み（2026-07-31）**。`applyTextStyle()`/`releaseTextStyle()` を新設し `drawText()` で描画前後に1回だけ実行。`loadFont()` はVLWヘッダ解析を伴うため文字数分の削減効果 |
+| 16 | ~~`TypoWrite::_charSprite`~~ | **対応済み（2026-07-31）**。**【訂正】** 再生成は「現在より大きいときのみ」なので最大サイズに収束し、初版が示唆するほどの頻度ではなかった。実際の欠陥は別で、2件を修正: (a) `createSprite()` の戻り値未検査（失敗時に0サイズのスプライトへ描き続ける）→ 検査して直接描画へフォールバック、(b) サイズ計算だけ `avgScale` のままで縦横別倍率のとき寸法が不足しうる → 個別スケールに修正 |
+| 17 | ~~`SimpleTransition` 各ステップ~~ | ~~毎ステップ `fillScreen()` ＋部分転送＝2回の画面更新~~ → **対応済み（2026-07-31）**。全効果が「表示領域が単調に広がる」累積展開であることを確認し、クリアを `startTransition()` での1回に集約。**1ステップあたりの画面更新が2回→1回**に |
+| 18 | ~~`SimpleTransition::drawFadeInStepOptimized()`~~ | ~~progress<0.3 の2ステップが黒画面の再描画のみで完全に無駄~~ → **対応済み（2026-07-31）**。0.3/0.7 の3区間分割をやめ、進捗にそのまま比例させた。全ステップが表示を進める |
+| 19 | ~~`SimpleTransition::update()` 完了時~~ | ~~直前に表示済みの画面を `showImmediate()` で再転送~~ → **対応済み（2026-07-31）**。ブロック丸め除去により最終ステップが画面全体に一致するようになったため、保険だった全画面再転送を削除 |
+| 20 | ~~128px ブロック丸め~~ | ~~540/960 に対して4〜7段階しか変化せず~~ → **対応済み（2026-07-31）**。`EPAPER_BLOCK_SIZE` ごと削除。転送はクリップ矩形＋`pushSprite` の1回なので丸めても転送回数は減らず、コストだけ残っていた。段階が滑らかになり #19 の保険も不要に |
+| 21 | ログ出力量 | **一部対応（2026-07-31）**。**【訂正】** `CONFIG_LOG_MAXIMUM_LEVEL=3`(INFO) のため**全セッターの `ESP_LOGD` はコンパイル時に除去されており実害なし**だった。実害のある `ESP_LOGI` のうち `SDcard::exists()` と `Button::setDrawTarget()` を `ESP_LOGD` 化し、`VLWFontParser::init()` の `debugPrintFontInfo()` 自動呼び出しを削除（呼び出し側と重複し起動ログに同じ内容が2回出ていた）。**未対応**: `CanvasTest` のループ内 `ESP_LOGI`（100回ループで200行）は §11 保留のため据え置き |
 | 22 | Canvas 常駐 | `CanvasTest`（検証用2枚）＋`SimpleTransition`（1枚）を常時確保 |
-| 23 | `VLWFontParser::buildGlyphTable()` | グリフテーブルを内部RAMに `malloc`。PSRAMを使うべき |
-| 24 | `TypoWrite` メトリクスキャッシュ | 上限256件、超過後は一切キャッシュしない（追い出し戦略なし） |
-| 25 | `Button` の `std::function` × 6 | スワイプ4本を1本に統合可能。`getOnPressed()` の値返しでコピー発生 |
+| 23 | ~~`VLWFontParser::buildGlyphTable()`~~ | ~~グリフテーブルを内部RAMに `malloc`~~ → **【訂正】初版の誤り**。約138KBは `ALWAYSINTERNAL=16384` 超なので既にPSRAMから確保される。**コード変更不要**。ただし `textDisplayDemo()` 毎の再確保は未対応 |
+| 24 | ~~`TypoWrite` メトリクスキャッシュ~~ | ~~上限256件、超過後は一切キャッシュしない~~ → **対応済み（2026-07-31）**。上限到達時に全消去して入れ直す世代的追い出しに変更し、後半のテキストでもキャッシュが効くようにした。上限は `METRICS_CACHE_LIMIT` 定数として明示 |
+| 25 | `Button` の `std::function` × 6 | スワイプ4本を1本に統合可能（**未対応**）。~~`getOnPressed()` の値返しでコピー発生~~ → **値返しは対応済み（2026-07-30、`const&` 化）** |
 
 ### 12.3 重複・死蔵コード（Medium）
 
 | # | 箇所 | 内容 |
 |---|---|---|
-| 26 | `Button::drawToCanvas()` / `drawToDisplay()` | 約50行 × 2 の完全重複。`lgfx::LovyanGFX*` で統合可能 |
-| 27 | `Button::update()` と `ButtonManager::update()` | 同じ状態遷移の2重実装（挙動が微妙に異なる） |
-| 28 | UTF-8デコード | `VLWFontParser` に2実装、`TypoWrite` に1実装（境界チェックが三者で異なる） |
-| 29 | SDパス構築 | `strncmp`＋`snprintf` のパターンが6箇所に重複。`strncpy` の NUL 終端非保証も同数 |
-| 30 | MSCコールバック5関数 | 登録されず未参照（約60行） |
-| 31 | `SimpleTransition::copyCanvasRegionOptimized()` | 未使用（約35行） |
-| 32 | `SimpleTransition` プリセット8種 / 最適化static 2種 / 定数2個 | すべて未使用 |
-| 33 | `TypoWrite` デバッグ4メソッド | すべて未使用（約120行）。うち2つは内容が重複 |
-| 34 | `TypoWrite::setColumnSpacing()` / `getFixedCharAdjustment()` | 宣言のみで**定義なし**。呼べばリンクエラー |
+| 26 | ~~`Button::drawToCanvas()` / `drawToDisplay()`~~ | ~~約50行 × 2 の完全重複~~ → **対応済み（2026-07-30）**。`drawTo(lgfx::LovyanGFX*)` に統合。551→510行、−448バイト |
+| 27 | ~~`Button::update()` と `ButtonManager::update()`~~ | ~~同じ状態遷移の2重実装~~ → **対応済み（2026-07-31）**。利用者判断により `ButtonManager::update()` に一本化し `Button::update()` を削除。現在の挙動は不変（領域外で離した場合は `onReleased` を発火しない） |
+| 28 | ~~UTF-8デコード~~ | ~~`VLWFontParser` に2実装、`TypoWrite` に1実装~~ → **対応済み（2026-07-31）**。調査の結果 `VLWFontParser` 側の2つは**呼び出し元0件の死蔵API**だったため実装・宣言とも削除（93行）。使用中の `TypoWrite::utf8ToUnicode()` に一本化 |
+| 29 | ~~SDパス構築~~ | ~~`strncmp`＋`snprintf` のパターンが6箇所に重複。`strncpy` の NUL 終端非保証も同数~~ → **対応済み（2026-07-30）**。`buildFullPath()` に集約し `strncpy` を全廃 |
+| 30 | ~~MSCコールバック5関数~~ | ~~登録されず未参照（約60行）~~ → **対応済み（2026-07-30）**。`SDcard.cpp` の警告 5→0件 |
+| 31 | ~~`SimpleTransition::copyCanvasRegionOptimized()`~~ | ~~未使用（約35行）~~ → **対応済み（2026-07-30）**。削除 |
+| 32 | `SimpleTransition` プリセット8種 / 最適化static 2種 / 定数2個 | **一部対応（2026-07-30）**: 未使用定数2個と static 2種を削除（後者は「自動最適化する」という実装と食い違う記述だったため）。プリセット8種は有効なAPIとして残し、未使用である旨と所要時間が実測値でない旨を注記 |
+| 33 | `TypoWrite` デバッグ4メソッド | **一部対応（2026-07-31）**。重複していた `debugShowFixedAdjustments()` を削除（43行、内容は `debugShowCharAdjustments()` がテーブルから出力するのと同一）。残る3つは**あえて残した**（縦書き調整のデバッグに直接役立つため）。ただし `debugShowCharAdjustments()` の `categoryNames[]` 無検査参照に範囲チェックを追加し、`%d` に `size_t` を渡していた箇所も修正 |
+| 34 | ~~`TypoWrite::setColumnSpacing()` / `getFixedCharAdjustment()`~~ | ~~宣言のみで定義なし。呼べばリンクエラー~~ → **対応済み（2026-07-31）**。前者は定義を実装（`_columnSpacing` が制御可能に）、後者は `getCharAdjustment()` に置き換わった残骸なので宣言を削除 |
 | 35 | `TouchHandler::calibrate()` / `_touchCalibration` / `isCalibrated()` | 未使用。永続化も未実装 |
-| 36 | `ButtonManager::handleTouch()` / `drawButtonsToTarget()` | 未使用（前者は非推奨明記） |
+| 36 | ~~`ButtonManager::handleTouch()` / `drawButtonsToTarget()`~~ | ~~未使用（前者は非推奨明記）~~ → **対応済み（2026-07-31）**。参照0件を確認して両方削除。`Button.cpp` 456→415行。**副作用**: `handleTouch()` は `Button::update()` の唯一の呼び出し元だったため、`Button::update()` が未使用になった（#27 の判断が必要） |
 | 37 | `loop()` 手順5 | `!buttonManager` 条件により到達不能 |
-| 38 | `runMainLoop()` の `vTaskDelete()` | 到達不能 |
-| 39 | `ScreenTransition.*` / `*.old` / `*.old.txt` / 未使用フォント6本 | 死蔵ファイル |
+| 38 | ~~`runMainLoop()` の `vTaskDelete()`~~ | ~~到達不可能~~ → **対応済み（2026-07-30）**。`for(;;)` 後の到達不能行を削除（§4.2） |
+| 39 | ~~`ScreenTransition.*` / `*.old` / `*.old.txt`~~ / 未使用フォント6本 | **`ScreenTransition.*` と `*.old*` は対応済み（2026-07-30）**。未使用フォント6本は未対応 |
 | 40 | シーン描画3関数 | 構造が同一。データ駆動に統合可能 |
 | 41 | 画面サイズマクロ | `SIMPLE_TRANSITION_WIDTH/HEIGHT` と `CANVAS_WIDTH/HEIGHT` が重複定義 |
 
@@ -1533,25 +1972,25 @@ PSRAM / 内部RAM の total・used・free をログと画面に出力。
 
 | # | 箇所 | 内容 |
 |---|---|---|
-| 42 | `TypoWrite::_charAdjustments` | 5カテゴリ全て同値。カテゴリ分類の仕組みが実質無効 |
-| 43 | `setCharacterAdjustment(false)` | 無効化しても1.1倍が残る |
-| 44 | `TypoWrite::_alignment` | `LEFT`/`CENTER`/`RIGHT` が描画に反映されない（未実装） |
-| 45 | 送り幅の定義 | 描画は `width×1.1`、サイズ計算は `setWidth`。中央揃えが約10%ずれる |
-| 46 | 「高さ」の定義 | `getCharHeight()` は `height + topExtent`、`getCharMetrics()` は `height` |
-| 47 | 進捗の定義 | `getProgress()` は `/_totalSteps`、内部描画は `/(_totalSteps-1)` |
-| 48 | SLIDE と WIPE | 転送元と転送先が同座標のため、SLIDE がスライドになっていない（実質全部ワイプ） |
-| 49 | 縦書きの `draw_x` | `getMaxCharWidth()` が2回減算される |
-| 50 | 「行間」と「列間」 | 縦書きで `_columnSpacing + _lineSpacing` を併用。用語が混同 |
-| 51 | 枠線色 | 定数は `TFT_RED`、デフォルト引数は `TFT_WHITE`、コメントは「TFT_RED固定」 |
-| 52 | `回転文字のスケール` | `pushRotateZoom` で二重に拡大され、非回転文字とサイズが揃わない |
+| 42 | ~~`TypoWrite::_charAdjustments`~~ | ~~5カテゴリ全て同値（1.1）。カテゴリ分類の仕組みが実質無効~~ → **対応済み（2026-07-30）**。1.0（無調整）に統一。構造は拡張点として保持。**縦書きは約9%小さくなる** |
+| 43 | ~~`setCharacterAdjustment(false)`~~ | ~~無効化しても1.1倍が残る~~ → **対応済み（2026-07-30）**。#42 の副次効果で実際に無調整になった |
+| 44 | ~~`TypoWrite::_alignment`~~ | ~~`LEFT`/`CENTER`/`RIGHT` が描画に反映されない~~ → **対応済み（2026-07-31）**。横書き・縦書きとも「測ってから描く」2パス構造に組み替えて実装。横書きは折り返し後の**視覚行**単位、縦書きは**列**単位で揃える（縦書きでは LEFT=上揃え / RIGHT=下揃え）。既定は LEFT なので現在の描画結果は不変 |
+| 45 | ~~送り幅の定義~~ | ~~描画は `metrics.width`、`calculateTextSize()` は `setWidth`~~ → **対応済み（2026-07-31）**。横書きの描画側を `setWidth × widthScale` に統一し、`calculateTextSize()` を描画側と同じ手順に書き直した。**縦書きも `calculateTextSize()` だけ `metrics.height`（ビットマップ高）のままで em固定送りに追随していなかった**ため同時に修正。末尾字間を寸法に含めない点、縦書きで小文字→大文字→縦書きグリフの変換を経てから送りを取る点も描画側と揃えた。列幅の基準も `getMaxCharWidth()` に統一。**未対応**: 折り返し(`_wrap`)は依然として考慮していない（返すのは改行だけで区切った自然な寸法） |
+| 46 | ~~「高さ」の定義~~ | ~~`getCharHeight()` は `height + topExtent`、`getCharMetrics()` は `height`~~ → **対応済み（2026-07-30）**。`glyph->height` に統一 |
+| 47 | ~~進捗の定義~~ | ~~`getProgress()` は `/_totalSteps`、内部描画は `/(_totalSteps-1)`~~ → **対応済み（2026-07-30）**。`getProgress()` も `calcStepProgress()` を使うよう統一 |
+| 48 | ~~SLIDE と WIPE~~ | ~~転送元と転送先が同座標のため SLIDE がスライドになっていない~~ → **対応済み（2026-07-31）**。キャンバスの描画位置自体をオフセットして画面外から滑り込ませる実装に変更。`pushImage()` が負座標をクリップして転送元オフセットに変換するため、画面内に入る部分だけが転送される。SLIDE 4種と WIPE 2種が別の効果になった |
+| 49 | ~~縦書きの `draw_x`~~ | ~~`getMaxCharWidth()` が2回減算される~~ → **対応済み（2026-07-30）**。1列目が右端から2em内側にずれていた |
+| 50 | ~~「行間」と「列間」~~ | ~~縦書きで `_columnSpacing + _lineSpacing` を併用~~ → **対応済み（2026-07-31）**。利用者判断により `_columnSpacing` / `setColumnSpacing()` を**廃止**し `_lineSpacing` に統一（縦組みでは「行」＝「列」）。`main` は `setColumnSpacing()` を呼んでいないため描画結果は不変 |
+| 51 | ~~枠線色~~ | ~~定数は `TFT_RED`、デフォルト引数は `TFT_WHITE`、コメントは「TFT_RED固定」~~ → **対応済み（2026-07-31）**。既定引数を `TFT_RED` に統一しコメントを実態に修正。`MARK_SIZE` 定数も使うようにした |
+| 52 | ~~`回転文字のスケール`~~ | ~~`pushRotateZoom` で二重に拡大され、非回転文字とサイズが揃わない~~ → **対応済み（2026-07-30）**。真因は回転なし版がスケール未適用だったこと。委譲一本化＋倍率1.0統一で解消。`avgScale` の平均化も撤去 |
 | 53 | 描画先の指定方法 | 3モジュールで別API。統一された「現在のフレームバッファ」概念がない |
-| 54 | `ButtonManager` の所有権 | `delete` しないが `main` もしない。方針が未定義 |
-| 55 | `getCharMetrics()` の副作用 | メトリクス取得が `_display` のフォント設定を変更する |
-| 56 | 縦書き専用グリフ | フォントに存在するか未確認のまま差し替える |
+| 54 | ~~`ButtonManager` の所有権~~ | ~~`delete` しないが `main` もしない。方針が未定義~~ → **対応済み（2026-07-31）**。利用者判断により**非所有**を正とし、`addButton()` のドキュメントに所有権ポリシーを明記。`removeButton()`/`clearButtons()` も「登録解除（delete しない）」と明示。挙動は不変 |
+| 55 | ~~`getCharMetrics()` の副作用~~ | ~~メトリクス取得が `_display` のフォント設定を変更する~~ → **対応済み（2026-07-30）**。`setFont()`/`setTextSize()` の呼び出しを削除 |
+| 56 | ~~縦書き専用グリフ~~ | ~~フォントに存在するか未確認のまま差し替える~~ → **対応済み（2026-07-31）**。**【訂正】** 実測の結果、`shippori_16` は `_verticalGlyphMap` の**登録28件すべての縦書き字形（U+FE10〜FE48）を収録**しており、現行フォントでは欠落は起きていなかった。ただし他フォントへ差し替えると壊れるため、`convertToVerticalGlyph()` に `hasChar()` による存在確認を追加し、無ければ元の文字に戻すフォールバックを実装 |
 | 57 | 日本語フォント未設定 | `Button` ラベルとシーンテキストが豆腐になる |
-| 58 | `getCharCategory()` の括弧判定 | `0x300C-0x300F` の条件が到達不能（先の範囲に包含） |
-| 59 | `detectSwipe()` の閾値判定 | AND条件のため斜め入力の扱いが直感に反する |
-| 60 | ビルド依存 | TinyUSB が IDF同梱とマネージドコンポーネントの二系統 |
+| 58 | ~~`getCharCategory()` の括弧判定~~ | ~~`0x300C-0x300F` の条件が到達不能~~ → **対応済み（2026-07-31）**。冗長条件を削除。あわせて `_verticalGlyphMap` にはあるのに分類から漏れていた 〔U+3014〕U+3015 を追加。**【訂正】** 初版の「0x3008〜0x3011 に括弧でない文字が含まれる」は誤りで、この10文字は全て括弧（〈〉《》「」『』【】） |
+| 59 | ~~`detectSwipe()` の閾値判定~~ | ~~AND条件のため斜め入力の扱いが直感に反する~~ → **【訂正】初版の誤り。取り下げ**。採用軸は必ず `max(absDx,absDy)` なので閾値は常に満たされ、現行ロジックは妥当（§6.4参照）。45度付近の判定揺れは堅牢性の改善余地として残す |
+| 60 | ~~ビルド依存~~ | ~~TinyUSB が IDF同梱とマネージドコンポーネントの二系統~~ → **対応済み（2026-07-30）**。実際は二系統ではなく、ルート `CMakeLists.txt` の `EXTRA_COMPONENT_DIRS` が死んだ指定だった（§2.1参照） |
 
 ### 12.5 未実装（今後の実装予定と思われるもの）
 

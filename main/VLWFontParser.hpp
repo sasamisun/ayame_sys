@@ -64,6 +64,10 @@ private:
     
     GlyphInfo* _glyphTable;         // グリフテーブル
     uint32_t _glyphTableSize;       // グリフテーブルサイズ
+
+    // グリフテーブルが unicode 昇順に並んでいるか（buildGlyphTable() で判定）。
+    // true なら findGlyph() が二分探索を使い、false なら線形検索にフォールバックする。
+    bool _glyphTableSorted;
     
     // 内部メソッド
     /**
@@ -99,6 +103,10 @@ private:
     
     /**
      * @brief 指定されたUnicode文字のグリフ情報を検索する
+     *
+     * グリフテーブルが unicode 昇順であれば二分探索（O(log N)）を、
+     * そうでなければ線形検索（O(N)）を行う。
+     *
      * @param unicode Unicode文字コード
      * @return グリフ情報へのポインタ（見つからない場合はnullptr）
      */
@@ -217,22 +225,10 @@ public:
      */
     bool isInitialized() const { return _initialized && _fontMetrics.isValid; }
     
-    /**
-     * @brief 文字列の描画幅を計算する
-     * @param text UTF-8文字列
-     * @return 描画幅（ピクセル）
-     */
-    uint32_t calculateTextWidth(const char* text) const;
-    
-    /**
-     * @brief UTF-8文字列をUnicode配列に変換する
-     * @param utf8Text UTF-8文字列
-     * @param unicodeArray 出力先Unicode配列
-     * @param maxLength 配列の最大長
-     * @return 変換された文字数
-     */
-    size_t utf8ToUnicode(const char* utf8Text, uint16_t* unicodeArray, size_t maxLength) const;
-    
+    // 補足: calculateTextWidth() と utf8ToUnicode() の宣言がここにあったが、
+    //       どちらも呼び出し元が存在しない死蔵APIだったため削除した（実装も削除済み）。
+    //       UTF-8デコードは TypoWrite::utf8ToUnicode() に一本化されている。
+
     /**
      * @brief デバッグ用：フォント情報をログに出力する
      */

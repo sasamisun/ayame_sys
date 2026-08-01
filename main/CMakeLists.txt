@@ -8,7 +8,6 @@ idf_component_register(
         "VLWFontParser.cpp"         # VLWフォントパーサー
         #"ScreenTransition.cpp"      # 画面遷移管理
         "SimpleTransition.cpp"
-        "CanvasTest.cpp"            # M5Canvasテストクラス（新規追加）
     PRIV_REQUIRES
         M5GFX                       # M5Stack用グラフィックライブラリ
     REQUIRES

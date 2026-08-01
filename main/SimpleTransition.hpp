@@ -38,9 +38,10 @@ enum class SimpleTransitionType {
  * 
  * 使い方：
  * 1. メインキャンバスに最終的な画面を描画
- * 2. startTransition()でトランジション開始（ステップ数は自動最適化）
+ * 2. startTransition()でトランジション開始
+ *    （ステップ数は [1, 8] にクランプされる。それ以上の「自動最適化」は行わない）
  * 3. loop()で毎回update()を呼ぶ
- * 4. E-Paper向けに最適化された高速描画で完了
+ * 4. 全ステップ完了後に showImmediate() で最終画面を表示
  */
 class SimpleTransition {
 private:
@@ -54,6 +55,26 @@ private:
     SimpleTransitionType _type;   // トランジション種類
     int _currentStep;             // 現在のステップ（0から開始）
     int _totalSteps;              // 総ステップ数（E-Paper最適化済み）
+
+    // ========== EPD描画モードの一時切り替え ==========
+    //
+    // Panel_EPD のリフレッシュは「LUTのステップ数」だけパネル全体を走査する。
+    // 走査回数はモードで決まり、更新範囲の広さには依存しない。
+    //
+    //   epd_quality : 21ステップ
+    //   epd_text    : 18ステップ
+    //   epd_fast    : 11ステップ
+    //   epd_fastest :  7ステップ
+    //
+    // トランジションの中間フレームは一瞬しか表示されないため画質は不要。
+    // 中間は高速モードで描き、完了時に元のモードへ戻して最終画面を描き直す。
+    lgfx::v1::epd_mode_t _transitionEpdMode;  // トランジション中に使うモード
+    lgfx::v1::epd_mode_t _savedEpdMode;       // 開始前のモード（復帰用）
+    bool _epdModeOverridden;                  // モードを退避中かどうか
+
+    // EPDモードを高速モードへ切り替える／元に戻す
+    void beginFastEpdMode();
+    void endFastEpdMode();
     
     // コールバック関数
     std::function<void()> _onComplete;  // 完了時コールバック
@@ -68,8 +89,16 @@ private:
     
     // E-Paper最適化ユーティリティメソッド
     void drawOptimizedRegion(int x, int y, int w, int h);  // 最適化領域描画
-    void copyCanvasRegionOptimized(M5Canvas* src, M5Canvas* dst,   // 最適化領域コピー
-                                  int sx, int sy, int sw, int sh, int dx, int dy);
+
+    /**
+     * @brief 現在のステップ進捗（0.0〜1.0）を返す
+     *
+     * 各描画メソッドが個別に
+     * `_currentStep / (_totalSteps - 1)` を計算しており、
+     * _totalSteps == 1 のとき 0除算で NaN になっていた（5箇所に複製）。
+     * 本メソッドに集約し、境界も含めて 0.0〜1.0 にクランプする。
+     */
+    float calcStepProgress() const;
 
 public:
     /**
@@ -127,19 +156,125 @@ public:
     bool isActive() const { return _isActive; }
     int getCurrentStep() const { return _currentStep; }
     int getTotalSteps() const { return _totalSteps; }
-    float getProgress() const { 
-        return _totalSteps > 0 ? (float)_currentStep / _totalSteps : 0.0f; 
-    }
+
+    // 進捗（0.0〜1.0）。内部の描画処理と同じ定義を使う。
+    // 従来はここだけ _currentStep / _totalSteps で、内部描画は
+    // _currentStep / (_totalSteps - 1) と2つの進捗定義が併存していた。
+    float getProgress() const { return calcStepProgress(); }
     
     // コールバック設定
     void setOnComplete(std::function<void()> callback) { _onComplete = callback; }
     void setOnStep(std::function<void(int, int)> callback) { _onStep = callback; }
+
+    /**
+     * @brief トランジション中に使うEPD描画モードを設定する
+     *
+     * 中間フレームの画質を落として速度を稼ぐ。既定は epd_fast。
+     * 完了時には開始前のモードへ戻し、そのモードで最終画面を描き直すため、
+     * 最終的な表示品質は変わらない。
+     *
+     * 8ステップの場合の目安（パネル走査回数）:
+     *   epd_quality のまま : 8 x 21           = 168
+     *   epd_fast + 最終品質: 8 x 11 + 21      = 109  （約1.5倍速）
+     *   epd_fastest + 同上 : 8 x  7 + 21      =  77  （約2.2倍速）
+     *
+     * @param mode epd_quality / epd_text / epd_fast / epd_fastest
+     */
+    void setTransitionEpdMode(lgfx::v1::epd_mode_t mode) { _transitionEpdMode = mode; }
+
+    /** @brief トランジション中のEPD描画モードを取得する */
+    lgfx::v1::epd_mode_t getTransitionEpdMode() const { return _transitionEpdMode; }
+
+    /**
+     * @brief 残像（焼き付き）を除去する（画面は白で終わる）
+     *
+     * 白→黒→白の反転シーケンスで全画素を強制的に駆動し、
+     * 蓄積した残像を消す。キャンバスの内容は描き直さない。
+     *
+     * **static メソッドなので `SimpleTransition` のインスタンスが無くても呼べる。**
+     * 起動直後（`SimpleTransition` を生成する前）に呼びたいためこの形にしている。
+     *
+     * ```cpp
+     * display.begin();
+     * SimpleTransition::clearGhosting(&display);   // インスタンス生成前でも可
+     * ```
+     *
+     * 電子ペーパーは「変化した画素だけを駆動する」部分更新を繰り返すと、
+     * 駆動されなかった画素に前の像が薄く残る（ghosting）。
+     * また片方向の塗りつぶし1回では粒子が完全にリセットされないため、
+     * 反転を挟む必要がある。
+     *
+     * **起動直後に呼ぶことを強く推奨する。**
+     * `Panel_EPD` は初期化時に「画面は全白」と仮定して内部バッファを埋めるが
+     * （`_buf` を 0xFF、`_step_framebuf` を 0xFFFF で初期化）、
+     * E-Paper はリセットしても直前の像を保持している。
+     * この不一致があると、実際は黒い画素に「白から」の波形がかかり
+     * 駆動しきれずに前の像が残る。
+     * これが「コールド起動は比較的きれいだが、リセットすると残像がひどい」の原因。
+     * 起動時に本メソッドを呼んで物理状態をドライバの仮定（全白）へ合わせると、
+     * リセット後の残像を大幅に減らせる。
+     *
+     * @param display 対象のディスプレイ
+     * @param mode    除去に使うEPDモード。既定の epd_quality が最も効果が高い
+     */
+    static void clearGhosting(M5GFX* display,
+                              lgfx::v1::epd_mode_t mode = lgfx::v1::epd_mode_t::epd_quality);
+
+    /**
+     * @brief 画面全体を再駆動してコントラストを回復する（内容は変えない・フラッシュなし）
+     *
+     * **static メソッド。インスタンス不要。**
+     *
+     * 電子ペーパーの更新は `_range_mod`（描画範囲のバウンディングボックス）に対して
+     * のみ行われ、範囲外の画素には電圧がかからない。
+     * そのため一部だけを描き続けると、**描画していない領域が徐々に薄くなる**。
+     * 例えば文字を書き換え続けると、文字の周囲だけがドリフトして淡くなる。
+     *
+     * 本メソッドは更新範囲を全画面に指定し、
+     * 内容を変えないまま全画素へ波形をかけ直す。
+     *
+     * @note `display()` に渡すのは**物理**サイズ（`config().panel_width/panel_height`
+     *       = 960x540）であり、論理サイズ（`width()/height()` = 540x960）ではない。
+     *       理由は実装のコメントを参照。
+     * `clearGhosting()` と違い白黒反転を行わないので**画面のフラッシュがなく**、
+     * コストも約1/3（フルリフレッシュ1回分）で済む。
+     *
+     * | 用途 | 使うもの | フラッシュ | コスト目安 |
+     * |---|---|---|---|
+     * | 描画していない領域の退色を戻す | `refreshScreen()` | なし | 走査21回 |
+     * | 蓄積した残像を消す・起動時の同期 | `clearGhosting()` | あり | 走査63回 |
+     *
+     * テキストやタッチ結果を描くたびに呼ぶ必要はない。
+     * 数回に一度、あるいは操作待ちに入る直前などで十分。
+     *
+     * @param display 対象のディスプレイ
+     * @param mode    使用するEPDモード。既定の epd_quality が最も濃く戻る
+     */
+    static void refreshScreen(M5GFX* display,
+                              lgfx::v1::epd_mode_t mode = lgfx::v1::epd_mode_t::epd_quality);
+
+    /**
+     * @brief 残像を除去してからメインキャンバスの内容を描き直す
+     *
+     * `clearGhosting()` の後にメインキャンバスを転送する。
+     * 表示中の画面を維持したまま残像だけ消したい場合に使う。
+     *
+     * 時間がかかる（フルリフレッシュ数回分）ので、
+     * 場面の区切りやアイドル時など、遅延が許容できる場面で呼ぶこと。
+     *
+     * @param mode 除去に使うEPDモード
+     */
+    void refreshDisplay(lgfx::v1::epd_mode_t mode = lgfx::v1::epd_mode_t::epd_quality);
     
     /**
-     * @brief E-Paper最適化プリセット関数
-     * 各プリセットはE-Paperでの実測データに基づいて最適化済み
+     * @brief トランジションのプリセット
+     *
+     * 注意: 現状どこからも呼ばれていない（main は startTransition() を直接呼ぶ）。
+     * また括弧内の所要時間は実測値ではないため、目安として扱わないこと
+     * （1ステップごとに fillScreen + 部分転送で画面更新が2回走るため、
+     *   実際にはこれより大幅に遅い可能性が高い）。
      */
-    
+
     // 基本的な場面転換（6ステップ、約0.7秒）
     bool startSceneChange() { return startTransition(SimpleTransitionType::FADE_IN, 6); }
     
@@ -164,31 +299,13 @@ public:
     // 縦スクロール風（シナリオ進行用、5ステップ）
     bool startStoryScroll() { return startTransition(SimpleTransitionType::SLIDE_DOWN, 5); }
     
-    /**
-     * @brief カスタムE-Paper最適化設定
-     * ユーザー指定のパラメータもE-Paper向けに自動調整
-     */
-    static SimpleTransitionType getOptimalTypeForEPaper(SimpleTransitionType requested) {
-        // E-Paperで特に高速な効果を推奨
-        switch (requested) {
-            case SimpleTransitionType::FADE_IN:
-            case SimpleTransitionType::WIPE_HORIZONTAL:
-            case SimpleTransitionType::WIPE_VERTICAL:
-            case SimpleTransitionType::SLIDE_LEFT:
-            case SimpleTransitionType::SLIDE_RIGHT:
-                return requested;  // これらは最適化済み
-            default:
-                return SimpleTransitionType::FADE_IN;  // 最も安定した効果
-        }
-    }
-    
-    static int getOptimalStepsForEPaper(int requested_steps) {
-        // E-Paperに最適なステップ数に調整
-        if (requested_steps <= 3) return 4;        // 最低4ステップ
-        if (requested_steps <= 6) return 6;        // 標準6ステップ
-        if (requested_steps <= 10) return 8;       // 演出用8ステップ
-        return 8;  // 最大8ステップに制限
-    }
+    // 補足:
+    // かつてここに getOptimalTypeForEPaper() / getOptimalStepsForEPaper() という
+    // static ヘルパーがあったが、どこからも呼ばれておらず、
+    // 「E-Paper向けに自動調整する」という記述だけが残っている状態だった。
+    // 実際に startTransition() が行うのはステップ数を [1, 8] にクランプすることのみ。
+    // 誤解を招くため削除した。自動調整が必要になった場合は
+    // startTransition() 側に実装し、呼び出し経路を必ず用意すること。
 };
 
 #endif // _SIMPLE_TRANSITION_HPP_

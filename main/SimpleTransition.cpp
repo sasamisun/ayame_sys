@@ -13,20 +13,91 @@ static const char* TAG = "EPAPER_TRANSITION";
 /**
  * @brief E-Paper最適化の定数
  */
-static const int EPAPER_BLOCK_SIZE = 128;           // 大きなブロック単位で処理
-static const int EPAPER_OPTIMAL_STEPS = 6;         // E-Paperに最適なステップ数
-static const int EPAPER_FAST_STEPS = 4;            // 高速モード用ステップ数
-static const int EPAPER_SLOW_STEPS = 8;            // 演出用ステップ数
+static const int EPAPER_SLOW_STEPS = 8;            // 演出用ステップ数（ステップ数の上限）
+// EPAPER_OPTIMAL_STEPS / EPAPER_FAST_STEPS は参照されていなかったため削除した。
+//
+// EPAPER_BLOCK_SIZE(128) も削除した。
+// 各効果が表示領域を 128px 境界に丸めていたが、
+//   ・540x960 に対して丸めると幅は4段階(128/256/384/512)、高さは7段階しか変化せず、
+//     8ステップ指定しても半数のステップが前と同じ絵を描き直すだけになる
+//   ・最終ステップでも端（幅なら28px）が欠けるため showImmediate() での
+//     全画面再転送が必要になっていた
+//   ・転送はクリップ矩形＋pushSprite の1回なので、丸めても転送回数は減らない
+// と、コストだけ残って利点がない状態だった。
+
+/**
+ * @brief 現在のステップ進捗（0.0〜1.0）
+ */
+float SimpleTransition::calcStepProgress() const
+{
+    // 「このステップを描き終えた時点の進捗」を返す。
+    //
+    // 従来は _currentStep / (_totalSteps - 1) で、
+    //   ・step 0 で progress = 0.0 になり、最初のステップが必ず
+    //     「何も表示しない」空振りになっていた
+    //   ・_totalSteps == 1 のとき 0除算で NaN を生んでいた
+    // という2つの問題があった。
+    // (_currentStep + 1) / _totalSteps にすると
+    // step 0 で 1/N、最終ステップでちょうど 1.0 になり、
+    // 全ステップが表示を進めるうえ 0除算も起きない。
+    if (_totalSteps <= 0) {
+        return 1.0f;
+    }
+
+    const float progress = static_cast<float>(_currentStep + 1)
+                         / static_cast<float>(_totalSteps);
+    return std::min(1.0f, std::max(0.0f, progress));
+}
 
 /**
  * @brief コンストラクタ
  */
 SimpleTransition::SimpleTransition(M5GFX* display)
+    // 初期化順はヘッダの宣言順に合わせること（-Werror=reorder）
     : _display(display), _mainCanvas(nullptr), _initialized(false), _use_psram(true),
       _isActive(false), _type(SimpleTransitionType::NONE), _currentStep(0), _totalSteps(0),
+      _transitionEpdMode(lgfx::v1::epd_mode_t::epd_fast),
+      _savedEpdMode(lgfx::v1::epd_mode_t::epd_quality),
+      _epdModeOverridden(false),
       _onComplete(nullptr), _onStep(nullptr)
 {
-    ESP_LOGI(TAG, "E-Paper最適化SimpleTransition constructor");
+    ESP_LOGI(TAG, "SimpleTransition constructor");
+}
+
+/**
+ * @brief EPD描画モードを高速モードへ切り替える（開始前のモードを退避）
+ */
+void SimpleTransition::beginFastEpdMode()
+{
+    if (!_display || _epdModeOverridden) {
+        return;
+    }
+
+    _savedEpdMode = _display->getEpdMode();
+    if (_savedEpdMode == _transitionEpdMode) {
+        return;  // 既に同じモードなら何もしない
+    }
+
+    _display->setEpdMode(_transitionEpdMode);
+    _epdModeOverridden = true;
+
+    ESP_LOGD(TAG, "EPD mode %d -> %d (transition)",
+             static_cast<int>(_savedEpdMode), static_cast<int>(_transitionEpdMode));
+}
+
+/**
+ * @brief EPD描画モードを開始前の値へ戻す
+ */
+void SimpleTransition::endFastEpdMode()
+{
+    if (!_display || !_epdModeOverridden) {
+        return;
+    }
+
+    _display->setEpdMode(_savedEpdMode);
+    _epdModeOverridden = false;
+
+    ESP_LOGD(TAG, "EPD mode restored to %d", static_cast<int>(_savedEpdMode));
 }
 
 /**
@@ -136,7 +207,24 @@ bool SimpleTransition::startTransition(SimpleTransitionType type, int steps)
         }
         return true;
     }
-    
+
+    // 中間フレームは高速モードで描く。
+    // Panel_EPD のリフレッシュは LUT のステップ数だけパネル全体を走査するため、
+    // 所要時間はモードでほぼ決まる（更新範囲の広さには依存しない）。
+    // 開始直後のクリアもこのモードで行いたいので、fillScreen より前に切り替える。
+    beginFastEpdMode();
+
+    // 画面のクリアはここで1回だけ行う。
+    //
+    // 従来は各描画メソッドが毎ステップ _display->fillScreen(TFT_BLACK) を
+    // 実行してから部分転送しており、1ステップあたり
+    // 「全画面クリア」＋「部分転送」の2回分の画面更新が発生していた。
+    //
+    // 各効果はいずれも「表示済みの領域が単調に広がる」累積的な展開であり、
+    // 既に出した部分は次のステップでも同じ内容になる。
+    // したがってクリアは開始時の1回で足りる。
+    _display->fillScreen(TFT_BLACK);
+
     return true;
 }
 
@@ -181,6 +269,8 @@ bool SimpleTransition::update()
             break;
             
         default:
+            // 未知の種別。モードを戻してから即時表示する
+            endFastEpdMode();
             showImmediate();
             _isActive = false;
             if (_onComplete) {
@@ -195,13 +285,39 @@ bool SimpleTransition::update()
     // 完了チェック
     if (_currentStep >= _totalSteps) {
         _isActive = false;
-        showImmediate();  // 最終画面を確実に表示
-        
+
+        // 中間フレームは高速モードで描いてきたので、
+        // 元のモード（通常は epd_quality）へ戻して最終画面を描き直す。
+        // ここだけ全画面を1回転送するが、中間ステップを高速モードにした分の
+        // 短縮が大きく上回る。
+        //
+        //   8ステップの目安（パネル走査回数）
+        //     全部 epd_quality        : 8 x 21      = 168
+        //     epd_fast + 最終品質描画 : 8 x 11 + 21 = 109
+        //     epd_fastest + 同上      : 8 x  7 + 21 =  77
+        if (_epdModeOverridden) {
+            endFastEpdMode();
+
+            // 更新タスクがアイドルになるまで待ってから最終画面を描く。
+            //
+            // Panel_EPD の更新タスクは
+            //     bool refresh = (remain == 0);
+            //     if (refresh && mode != epd_fastest) { 全画素を駆動 }
+            //     else                                { 変化した画素のみ駆動 }
+            // という判定をしており、前の更新が残っている（remain > 0）間は
+            // 部分更新に落ちて残像が消えない。
+            //
+            // 待たずに showImmediate() を呼ぶと、せっかく品質モードへ戻しても
+            // 部分更新のまま最終画面が確定し、残像が残ったままになる。
+            _display->waitDisplay();
+            showImmediate();   // 元のモードでフルリフレッシュして確定させる
+        }
+
         if (_onComplete) {
             _onComplete();
         }
-        
-        ESP_LOGI(TAG, "E-Paper最適化transition completed! ⚡");
+
+        ESP_LOGI(TAG, "transition completed");
         return false;
     }
     
@@ -209,91 +325,83 @@ bool SimpleTransition::update()
 }
 
 /**
- * @brief E-Paper最適化フェードイン描画
- * 段階的な矩形表示で高速化
+ * @brief フェードイン描画（上端から段階的に表示）
+ *
+ * 名称はフェードだが、1bpp/グレースケールのEPDで階調フェードはできないため
+ * 実体は「上から下への段階表示」。
  */
 void SimpleTransition::drawFadeInStepOptimized()
 {
-    float progress = static_cast<float>(_currentStep) / static_cast<float>(_totalSteps - 1);
-    progress = std::min(1.0f, progress);
-    
-    ESP_LOGD(TAG, "E-Paper optimized fade step %d/%d (%.1f%%)", 
+    const float progress = calcStepProgress();
+
+    ESP_LOGD(TAG, "fade step %d/%d (%.1f%%)",
              _currentStep, _totalSteps, progress * 100.0f);
-    
-    if (progress < 0.3f) {
-        // 前期：黒い画面（1回のfillScreen）
-        _display->fillScreen(TFT_BLACK);
-    } else if (progress < 0.7f) {
-        // 中期：上部から段階的に表示（大きなブロック単位）
-        int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * ((progress - 0.3f) / 0.4f));
-        
-        // 高速化：大きなブロック単位でのコピー
-        reveal_height = (reveal_height / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;  // ブロック境界に調整
-        
-        _display->fillScreen(TFT_BLACK);
-        if (reveal_height > 0) {
-            drawOptimizedRegion(0, 0, SIMPLE_TRANSITION_WIDTH, reveal_height);
-        }
-    } else {
-        // 後期：完全表示（1回のpushSprite）
-        _mainCanvas->pushSprite(0, 0);
+
+    // 進捗にそのまま比例させる。
+    //
+    // 従来は progress を 0.3 / 0.7 で3区間に分け、
+    //   ・progress < 0.3 は fillScreen だけで何も表示しない
+    //   ・progress >= 0.7 は一気に全体表示
+    // としていた。8ステップなら前半2ステップが「黒画面を描き直すだけ」で、
+    // 電子ペーパーの最も重い操作を2回分空費していた。
+    // クリアは startTransition() に移したので、ここは表示を進めることに専念する。
+    const int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
+
+    if (reveal_height > 0) {
+        drawOptimizedRegion(0, 0, SIMPLE_TRANSITION_WIDTH, reveal_height);
     }
 }
 
 /**
- * @brief E-Paper最適化スライド描画
- * 作業キャンバスに合成してから一括表示
+ * @brief スライド描画（キャンバス自体を画面外から移動させる）
+ *
+ * 従来はワイプと同じ実装だった。
+ * drawOptimizedRegion(x, y, w, h) はキャンバスの (x, y) を画面の同じ (x, y) に
+ * 転送するため、画像は動かず端から現れるだけ＝ワイプになっていた。
+ * その結果 SLIDE 4種と WIPE 2種が方向以外まったく同じ効果になっていた。
+ *
+ * 本実装ではキャンバスの描画位置そのものをオフセットし、
+ * 画面外から滑り込ませる。LovyanGFX の pushImage() は負座標を
+ * クリップして転送元オフセットに変換するため、画面内に入る部分だけが転送される。
  */
 void SimpleTransition::drawSlideStepOptimized()
 {
-    float progress = static_cast<float>(_currentStep) / static_cast<float>(_totalSteps - 1);
-    progress = std::min(1.0f, progress);
-    
-    ESP_LOGD(TAG, "E-Paper optimized slide step %d/%d (%.1f%%)", 
+    const float progress = calcStepProgress();
+
+    ESP_LOGD(TAG, "slide step %d/%d (%.1f%%)",
              _currentStep, _totalSteps, progress * 100.0f);
-    
-    // 背景を黒でクリア
-    _display->fillScreen(TFT_BLACK);
-    
-    int reveal_width = SIMPLE_TRANSITION_WIDTH;
-    int reveal_height = SIMPLE_TRANSITION_HEIGHT;
-    int offset_x = 0, offset_y = 0;
-    
+
+    // progress=0 で画面外、progress=1 で定位置(0,0)に収まるようにする
+    int dx = 0;
+    int dy = 0;
+
     switch (_type) {
         case SimpleTransitionType::SLIDE_LEFT:
-            // 左からスライドイン（ブロック境界に調整）
-            reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
-            reveal_width = (reveal_width / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
-            offset_x = SIMPLE_TRANSITION_WIDTH - reveal_width;
+            // 左端から入ってきて右へ進む
+            dx = static_cast<int>(SIMPLE_TRANSITION_WIDTH * (progress - 1.0f));
             break;
-            
+
         case SimpleTransitionType::SLIDE_RIGHT:
-            // 右からスライドイン
-            reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
-            reveal_width = (reveal_width / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
+            // 右端から入ってきて左へ進む
+            dx = static_cast<int>(SIMPLE_TRANSITION_WIDTH * (1.0f - progress));
             break;
-            
+
         case SimpleTransitionType::SLIDE_UP:
-            // 上からスライドイン
-            reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
-            reveal_height = (reveal_height / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
-            offset_y = SIMPLE_TRANSITION_HEIGHT - reveal_height;
+            // 上端から入ってきて下へ進む
+            dy = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * (progress - 1.0f));
             break;
-            
+
         case SimpleTransitionType::SLIDE_DOWN:
-            // 下からスライドイン
-            reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
-            reveal_height = (reveal_height / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
+            // 下端から入ってきて上へ進む
+            dy = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * (1.0f - progress));
             break;
-            
+
         default:
             break;
     }
-    
-    // E-Paper最適化：直接描画（作業キャンバス不要）
-    if (reveal_width > 0 && reveal_height > 0) {
-        drawOptimizedRegion(offset_x, offset_y, reveal_width, reveal_height);
-    }
+
+    // 画面外にはみ出した分は pushImage() 側でクリップされる
+    _mainCanvas->pushSprite(_display, dx, dy);
 }
 
 /**
@@ -301,19 +409,16 @@ void SimpleTransition::drawSlideStepOptimized()
  */
 void SimpleTransition::drawWipeStepOptimized()
 {
-    float progress = static_cast<float>(_currentStep) / static_cast<float>(_totalSteps - 1);
-    progress = std::min(1.0f, progress);
+    const float progress = calcStepProgress();
     
     ESP_LOGD(TAG, "E-Paper optimized wipe step %d/%d (%.1f%%)", 
              _currentStep, _totalSteps, progress * 100.0f);
     
-    // 背景を黒でクリア
-    _display->fillScreen(TFT_BLACK);
+    // 画面のクリアは startTransition() で1回だけ行う（累積展開のため再クリア不要）
     
     if (_type == SimpleTransitionType::WIPE_HORIZONTAL) {
         // 水平ワイプ（ブロック境界に調整）
         int reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
-        reveal_width = (reveal_width / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
         
         if (reveal_width > 0) {
             drawOptimizedRegion(0, 0, reveal_width, SIMPLE_TRANSITION_HEIGHT);
@@ -321,7 +426,6 @@ void SimpleTransition::drawWipeStepOptimized()
     } else {
         // 垂直ワイプ
         int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
-        reveal_height = (reveal_height / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
         
         if (reveal_height > 0) {
             drawOptimizedRegion(0, 0, SIMPLE_TRANSITION_WIDTH, reveal_height);
@@ -334,21 +438,17 @@ void SimpleTransition::drawWipeStepOptimized()
  */
 void SimpleTransition::drawRevealCenterStepOptimized()
 {
-    float progress = static_cast<float>(_currentStep) / static_cast<float>(_totalSteps - 1);
-    progress = std::min(1.0f, progress);
+    const float progress = calcStepProgress();
     
     ESP_LOGD(TAG, "E-Paper optimized reveal center step %d/%d (%.1f%%)", 
              _currentStep, _totalSteps, progress * 100.0f);
     
-    // 背景を黒でクリア
-    _display->fillScreen(TFT_BLACK);
+    // 画面のクリアは startTransition() で1回だけ行う（累積展開のため再クリア不要）
     
     // 中央から展開する矩形サイズを計算（ブロック境界に調整）
     int reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
     int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
     
-    reveal_width = (reveal_width / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
-    reveal_height = (reveal_height / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
     
     if (reveal_width > 0 && reveal_height > 0) {
         int x = (SIMPLE_TRANSITION_WIDTH - reveal_width) / 2;
@@ -363,21 +463,17 @@ void SimpleTransition::drawRevealCenterStepOptimized()
  */
 void SimpleTransition::drawRevealCornerStepOptimized()
 {
-    float progress = static_cast<float>(_currentStep) / static_cast<float>(_totalSteps - 1);
-    progress = std::min(1.0f, progress);
+    const float progress = calcStepProgress();
     
     ESP_LOGD(TAG, "E-Paper optimized reveal corner step %d/%d (%.1f%%)", 
              _currentStep, _totalSteps, progress * 100.0f);
     
-    // 背景を黒でクリア
-    _display->fillScreen(TFT_BLACK);
+    // 画面のクリアは startTransition() で1回だけ行う（累積展開のため再クリア不要）
     
     // 左上角から展開（ブロック境界に調整）
     int reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
     int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
     
-    reveal_width = (reveal_width / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
-    reveal_height = (reveal_height / EPAPER_BLOCK_SIZE) * EPAPER_BLOCK_SIZE;
     
     if (reveal_width > 0 && reveal_height > 0) {
         drawOptimizedRegion(0, 0, reveal_width, reveal_height);
@@ -385,83 +481,39 @@ void SimpleTransition::drawRevealCornerStepOptimized()
 }
 
 /**
- * @brief E-Paper最適化領域描画
- * 大きなブロック単位での効率的な描画
+ * @brief キャンバスの指定領域だけを画面へ転送する
+ *
+ * 描画先にクリップ矩形を設定してからキャンバス全体を pushSprite する。
+ * LovyanGFX の pushImage() はクリップ矩形で転送範囲を切り詰めてから
+ * writeImage() を呼ぶ実装なので（LGFXBase.cpp で確認）、
+ * 実際に転送されるのは指定領域のみになる。
+ *
+ * 従来はここで new uint16_t[w*h] を確保し、readRect() で読み出してから
+ * pushImage() していたが、以下の問題があった:
+ *   ・毎ステップで最大 540*960*2 = 約1MB の確保/解放を繰り返す
+ *   ・キャンバスは実際には1bpp（64,800バイト）なので、
+ *     中間バッファは実データの16倍のサイズになっていた
+ *   ・1bpp -> RGB565 -> 1bpp という往復変換のコストを払っていた
+ *   ・例外が無効（CONFIG_COMPILER_CXX_EXCEPTIONS 未設定）のため
+ *     new は失敗時に nullptr を返さず abort する。
+ *     そのため用意されていた nullptr フォールバックは到達不能だった
+ * 中間バッファ自体が不要なので、まるごと廃した。
  */
 void SimpleTransition::drawOptimizedRegion(int x, int y, int w, int h)
 {
-    if (!_mainCanvas) return;
-    
+    if (!_mainCanvas || !_display) return;
+
     // 境界チェック
     x = std::max(0, std::min(x, SIMPLE_TRANSITION_WIDTH));
     y = std::max(0, std::min(y, SIMPLE_TRANSITION_HEIGHT));
     w = std::max(0, std::min(w, SIMPLE_TRANSITION_WIDTH - x));
     h = std::max(0, std::min(h, SIMPLE_TRANSITION_HEIGHT - y));
-    
-    if (w <= 0 || h <= 0) return;
-    
-    // E-Paper最適化：readRectとpushImageを使った効率的な部分描画
-    const int buffer_size = w * h;
-    uint16_t* pixel_buffer = new uint16_t[buffer_size];
-    
-    if (pixel_buffer) {
-        // メインキャンバスから指定領域を読み取り
-        _mainCanvas->readRect(x, y, w, h, pixel_buffer);
-        
-        // ディスプレイに一括描画
-        _display->pushImage(x, y, w, h, pixel_buffer);
-        
-        delete[] pixel_buffer;
-    } else {
-        // メモリ不足時のフォールバック：行単位で処理
-        uint16_t* line_buffer = new uint16_t[w];
-        if (line_buffer) {
-            for (int row = 0; row < h; row++) {
-                _mainCanvas->readRect(x, y + row, w, 1, line_buffer);
-                _display->pushImage(x, y + row, w, 1, line_buffer);
-            }
-            delete[] line_buffer;
-        }
-    }
-}
 
-/**
- * @brief E-Paper最適化キャンバス間コピー
- * 大きなブロック単位での効率的なコピー
- */
-void SimpleTransition::copyCanvasRegionOptimized(M5Canvas* src, M5Canvas* dst, 
-                                                int sx, int sy, int sw, int sh, int dx, int dy)
-{
-    if (!src || !dst) return;
-    
-    // 境界チェック
-    if (sx < 0 || sy < 0 || dx < 0 || dy < 0) return;
-    if (sx + sw > SIMPLE_TRANSITION_WIDTH || sy + sh > SIMPLE_TRANSITION_HEIGHT) return;
-    if (dx + sw > SIMPLE_TRANSITION_WIDTH || dy + sh > SIMPLE_TRANSITION_HEIGHT) return;
-    
-    // E-Paper最適化：readRectとpushImageを使った効率的なコピー
-    const int buffer_size = sw * sh;
-    uint16_t* pixel_buffer = new uint16_t[buffer_size];
-    
-    if (pixel_buffer) {
-        // ソースキャンバスから指定領域を読み取り
-        src->readRect(sx, sy, sw, sh, pixel_buffer);
-        
-        // デスティネーションキャンバスに描画
-        dst->pushImage(dx, dy, sw, sh, pixel_buffer);
-        
-        delete[] pixel_buffer;
-    } else {
-        // メモリ不足時のフォールバック：行単位で処理
-        uint16_t* line_buffer = new uint16_t[sw];
-        if (line_buffer) {
-            for (int row = 0; row < sh; row++) {
-                src->readRect(sx, sy + row, sw, 1, line_buffer);
-                dst->pushImage(dx, dy + row, sw, 1, line_buffer);
-            }
-            delete[] line_buffer;
-        }
-    }
+    if (w <= 0 || h <= 0) return;
+
+    _display->setClipRect(x, y, w, h);
+    _mainCanvas->pushSprite(_display, 0, 0);
+    _display->clearClipRect();
 }
 
 /**
@@ -471,7 +523,135 @@ void SimpleTransition::stop()
 {
     if (_isActive) {
         _isActive = false;
-        ESP_LOGI(TAG, "E-Paper最適化transition stopped");
+        ESP_LOGI(TAG, "transition stopped");
+    }
+
+    // 中断されてもEPDモードは必ず元へ戻す。
+    // 戻し忘れると以降のアプリ全体の描画が高速モード（低画質）のままになる。
+    endFastEpdMode();
+}
+
+/**
+ * @brief 残像を除去する（画面は白で終わる）
+ *
+ * static メソッド。SimpleTransition のインスタンスが無くても呼べるので、
+ * 起動直後（インスタンス生成前）にも使える。
+ */
+void SimpleTransition::clearGhosting(M5GFX* display, lgfx::v1::epd_mode_t mode)
+{
+    if (!display) {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Clearing ghosting (mode=%d)", static_cast<int>(mode));
+
+    // トランジション中に呼ばれてもモードが壊れないよう、現在値を退避する
+    const lgfx::v1::epd_mode_t previous = display->getEpdMode();
+    display->setEpdMode(mode);
+
+    // 反転シーケンスで全画素を強制的に駆動する。
+    //
+    // 各 fillScreen の前後で waitDisplay() を挟むのは、
+    // 更新タスクがビジー（remain > 0）だと
+    //     bool refresh = (remain == 0);
+    // が false になり、部分更新（変化した画素のみ駆動）に落ちて
+    // 全画素が駆動されないため。
+    //
+    // 白→黒→白と反転させるのは、片方向1回では粒子が完全にリセットされず
+    // 前の像が残るため。最後を白で終えることで、
+    // Panel_EPD が初期化時に仮定する状態（全白）とも一致する。
+    display->waitDisplay();
+    display->fillScreen(TFT_WHITE);
+    display->waitDisplay();
+    display->fillScreen(TFT_BLACK);
+    display->waitDisplay();
+    display->fillScreen(TFT_WHITE);
+    display->waitDisplay();
+
+    display->setEpdMode(previous);
+}
+
+/**
+ * @brief 画面全体を再駆動してコントラストを回復する（内容は変えない）
+ *
+ * static メソッド。インスタンス不要。
+ */
+void SimpleTransition::refreshScreen(M5GFX* display, lgfx::v1::epd_mode_t mode)
+{
+    if (!display) {
+        return;
+    }
+
+    ESP_LOGD(TAG, "Refreshing full screen (mode=%d)", static_cast<int>(mode));
+
+    const lgfx::v1::epd_mode_t previous = display->getEpdMode();
+    display->setEpdMode(mode);
+
+    // 更新タスクがビジー（remain > 0）だと
+    //     bool refresh = (remain == 0);
+    // が false になり、変化した画素だけを駆動する部分更新に落ちる。
+    // 全画素を駆動させたいのでアイドルを待つ。
+    display->waitDisplay();
+
+    // 更新範囲を全画面に指定して再駆動する。
+    // 描画内容（パネル側の _buf）はそのままなので見た目は変わらないが、
+    // 全画素に波形がかかるので薄くなっていた領域のコントラストが戻る。
+    //
+    // 【重要】display() は「物理」座標を取る。論理座標ではない。
+    //
+    // 描画系（writeImage 等）は _update_transferred_rect() が _rotate_pos() で
+    // 論理→物理に変換してから更新範囲 _range_mod を広げるのに対し、
+    // Panel_EPD::display(x, y, w, h) は引数を変換せず _range_mod に入れる。
+    // つまり _range_mod は常に物理座標であり、display() の引数も物理座標。
+    //
+    // このパネルの物理形状は 960x540（横長）で、offset_rotation = 3 により
+    // 論理座標が 540x960（縦長）になっている。ここで論理サイズを渡すと
+    // 物理 x が 0..539（960 列中）にしか広がらず、右側 420 列が駆動されない。
+    // その帯は setRotation() の値によらず同じ位置に残る（引数が回転に依存
+    // しない定数のため）。加えて物理 y が 0..959 と実際の 540 行を超え、
+    // 更新タスクが _buf の範囲外を読む。
+    const auto& panelConfig = display->panel()->config();
+
+    // TODO: 残像調査用の一時ログ。原因特定後に削除する。
+    ESP_LOGI(TAG,
+             "refreshScreen: logical=%dx%d panel=%dx%d memory=%dx%d "
+             "offset=(%d,%d) offset_rotation=%d rotation=%d",
+             static_cast<int>(display->width()),
+             static_cast<int>(display->height()),
+             static_cast<int>(panelConfig.panel_width),
+             static_cast<int>(panelConfig.panel_height),
+             static_cast<int>(panelConfig.memory_width),
+             static_cast<int>(panelConfig.memory_height),
+             static_cast<int>(panelConfig.offset_x),
+             static_cast<int>(panelConfig.offset_y),
+             static_cast<int>(panelConfig.offset_rotation),
+             static_cast<int>(display->getRotation()));
+
+    display->display(0, 0, panelConfig.panel_width, panelConfig.panel_height);
+
+    display->waitDisplay();
+    display->setEpdMode(previous);
+}
+
+/**
+ * @brief 残像を除去してからメインキャンバスの内容を描き直す
+ */
+void SimpleTransition::refreshDisplay(lgfx::v1::epd_mode_t mode)
+{
+    if (!_display) {
+        return;
+    }
+
+    clearGhosting(_display, mode);
+
+    if (_mainCanvas) {
+        const lgfx::v1::epd_mode_t previous = _display->getEpdMode();
+        _display->setEpdMode(mode);
+
+        _mainCanvas->pushSprite(_display, 0, 0);
+        _display->waitDisplay();
+
+        _display->setEpdMode(previous);
     }
 }
 

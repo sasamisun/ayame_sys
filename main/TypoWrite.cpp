@@ -9,13 +9,24 @@ static const char *TAG = "TypoWrite";
 // 固定微調整値の定数定義
 // ========================================
 
+// 文字種別ごとの微調整値。
+//
+// 全カテゴリの倍率は 1.0（＝調整なし）を既定とする。
+// 以前は全カテゴリが 1.1 だったため、
+//   ・カテゴリ分類の仕組みが「全文字を一律1.1倍」以外の意味を持たない
+//   ・倍率が 1.0 でないため drawEnhancedCharacter() の高速パス判定が常に外れ、
+//     1文字ごとにスプライト生成→塗り→転送という重い経路を通る
+//   ・しかも横書きの pushSprite は等倍転送なので拡大されず、
+//     縦書き（pushRotateZoom）だけ 1.1倍になりサイズが不一致
+// という状態だった。
+// 個別の文字種を調整したい場合は該当する名前空間の値だけを変更すること。
 namespace TypoWriteConstants
 {
     // 小文字（ひらがな・カタカナ）の調整値
     namespace SmallChar
     {
-        constexpr float WIDTH_SCALE = 1.1f;
-        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr float WIDTH_SCALE = 1.0f;
+        constexpr float HEIGHT_SCALE = 1.0f;
         constexpr int SPACING_OFFSET = 0;
         constexpr int VERTICAL_OFFSET = 0;
         constexpr int HORIZONTAL_OFFSET = 0;
@@ -24,8 +35,8 @@ namespace TypoWriteConstants
     // 句読点の調整値
     namespace Punctuation
     {
-        constexpr float WIDTH_SCALE = 1.1f;
-        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr float WIDTH_SCALE = 1.0f;
+        constexpr float HEIGHT_SCALE = 1.0f;
         constexpr int SPACING_OFFSET = 0;
         constexpr int VERTICAL_OFFSET = 0;
         constexpr int HORIZONTAL_OFFSET = 0;
@@ -34,8 +45,8 @@ namespace TypoWriteConstants
     // 括弧類の調整値
     namespace Bracket
     {
-        constexpr float WIDTH_SCALE = 1.1f;
-        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr float WIDTH_SCALE = 1.0f;
+        constexpr float HEIGHT_SCALE = 1.0f;
         constexpr int SPACING_OFFSET = 0;
         constexpr int VERTICAL_OFFSET = 0;
         constexpr int HORIZONTAL_OFFSET = 0;
@@ -44,8 +55,8 @@ namespace TypoWriteConstants
     // 横棒・長音記号の調整値
     namespace HorizontalBar
     {
-        constexpr float WIDTH_SCALE = 1.1f;
-        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr float WIDTH_SCALE = 1.0f;
+        constexpr float HEIGHT_SCALE = 1.0f;
         constexpr int SPACING_OFFSET = 0;
         constexpr int VERTICAL_OFFSET = 0;
         constexpr int HORIZONTAL_OFFSET = 0;
@@ -54,8 +65,8 @@ namespace TypoWriteConstants
     // 通常文字（調整なし）
     namespace Normal
     {
-        constexpr float WIDTH_SCALE = 1.1f;
-        constexpr float HEIGHT_SCALE = 1.1f;
+        constexpr float WIDTH_SCALE = 1.0f;
+        constexpr float HEIGHT_SCALE = 1.0f;
         constexpr int SPACING_OFFSET = 0;
         constexpr int VERTICAL_OFFSET = 0;
         constexpr int HORIZONTAL_OFFSET = 0;
@@ -195,9 +206,13 @@ void TypoWrite::initializeAllTables()
     };
 
     ESP_LOGI(TAG, "All tables initialized successfully:");
-    ESP_LOGI(TAG, "  Small char mappings: %d entries", _smallToLargeMap.size());
-    ESP_LOGI(TAG, "  Vertical glyph mappings: %d entries", _verticalGlyphMap.size());
-    ESP_LOGI(TAG, "  Character adjustments: %d categories", _charAdjustments.size());
+    // size_t を %d で出力していたため、明示キャストして %u にする
+    ESP_LOGI(TAG, "  Small char mappings: %u entries",
+             static_cast<unsigned>(_smallToLargeMap.size()));
+    ESP_LOGI(TAG, "  Vertical glyph mappings: %u entries",
+             static_cast<unsigned>(_verticalGlyphMap.size()));
+    ESP_LOGI(TAG, "  Character adjustments: %u categories",
+             static_cast<unsigned>(_charAdjustments.size()));
 }
 
 // ========================================
@@ -223,7 +238,6 @@ TypoWrite::TypoWrite(M5GFX *display)
       _useVLWParser(false),
       _lineSpacing(2),
       _charSpacing(0),
-      _columnSpacing(0),
       _currentX(0), _currentY(0),
       _enableSmallCharHandling(true),
       _smallCharSettings(SmallCharSettings::getDefault()),
@@ -289,19 +303,30 @@ CharMetrics TypoWrite::getCharMetrics(uint16_t unicode_char)
     // VLWParser優先
     if (_useVLWParser && _vlwParser && _vlwParser->isInitialized())
     {
+        // VLWCharMetrics を1回で取得する。
+        // 従来は getCharWidth() / getCharHeight() / getCharSetWidth() を
+        // 個別に呼んでおり、内部の findGlyph() が1文字あたり3回走っていた。
+        // 各アクセサのフォールバック値は getCharMetrics() と同一
+        // （width/setWidth は fontWidth、height は fontHeight）なので、
+        // まとめても結果は変わらない。
+        const VLWCharMetrics vm = _vlwParser->getCharMetrics(unicode_char);
+
         metrics = {
-            static_cast<int32_t>(_vlwParser->getCharWidth(unicode_char) * _fontSize),
-            static_cast<int32_t>(_vlwParser->getCharHeight(unicode_char) * _fontSize),
-            static_cast<int32_t>(_vlwParser->getCharSetWidth(unicode_char) * _fontSize),
+            static_cast<int32_t>(vm.width * _fontSize),
+            static_cast<int32_t>(vm.height * _fontSize),
+            static_cast<int32_t>(vm.setWidth * _fontSize),
             0 // baseline（必要に応じて追加）
         };
     }
-    else
+    else if (_font)
     {
-        // M5GFXフォールバック
+        // M5GFXフォールバック。
+        // メトリクスを問い合わせるだけの処理なので、_display の状態は変更しない。
+        // 従来はここで _display->setFont() / setTextSize() を呼んでおり、
+        // 「サイズを知りたいだけ」の呼び出しが描画設定を書き換えていた
+        // （_drawTarget がスプライトのときでも _display を触っていた）。
+        // updateFontMetric() は IFont 自身の情報から算出するため設定は不要。
         lgfx::FontMetrics fm;
-        _display->setFont(_font);
-        _display->setTextSize(_fontSize);
         _font->updateFontMetric(&fm, unicode_char);
 
         metrics = {
@@ -310,12 +335,35 @@ CharMetrics TypoWrite::getCharMetrics(uint16_t unicode_char)
             static_cast<int32_t>(fm.x_advance * _fontSize), // 送り幅
             static_cast<int32_t>(fm.baseline * _fontSize)};
     }
+    else
+    {
+        // メトリクスの取得元が無い（VLWパーサ未設定かつ _font == nullptr）。
+        // 従来はこの分岐が存在せず、_font->updateFontMetric() で
+        // nullptr 参照クラッシュしていた。
+        // 0 を返すと送り幅0で描画ループが進まなくなるため、
+        // 非退化な既定値を入れて描画を継続させる。
+        ESP_LOGW(TAG, "No metrics source for U+%04X (font=null, VLW parser unavailable)",
+                 unicode_char);
 
-    // キャッシュに保存（よく使う文字のみ）
-    if (_metricsCache.size() < 256)
-    { // キャッシュサイズ制限
-        _metricsCache[unicode_char] = metrics;
+        const int32_t fallback = static_cast<int32_t>(16 * _fontSize);
+        metrics = {fallback, fallback, fallback, 0};
     }
+
+    // キャッシュに保存する。
+    //
+    // 従来は「上限に達したら以後は一切保存しない」実装だったため、
+    // 最初に現れた256文字だけが残り、それ以降の文字は毎回ミスし続けていた。
+    // 日本語では容易に上限へ達するうえ、追い出し戦略もなかった。
+    // 上限に達したら丸ごと捨てて入れ直す（世代的な追い出し）方式に変更し、
+    // 後半のテキストでもキャッシュが効くようにする。
+    // メモリ使用量の上限は従来どおり保たれる。
+    if (_metricsCache.size() >= METRICS_CACHE_LIMIT)
+    {
+        ESP_LOGD(TAG, "Metrics cache full (%u entries), clearing",
+                 static_cast<unsigned>(_metricsCache.size()));
+        _metricsCache.clear();
+    }
+    _metricsCache[unicode_char] = metrics;
 
     return metrics;
 }
@@ -335,14 +383,11 @@ void TypoWrite::drawEnhancedCharacter(uint16_t unicode_char, int x, int y,
 }
 
 // 直接描画（最速パス）
-void TypoWrite::drawDirectCharacter(uint16_t unicode_char, int x, int y)
+// 描画先にフォント・サイズ・色をまとめて適用する（文字列描画の前に1回だけ）
+void TypoWrite::applyTextStyle(lgfx::LovyanGFX *target)
 {
-    std::string utf8_char = unicodeToUtf8(unicode_char);
+    if (!target) { return; }
 
-    // 描画先の選択（明示的なキャストを追加）
-    lgfx::LovyanGFX *target = _drawTarget ? static_cast<lgfx::LovyanGFX *>(_drawTarget) : static_cast<lgfx::LovyanGFX *>(_display);
-
-    // フォント設定
     if (_isCustomFont && _vlwFont)
     {
         target->loadFont(_vlwFont);
@@ -353,13 +398,45 @@ void TypoWrite::drawDirectCharacter(uint16_t unicode_char, int x, int y)
     }
 
     target->setTextSize(_fontSize);
-    target->setTextColor(_color, _bgColor);
-    target->drawString(utf8_char.c_str(), _x + x, _y + y);
+
+    // 背景透明モードでは1引数版の setTextColor を使う。
+    // LovyanGFX は前景色と背景色が同一のとき背景を塗らないため、これで透過になる。
+    // 従来は無条件に setTextColor(_color, _bgColor) としており、
+    // _bgColor が TFT_TRANSPARENT(0x0120) のときその色の矩形が文字ごとに描かれていた。
+    if (_transparentBg)
+    {
+        target->setTextColor(_color);
+    }
+    else
+    {
+        target->setTextColor(_color, _bgColor);
+    }
+}
+
+// applyTextStyle() で読み込んだフォントを解放する（文字列描画の後に1回だけ）
+void TypoWrite::releaseTextStyle(lgfx::LovyanGFX *target)
+{
+    if (!target) { return; }
 
     if (_isCustomFont && _vlwFont)
     {
         target->unloadFont();
     }
+}
+
+void TypoWrite::drawDirectCharacter(uint16_t unicode_char, int x, int y)
+{
+    // フォント・サイズ・色の設定は drawText() が描画開始前に
+    // applyTextStyle() で1回だけ済ませている。
+    // 以前はこのメソッド内で1文字ごとに loadFont()/unloadFont() まで
+    // 実行しており、VLWヘッダの解析が文字数分繰り返されていた。
+    std::string utf8_char = unicodeToUtf8(unicode_char);
+
+    lgfx::LovyanGFX *target = _drawTarget
+        ? static_cast<lgfx::LovyanGFX *>(_drawTarget)
+        : static_cast<lgfx::LovyanGFX *>(_display);
+
+    target->drawString(utf8_char.c_str(), _x + x, _y + y);
 }
 
 void TypoWrite::drawEnhancedCharacterWithRotation(uint16_t unicode_char, int x, int y,
@@ -377,21 +454,57 @@ void TypoWrite::drawEnhancedCharacterWithRotation(uint16_t unicode_char, int x, 
     drawScaledCharacterWithRotation(unicode_char, x, y, widthScale, heightScale, rotation);
 }
 
+void TypoWrite::getEmBoxSize(int &emW, int &emH)
+{
+    // 基本は代表文字（全角スペース相当）のメトリクス。
+    // これらは _fontSize を掛けた値になっている。
+    emW = getMaxCharWidth();
+    emH = getLineHeight();
+
+    // 代表文字より大きなグリフが存在しうるので、実測の最大値でも押し広げる。
+    // 例: shippori_16 は代表幅16に対し最大グリフ幅が18ある。
+    if (_useVLWParser && _vlwParser && _vlwParser->isInitialized())
+    {
+        const int maxW = static_cast<int>(_vlwParser->getMaxCharWidth() * _fontSize);
+        const int maxH = static_cast<int>(_vlwParser->getMaxCharHeight() * _fontSize);
+        if (maxW > emW) { emW = maxW; }
+        if (maxH > emH) { emH = maxH; }
+    }
+
+    if (emW < 1) { emW = 1; }
+    if (emH < 1) { emH = 1; }
+}
+
+bool TypoWrite::ensureCharSprite(int w, int h)
+{
+    if (!_charSprite) { return false; }
+
+    // 既に同じサイズなら作り直さない。
+    // emボックスは全文字共通なので、実際に作り直されるのは
+    // フォントやフォントサイズを変更したときだけになる。
+    if (_charSprite->width() == w && _charSprite->height() == h) { return true; }
+
+    if (_charSprite->width() > 0) { _charSprite->deleteSprite(); }
+
+    if (!_charSprite->createSprite(w, h))
+    {
+        ESP_LOGE(TAG, "createSprite(%d, %d) failed", w, h);
+        return false;
+    }
+    return true;
+}
+
 void TypoWrite::drawScaledCharacterWithRotation(uint16_t unicode_char, int x, int y,
                                                 float widthScale, float heightScale,
                                                 float rotation)
 {
-    // 簡素化：複雑なdrawUnifiedCharacterを使わずに直接実装
-    CharMetrics metrics = getCharMetrics(unicode_char);
-    
-    // 回転・スケールが不要な場合は直接描画
+    // 回転・スケールが不要な場合は直接描画（最速パス）
     if (widthScale == 1.0f && heightScale == 1.0f && rotation == 0.0f)
     {
         drawDirectCharacter(unicode_char, x, y);
         return;
     }
 
-    // ⭐ 安全性チェック：_charSpriteがnullでないことを確認
     if (!_charSprite)
     {
         ESP_LOGE(TAG, "charSprite is null! Falling back to direct drawing");
@@ -399,129 +512,83 @@ void TypoWrite::drawScaledCharacterWithRotation(uint16_t unicode_char, int x, in
         return;
     }
 
-    // スケール・回転が必要な場合はスプライト描画（簡素版）
-    float avgScale = (widthScale + heightScale) / 2.0f;
-    
-    // スプライトサイズを計算
-    int sprite_width = static_cast<int>(metrics.width * avgScale + 20);
-    int sprite_height = static_cast<int>(metrics.height * avgScale + 20);
+    // スプライトは「全文字共通の em ボックス」サイズで用意する。
+    //
+    // 以前はグリフごとに
+    //     sprite = (metrics.width * widthScale + 20) x (metrics.height * heightScale + 20)
+    // としており、スプライト寸法がグリフのビットマップ高に依存していた。
+    // 配置は pushRotateZoom の中心指定なので、
+    //     center_y = y + sprite_height / 2
+    // がグリフごとに変わってしまい、同じ列の中で基準位置が跳ねていた。
+    //   例: あ(h=15) は y+17、ー(h=7) は y+13 と 4px ずれる
+    // 一方 drawDirectCharacter() は drawString(x, y) の左上基準で一貫している。
+    // つまり通常文字と小文字・回転文字で配置基準が食い違っていた。
+    //
+    // em ボックス固定にすると全文字が同じ基準になり、
+    // かつスプライトの作り直しも起きなくなる。
+    int emW = 0;
+    int emH = 0;
+    getEmBoxSize(emW, emH);
 
-    // ⭐ 安全性向上：スプライトが作成されていない場合の初期化も含める
-    if (_charSprite->width() == 0 || _charSprite->height() == 0 || 
-        _charSprite->width() < sprite_width || _charSprite->height() < sprite_height)
+    if (!ensureCharSprite(emW, emH))
     {
-        if (_charSprite->width() > 0)  // 既存スプライトがある場合は削除
-        {
-            _charSprite->deleteSprite();
-        }
-        _charSprite->createSprite(sprite_width, sprite_height);
+        ESP_LOGE(TAG, "Failed to prepare char sprite for U+%04X. Falling back to direct drawing",
+                 unicode_char);
+        drawDirectCharacter(unicode_char, x, y);
+        return;
     }
 
-    // 背景をクリア
-    _charSprite->fillSprite(_transparentBg ? TFT_TRANSPARENT : _bgColor);
+    // 背景をクリア（塗った色を pushRotateZoom の透過キーに使う）
+    const uint16_t fillColor = _transparentBg ? static_cast<uint16_t>(TFT_TRANSPARENT) : _bgColor;
+    _charSprite->fillSprite(fillColor);
 
-    // フォント設定と描画
-    if (_isCustomFont && _vlwFont)
-    {
-        _charSprite->loadFont(_vlwFont);
-    }
-    else if (_font)
-    {
-        _charSprite->setFont(_font);
-    }
-
-    _charSprite->setTextSize(_fontSize);
-    _charSprite->setTextColor(_color, _bgColor);
-
-    std::string utf8_char = unicodeToUtf8(unicode_char);
-    _charSprite->drawString(utf8_char.c_str(), 10, 10);
-
-    if (_isCustomFont && _vlwFont)
-    {
-        _charSprite->unloadFont();
-    }
+    // グリフはスプライトの原点に描く。
+    // drawDirectCharacter() の drawString(_x + x, _y + y) と同じ左上基準になり、
+    // 両経路で配置が一致する。
+    applyTextStyle(_charSprite);
+    const std::string utf8_char = unicodeToUtf8(unicode_char);
+    _charSprite->drawString(utf8_char.c_str(), 0, 0);
+    releaseTextStyle(_charSprite);
 
     // 描画先を選択
-    lgfx::LovyanGFX *target = _drawTarget ? 
-        static_cast<lgfx::LovyanGFX *>(_drawTarget) : 
-        static_cast<lgfx::LovyanGFX *>(_display);
+    lgfx::LovyanGFX *target = _drawTarget
+        ? static_cast<lgfx::LovyanGFX *>(_drawTarget)
+        : static_cast<lgfx::LovyanGFX *>(_display);
 
-    // 回転・スケール描画
-    int center_x = _x + x + sprite_width / 2;
-    int center_y = _y + y + sprite_height / 2;
+    // pushRotateZoom はスプライトの中心を指定位置に置く。
+    // 拡大後の em ボックス左上が (_x + x, _y + y) に来るよう中心を求めることで、
+    // 直接描画と同じ左上基準になる。
+    // 回転する場合も em ボックスの中心を軸に回るため、
+    // 縦書き中の半角英数が列の中央に収まる。
+    const int center_x = _x + x + static_cast<int>(emW * widthScale / 2.0f);
+    const int center_y = _y + y + static_cast<int>(emH * heightScale / 2.0f);
 
     _charSprite->pushRotateZoom(target, center_x, center_y,
-                                rotation, avgScale, avgScale,
-                                _transparentBg ? TFT_TRANSPARENT : _bgColor);
+                                rotation, widthScale, heightScale,
+                                fillColor);
 }
 
-// 回転とスケールを適用して描画
+// スケールを適用して描画（回転なし）
 void TypoWrite::drawScaledCharacter(uint16_t unicode_char, int x, int y,
                                     float widthScale, float heightScale)
 {
-    // スケール調整が不要な場合は直接描画
+    // スケール調整が不要な場合は直接描画（最速パス）
     if (widthScale == 1.0f && heightScale == 1.0f)
     {
         drawDirectCharacter(unicode_char, x, y);
         return;
     }
 
-    // ⭐ 安全性チェック：_charSpriteがnullでないことを確認
-    if (!_charSprite)
-    {
-        ESP_LOGE(TAG, "charSprite is null in drawScaledCharacter! Falling back to direct drawing");
-        drawDirectCharacter(unicode_char, x, y);
-        return;
-    }
-
-    CharMetrics metrics = getCharMetrics(unicode_char);
-
-    // スプライトサイズを計算
-    int sprite_width = static_cast<int>(metrics.width * widthScale + 4);
-    int sprite_height = static_cast<int>(metrics.height * heightScale + 4);
-
-    // ⭐ 安全性向上：スプライトが作成されていない場合の初期化も含める
-    if (_charSprite->width() == 0 || _charSprite->height() == 0 || 
-        _charSprite->width() < sprite_width || _charSprite->height() < sprite_height)
-    {
-        if (_charSprite->width() > 0)  // 既存スプライトがある場合は削除
-        {
-            _charSprite->deleteSprite();
-        }
-        _charSprite->createSprite(sprite_width, sprite_height);
-    }
-
-    // 背景をクリア
-    _charSprite->fillSprite(_transparentBg ? TFT_TRANSPARENT : _bgColor);
-
-    // 文字を描画
-    std::string utf8_char = unicodeToUtf8(unicode_char);
-
-    if (_isCustomFont && _vlwFont)
-    {
-        _charSprite->loadFont(_vlwFont);
-    }
-    else if (_font)
-    {
-        _charSprite->setFont(_font);
-    }
-
-    _charSprite->setTextSize(_fontSize);
-    _charSprite->setTextColor(_color, _bgColor);
-    _charSprite->drawString(utf8_char.c_str(), 2, 2);
-
-    if (_isCustomFont && _vlwFont)
-    {
-        _charSprite->unloadFont();
-    }
-
-    // 描画先を取得
-    lgfx::LovyanGFX *target = _drawTarget ? 
-        static_cast<lgfx::LovyanGFX *>(_drawTarget) : 
-        static_cast<lgfx::LovyanGFX *>(_display);
-
-    // スケール適用して描画
-    _charSprite->pushSprite(target, _x + x, _y + y, _bgColor);
+    // 回転なし（0度）として回転付き実装に委譲する。
+    //
+    // 従来はここに独自のスプライト描画を持っていたが、
+    // 最後の転送が pushSprite() による等倍転送だったため
+    // widthScale / heightScale がスプライトの確保サイズにしか効かず、
+    // **実際には拡大縮小されない**という欠陥があった
+    // （メソッド名と挙動が一致していなかった）。
+    // 拡大縮小は pushRotateZoom() を使う回転付き実装側で正しく行われているので、
+    // そちらに一本化して重複も解消する。
+    drawScaledCharacterWithRotation(unicode_char, x, y, widthScale, heightScale, 0.0f);
 }
 
 // ========================================
@@ -529,58 +596,104 @@ void TypoWrite::drawScaledCharacter(uint16_t unicode_char, int x, int y,
 // ========================================
 void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
 {
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    const std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
 
-    // 描画開始位置を設定
-    _currentX = 0;
+    // 行の高さは全体で不変なのでループ外で1回だけ求める
+    const int lineHeight = getLineHeight();
+
     _currentY = 0;
+    size_t i = 0;
 
-    for (size_t i = 0; i < unicode_chars.size(); i++)
+    while (i < unicode_chars.size())
     {
-        uint16_t unicode_char = unicode_chars[i];
-
-        // 改行処理
-        if (unicode_char == '\n')
+        // 改行のみの行を消費する
+        if (unicode_chars[i] == '\n')
         {
-            _currentX = 0;
-            _currentY += getLineHeight() + _lineSpacing;
+            ++i;
+            _currentY += lineHeight + _lineSpacing;
             continue;
         }
 
-        // 横書きでは小文字フォントをそのまま使用
-        // 文字メトリクスを取得
-        CharMetrics metrics = getCharMetrics(unicode_char);
-
-        // 固定値による文字種別調整を適用
-        CharTypeAdjustment adjustment = getCharAdjustment(unicode_char);
-
-        // 調整後のメトリクス計算
-        int adjusted_width = static_cast<int>(metrics.width * adjustment.widthScale);
-        int adjusted_height = static_cast<int>(metrics.height * adjustment.heightScale);
-        int char_spacing = _charSpacing + adjustment.spacingOffset;
-
-        // 折り返し処理
-        if (_wrap && (_currentX + adjusted_width > _width))
+        // --- 1パス目: この視覚行に入る範囲と幅を測る ---
+        // TextAlignment を反映するには行の総幅が先に必要なため、
+        // 折り返しを適用した「視覚行」単位で measure してから描画する。
+        // 末尾の字間は幅に含めない（含めると中央/右揃えがずれる）。
+        size_t lineEnd = i;
+        int lineWidth = 0;
+        while (lineEnd < unicode_chars.size() && unicode_chars[lineEnd] != '\n')
         {
-            _currentX = 0;
-            _currentY += getLineHeight() + _lineSpacing;
+            const uint16_t ch = unicode_chars[lineEnd];
+            const CharMetrics metrics = getCharMetrics(ch);
+            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
+
+            // 送りはフォントが定める送り幅(setWidth)を使う。
+            // グリフのビットマップ幅(width)ではプロポーショナル字形で詰まりすぎるうえ、
+            // calculateTextSize() が setWidth で計算しているため値が食い違っていた。
+            const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
+            const int spacing = _charSpacing + adjustment.spacingOffset;
+
+            const int candidate = (lineEnd == i) ? advance
+                                                 : lineWidth + spacing + advance;
+            if (_wrap && lineEnd > i && candidate > _width)
+            {
+                break;  // ここで折り返す
+            }
+            lineWidth = candidate;
+            ++lineEnd;
         }
 
-        // 描画範囲チェック
-        if (_currentY + adjusted_height > _height)
+        // 描画範囲チェック（行単位）
+        if (_currentY + lineHeight > _height)
         {
             break;
         }
 
-        // 調整された位置で文字描画
-        int draw_x = _currentX + adjustment.horizontalOffset;
-        int draw_y = _currentY + adjustment.verticalOffset;
+        // --- 揃えに応じた行頭オフセット ---
+        int lineOffsetX = 0;
+        switch (_alignment)
+        {
+        case TextAlignment::CENTER:
+            lineOffsetX = (_width - lineWidth) / 2;
+            break;
+        case TextAlignment::RIGHT:
+            lineOffsetX = _width - lineWidth;
+            break;
+        case TextAlignment::LEFT:
+        default:
+            lineOffsetX = 0;
+            break;
+        }
+        if (lineOffsetX < 0) { lineOffsetX = 0; }
 
-        drawEnhancedCharacter(unicode_char, draw_x, draw_y,
-                              adjustment.widthScale, adjustment.heightScale);
+        // --- 2パス目: 実際に描画する ---
+        _currentX = lineOffsetX;
+        for (size_t k = i; k < lineEnd; ++k)
+        {
+            const uint16_t ch = unicode_chars[k];
+            const CharMetrics metrics = getCharMetrics(ch);
+            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
 
-        // 次の文字位置へ（調整された字間を適用）
-        _currentX += adjusted_width + char_spacing;
+            // 送りはフォントが定める送り幅(setWidth)を使う。
+            // グリフのビットマップ幅(width)ではプロポーショナル字形で詰まりすぎるうえ、
+            // calculateTextSize() が setWidth で計算しているため値が食い違っていた。
+            const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
+            const int spacing = _charSpacing + adjustment.spacingOffset;
+
+            drawEnhancedCharacter(ch,
+                                  _currentX + adjustment.horizontalOffset,
+                                  _currentY + adjustment.verticalOffset,
+                                  adjustment.widthScale, adjustment.heightScale);
+
+            _currentX += advance + spacing;
+        }
+
+        // 次の行へ
+        i = lineEnd;
+        if (i < unicode_chars.size() && unicode_chars[i] == '\n')
+        {
+            ++i;  // 改行文字を消費
+        }
+        _currentY += lineHeight + _lineSpacing;
     }
 }
 
@@ -590,99 +703,171 @@ void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
 // ========================================
 void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
 {
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    const std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
 
-    // 縦書きの開始位置（右上から）
-    _currentX = _width - getMaxCharWidth();
-    _currentY = 0;
+    // 列幅と列送りはテキスト全体で不変なのでループ外で1回だけ求める。
+    // 小文字の変位計算に使う em ボックス寸法（全文字共通）
+    int emW = 0;
+    int emH = 0;
+    getEmBoxSize(emW, emH);
 
-    for (size_t i = 0; i < unicode_chars.size(); i++)
+    const int columnWidth = getMaxCharWidth();
+    // 縦組みでは「行」＝「列」なので、列の間隔は _lineSpacing で表す。
+    // 以前は _columnSpacing と _lineSpacing の両方を加算しており、
+    // 同じ意味の設定が二重に効く状態だった（_columnSpacing は廃止）。
+    const int columnStep = columnWidth + _lineSpacing;
+
+    // 1文字の解決結果。
+    // TextAlignment のために列の高さを先に測る必要があり、
+    // 測定と描画で同じ値を使わないと揃えがずれるため一箇所にまとめる。
+    struct ResolvedChar
     {
-        uint16_t unicode_char = unicode_chars[i];
+        uint16_t displayChar;        // 実際に描画する文字（小文字変換・縦書きグリフ適用後）
+        CharMetrics metrics;         // displayChar のメトリクス
+        CharTypeAdjustment adjust;   // 元の文字種別による調整
+        float widthScale;            // 最終的な横倍率
+        float heightScale;           // 最終的な縦倍率
+        float rotation;              // 0 または 90 度
+        float smallOffsetX;          // 小文字の横オフセット比率
+        float smallOffsetY;          // 小文字の縦オフセット比率
+        int advance;                 // 列方向の送り量（em固定）
+        int spacing;                 // 調整済みの字間
+    };
 
-        // 改行処理（新しい列）
-        if (unicode_char == '\n')
+    auto resolve = [this](uint16_t unicode_char) -> ResolvedChar
+    {
+        ResolvedChar r{};
+        uint16_t workChar = unicode_char;
+        float smallScale = 1.0f;
+        r.smallOffsetX = 0.0f;
+        r.smallOffsetY = 0.0f;
+
+        // 小文字（捨て仮名）の縦組み処理。
+        //
+        // フォントの小文字グリフは横書き用に設計されており、
+        // 大文字と同じベースラインに揃う「下寄せ」になっている。
+        //     あ U+3042 : インク y+ 6..y+21
+        //     ぁ U+3041 : インク y+ 8..y+21  ← 下端が大文字と同じ
+        // 縦組みでは em の右上へ寄せるのが正しいため、変位を与える。
+        //
+        // この変位は「専用グリフをそのまま使う場合」と
+        // 「大文字を縮小して代用する場合」の両方に適用する。
+        if (_enableSmallCharHandling && isSmallChar(unicode_char))
         {
-            _currentX -= getMaxCharWidth() + _columnSpacing + _lineSpacing;
-            _currentY = 0;
+            r.smallOffsetX = _smallCharSettings.offsetX;
+            r.smallOffsetY = _smallCharSettings.offsetY;
+
+            // フォントに専用グリフが無い場合のみ、大文字を縮小して代用する
+            if (needsSmallCharSubstitution(unicode_char))
+            {
+                workChar = getCorrespondingLargeChar(unicode_char);
+                smallScale = _smallCharSettings.scale;
+            }
+        }
+
+        r.displayChar = convertToVerticalGlyph(workChar);
+        r.metrics = getCharMetrics(r.displayChar);
+        // 調整は「元の文字」の種別で判定する
+        r.adjust = getCharAdjustment(unicode_char);
+        // 回転要否も「元の文字」で判定する
+        r.rotation = shouldRotateInVertical(unicode_char) ? 90.0f : 0.0f;
+        r.widthScale = r.adjust.widthScale * smallScale;
+        r.heightScale = r.adjust.heightScale * smallScale;
+
+        // 列方向の送りは em 固定（setWidth）。
+        // グリフのビットマップ高を使うと あ=15 / ー=7 / 、=4 と変動し、
+        // _charSpacing が負のとき送りが負になって文字が逆行していた。
+        // 小文字も組版上は1emを占めるため、縮小率は送りに掛けない。
+        r.advance = r.metrics.setWidth;
+        r.spacing = _charSpacing + r.adjust.spacingOffset;
+        return r;
+    };
+
+    // 縦書きは右上の列から始める
+    _currentX = _width - columnWidth;
+    size_t i = 0;
+
+    while (i < unicode_chars.size())
+    {
+        // 改行のみの列を消費する
+        if (unicode_chars[i] == '\n')
+        {
+            ++i;
+            _currentX -= columnStep;
             continue;
         }
 
-        // === 小文字変換処理を追加 ===
-        uint16_t work_char = unicode_char;     // 作業用文字
-        float small_char_scale = 1.0f;         // 小文字用スケール
-        float small_char_offsetX = 0.0f;       // 小文字用X軸オフセット
-        float small_char_offsetY = 0.0f;       // 小文字用Y軸オフセット
-        
-        // 小文字処理が有効で、実際に小文字の場合
-        if (_enableSmallCharHandling && isSmallChar(unicode_char))
+        // --- 1パス目: この列に入る範囲と高さを測る ---
+        // 末尾の字間は高さに含めない（含めると中央/下揃えがずれる）。
+        size_t colEnd = i;
+        int colHeight = 0;
+        while (colEnd < unicode_chars.size() && unicode_chars[colEnd] != '\n')
         {
-            // 対応する大文字に変換
-            work_char = getCorrespondingLargeChar(unicode_char);
-            
-            // 小文字設定を適用
-            small_char_scale = _smallCharSettings.scale;
-            small_char_offsetX = _smallCharSettings.offsetX;
-            small_char_offsetY = _smallCharSettings.offsetY;
-            
-            // デバッグログ（必要に応じて）
-            ESP_LOGD(TAG, "Small char conversion (vertical): U+%04X -> U+%04X (scale=%.2f)", 
-                     unicode_char, work_char, small_char_scale);
+            const ResolvedChar r = resolve(unicode_chars[colEnd]);
+            const int candidate = (colEnd == i) ? r.advance
+                                                : colHeight + r.spacing + r.advance;
+            if (_wrap && colEnd > i && candidate > _height)
+            {
+                break;  // ここで次の列へ折り返す
+            }
+            colHeight = candidate;
+            ++colEnd;
         }
 
-        // 縦書き用の文字変換（小文字変換後の文字に対して）
-        uint16_t display_char = convertToVerticalGlyph(work_char);
-
-        // 文字メトリクスを取得（最終的な表示文字で）
-        CharMetrics metrics = getCharMetrics(display_char);
-
-        // 固定値による文字種別調整を適用（元の文字種別で判定）
-        CharTypeAdjustment adjustment = getCharAdjustment(unicode_char);
-
-        // 回転が必要な文字の処理（変換前の文字で判定）
-        float rotation = shouldRotateInVertical(unicode_char) ? 90.0f : 0.0f;
-
-        // 小文字の場合はスケールを組み合わせる
-        float final_width_scale = adjustment.widthScale * small_char_scale;
-        float final_height_scale = adjustment.heightScale * small_char_scale;
-
-        // 調整後のメトリクス計算
-        int adjusted_width = static_cast<int>(metrics.width * final_width_scale);
-        int adjusted_height = static_cast<int>(metrics.height * final_height_scale);
-        int char_spacing = _charSpacing + adjustment.spacingOffset;
-
-        // 回転する文字は幅と高さが入れ替わる
-        if (rotation != 0.0f)
-        {
-            std::swap(adjusted_width, adjusted_height);
-        }
-
-        // 折り返し処理（新しい列）
-        if (_wrap && (_currentY + adjusted_height > _height))
-        {
-            _currentX -= getMaxCharWidth() + _columnSpacing + _lineSpacing;
-            _currentY = 0;
-        }
-
-        // 描画範囲チェック
+        // 描画範囲チェック（列単位）
         if (_currentX < 0)
         {
             break;
         }
 
-        // 小文字オフセットを組み込んだ描画位置計算
-        int draw_x = _currentX + adjustment.horizontalOffset - getMaxCharWidth() + 
-                     static_cast<int>(metrics.width * small_char_offsetX);
-        int draw_y = _currentY + adjustment.verticalOffset + 
-                     static_cast<int>(metrics.height * small_char_offsetY);
+        // --- 揃えに応じた列頭オフセット（縦書きでは LEFT=上揃え / RIGHT=下揃え）---
+        int colOffsetY = 0;
+        switch (_alignment)
+        {
+        case TextAlignment::CENTER:
+            colOffsetY = (_height - colHeight) / 2;
+            break;
+        case TextAlignment::RIGHT:
+            colOffsetY = _height - colHeight;
+            break;
+        case TextAlignment::LEFT:
+        default:
+            colOffsetY = 0;
+            break;
+        }
+        if (colOffsetY < 0) { colOffsetY = 0; }
 
-        // 変換後の文字を適切なスケール・回転で描画
-        drawEnhancedCharacterWithRotation(display_char, draw_x, draw_y,
-                                          final_width_scale, final_height_scale,
-                                          rotation);
+        // --- 2パス目: 実際に描画する ---
+        _currentY = colOffsetY;
+        for (size_t k = i; k < colEnd; ++k)
+        {
+            const ResolvedChar r = resolve(unicode_chars[k]);
 
-        // 次の文字位置へ（調整された字間を適用）
-        _currentY += adjusted_height + char_spacing;
+            // 列の左端は _currentX と一致させる。
+            // 以前はここで getMaxCharWidth() をもう一度引いており、
+            // 開始位置と合わせて列幅が二重に減算されていた。
+            // 小文字の変位は em ボックス基準で計算する。
+            // グリフのビットマップ寸法を基準にすると
+            // ぁ(h=13) と っ(h=7) で変位量が変わってしまい、
+            // 同じ列の中で寄せ具合が揃わない。
+            const int draw_x = _currentX + r.adjust.horizontalOffset +
+                               static_cast<int>(emW * r.smallOffsetX);
+            const int draw_y = _currentY + r.adjust.verticalOffset +
+                               static_cast<int>(emH * r.smallOffsetY);
+
+            drawEnhancedCharacterWithRotation(r.displayChar, draw_x, draw_y,
+                                              r.widthScale, r.heightScale, r.rotation);
+
+            _currentY += r.advance + r.spacing;
+        }
+
+        // 次の列へ
+        i = colEnd;
+        if (i < unicode_chars.size() && unicode_chars[i] == '\n')
+        {
+            ++i;  // 改行文字を消費
+        }
+        _currentX -= columnStep;
     }
 }
 
@@ -763,16 +948,67 @@ std::string TypoWrite::unicodeToUtf8(uint16_t unicode_char)
 uint16_t TypoWrite::convertToVerticalGlyph(uint16_t unicode_char)
 {
     auto it = _verticalGlyphMap.find(unicode_char);
-    if (it != _verticalGlyphMap.end())
+    if (it == _verticalGlyphMap.end())
     {
-        return it->second;
+        return unicode_char; // 変換なし
     }
-    return unicode_char; // 変換なし
+
+    const uint16_t vertical_char = it->second;
+
+    // 差し替え先（U+FE10〜FE4F の縦書き用字形）がフォントに無い場合は
+    // 元の文字に戻す。
+    //
+    // 無いまま描くと VLWFontParser がフォールバック値を返し、
+    // 豆腐や空白として描かれてしまう。元の文字なら向きは正しくないが
+    // 少なくとも読める。
+    //
+    // 現在使用中の shippori_16 は登録28件すべての縦書き字形を収録しているため
+    // このフォールバックは発動しない（実測で確認済み）。
+    // 他フォントに差し替えたときの保険として入れてある。
+    if (_useVLWParser && _vlwParser && _vlwParser->isInitialized() &&
+        !_vlwParser->hasChar(vertical_char))
+    {
+        ESP_LOGD(TAG, "Vertical glyph U+%04X not in font, falling back to U+%04X",
+                 vertical_char, unicode_char);
+        return unicode_char;
+    }
+
+    return vertical_char;
 }
 
 bool TypoWrite::isSmallChar(uint16_t unicode_char) const
 {
     return _smallToLargeMap.find(unicode_char) != _smallToLargeMap.end();
+}
+
+bool TypoWrite::needsSmallCharSubstitution(uint16_t unicode_char) const
+{
+    if (!_enableSmallCharHandling) { return false; }
+    if (!isSmallChar(unicode_char)) { return false; }
+
+    // フォントが小文字の専用グリフを持っているなら代用しない。
+    //
+    // 専用グリフはサイズも em ボックス内の位置も適切に設計されている。
+    // 例（shippori_16, ascent=19）:
+    //     あ U+3042 : h=15 top=13 -> インク y+ 6..y+21
+    //     ぁ U+3041 : h=13 top=11 -> インク y+ 8..y+21   ← 下端が大文字と揃う
+    // これをそのまま描けば次の文字との間隔は通常文字と同じになる。
+    //
+    // 一方「大文字を0.75倍に縮小」で代用すると、em ボックスの左上基準で
+    // 縮むためインク下端が上がり、次の文字との空きが 2px -> 8px 程度に広がる。
+    if (_useVLWParser && _vlwParser && _vlwParser->isInitialized() &&
+        _vlwParser->hasChar(unicode_char))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void TypoWrite::setSmallCharHandling(bool enable)
+{
+    _enableSmallCharHandling = enable;
+    ESP_LOGD(TAG, "Small char substitution: %s", enable ? "enabled" : "disabled");
 }
 
 uint16_t TypoWrite::getCorrespondingLargeChar(uint16_t small_char) const
@@ -924,7 +1160,22 @@ void TypoWrite::setColor(uint16_t color)
 void TypoWrite::setBackgroundColor(uint16_t bgColor)
 {
     _bgColor = bgColor;
-    ESP_LOGD(TAG, "Background color set to 0x%04X", bgColor);
+
+    // TFT_TRANSPARENT(0x0120) は「透明」を表す特別なフラグではなく実在の色値なので、
+    // 単に _bgColor に入れるだけでは 0x0120 という色で塗りつぶされてしまう。
+    // 呼び出し側の意図（透過したい）を汲んで背景透明モードを切り替える。
+    // 従来は _transparentBg を立てるAPIが存在せず、常に false のままだった。
+    _transparentBg = (bgColor == static_cast<uint16_t>(TFT_TRANSPARENT));
+
+    ESP_LOGD(TAG, "Background color set to 0x%04X (transparent: %s)",
+             bgColor, _transparentBg ? "yes" : "no");
+}
+
+// 背景透明モードの明示設定
+void TypoWrite::setTransparentBackground(bool transparent)
+{
+    _transparentBg = transparent;
+    ESP_LOGD(TAG, "Transparent background: %s", transparent ? "enabled" : "disabled");
 }
 
 // 折り返しの設定
@@ -969,8 +1220,14 @@ bool TypoWrite::loadFontFromArray(const uint8_t *fontArray)
     bool result = _display->loadFont(fontArray);
     if (result)
     {
-        // 読み込んだフォントを現在のフォントとして設定
-        _font = nullptr; // VLWフォントの場合はIFontを使わない
+        // 読み込んだフォントを現在のフォントとして設定。
+        //
+        // 描画時は _isCustomFont / _vlwFont が優先されるため _font は使われないが、
+        // ここで _font = nullptr にはしない。
+        // メトリクス取得のフォールバック（getCharMetrics()）が _font を使うため、
+        // nullptr にすると setVLWParser() を呼び忘れた場合に
+        // nullptr 参照でクラッシュしていた（getCharMetrics() 側にもガードを入れたが、
+        // 使える IFont を捨てないほうがフォールバックとして妥当）。
         _isCustomFont = true;
         _vlwFont = fontArray;
         // メトリクスキャッシュをクリア
@@ -1001,6 +1258,10 @@ void TypoWrite::setCharSpacing(int spacing)
     ESP_LOGD(TAG, "Character spacing set to %d pixels", spacing);
 }
 
+// 補足: setColumnSpacing() / _columnSpacing は廃止した。
+//       縦組みでは「行」＝「列」であり、列の間隔は _lineSpacing が表す。
+//       両方を加算していたため設定が二重に効いていた。
+
 // ========== メインテキスト描画メソッド ==========
 
 // テキスト描画
@@ -1023,6 +1284,10 @@ void TypoWrite::drawText(const std::string &text)
         drawAreaBorder();
     }
 
+    // フォント・サイズ・色は描画開始前に1回だけ適用する。
+    // 1文字ごとに loadFont() を呼ぶとVLWヘッダの解析が繰り返されるため。
+    applyTextStyle(target);
+
     // テキスト描画
     if (_direction == TextDirection::HORIZONTAL)
     {
@@ -1032,6 +1297,8 @@ void TypoWrite::drawText(const std::string &text)
     {
         drawVerticalTextEnhanced(text);
     }
+
+    releaseTextStyle(target);
 
     // クリッピング領域を解除
     target->clearClipRect();
@@ -1048,7 +1315,9 @@ void TypoWrite::drawAreaBorder()
     target->drawRect(_x, _y, _width, _height, _borderColor);
 
     // デバッグ用: 角に小さな十字マークを描画
-    int markSize = 5;
+    // 以前は 5 をローカルで再定義しており、
+    // TypoWriteConstants::Border::MARK_SIZE（同じく5）が未使用のままだった。
+    const int markSize = TypoWriteConstants::Border::MARK_SIZE;
     // 左上
     target->drawLine(_x - markSize, _y, _x + markSize, _y, _borderColor);
     target->drawLine(_x, _y - markSize, _x, _y + markSize, _borderColor);
@@ -1125,15 +1394,26 @@ int TypoWrite::getTextHeight(const std::string &text)
 // テキストサイズの計算（内部メソッド）
 void TypoWrite::calculateTextSize(const std::string &text, int &width, int &height)
 {
-    std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    const std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
 
     width = 0;
     height = 0;
+
+    // 送りの求め方は描画側（drawHorizontalTextEnhanced /
+    // drawVerticalTextEnhanced）と一致させること。
+    // 食い違うと getTextWidth()/getTextHeight() と実際の描画結果がずれ、
+    // drawTextCentered() の中央位置も外れる。
+    //
+    // 末尾の字間は寸法に含めない（描画側も最後の1文字の後ろには何も置かない）。
+    //
+    // 注意: 折り返し(_wrap)は考慮していない。ここが返すのは
+    //       「改行だけで区切った場合の自然な寸法」である。
 
     if (_direction == TextDirection::HORIZONTAL)
     {
         int current_line_width = 0;
         int line_count = 1;
+        bool first_in_line = true;
 
         for (uint16_t ch : unicode_chars)
         {
@@ -1141,23 +1421,30 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
             {
                 width = std::max(width, current_line_width);
                 current_line_width = 0;
+                first_in_line = true;
                 line_count++;
+                continue;
             }
-            else
-            {
-                CharMetrics metrics = getCharMetrics(ch);
-                current_line_width += metrics.setWidth + _charSpacing;
-            }
+
+            const CharMetrics metrics = getCharMetrics(ch);
+            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
+
+            // 描画側と同じ「setWidth × 横倍率」
+            const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
+            const int spacing = _charSpacing + adjustment.spacingOffset;
+
+            current_line_width += first_in_line ? advance : (spacing + advance);
+            first_in_line = false;
         }
 
         width = std::max(width, current_line_width);
-        height = line_count * (getCharMetrics(0x3000).height + _lineSpacing) - _lineSpacing;
+        height = line_count * (getLineHeight() + _lineSpacing) - _lineSpacing;
     }
     else
     { // VERTICAL
         int current_column_height = 0;
         int column_count = 1;
-        int max_char_width = 0;
+        bool first_in_column = true;
 
         for (uint16_t ch : unicode_chars)
         {
@@ -1165,28 +1452,38 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
             {
                 height = std::max(height, current_column_height);
                 current_column_height = 0;
+                first_in_column = true;
                 column_count++;
+                continue;
             }
-            else
+
+            // 描画側と同じ手順で表示文字を決めてから送りを取る。
+            // 小文字は大文字に変換され、さらに縦書き用グリフへ差し替えられる。
+            uint16_t work_char = ch;
+            if (needsSmallCharSubstitution(ch))
             {
-                CharMetrics metrics = getCharMetrics(ch);
-                int char_height = metrics.height;
-                int char_width = metrics.width;
-
-                // 回転する文字は幅と高さが入れ替わる
-                if (shouldRotateInVertical(ch))
-                {
-                    std::swap(char_width, char_height);
-                }
-
-                current_column_height += char_height + _charSpacing;
-                max_char_width = std::max(max_char_width, char_width);
+                work_char = getCorrespondingLargeChar(ch);
             }
+            const uint16_t display_char = convertToVerticalGlyph(work_char);
+
+            const CharMetrics metrics = getCharMetrics(display_char);
+            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
+
+            // 縦書きは em 固定送り（縮小率は掛けない）。描画側と同一。
+            // 従来はここだけ metrics.height（ビットマップ高）を使っており、
+            // 描画側を em 固定に変更した後も追随していなかった。
+            const int advance = metrics.setWidth;
+            const int spacing = _charSpacing + adjustment.spacingOffset;
+
+            current_column_height += first_in_column ? advance : (spacing + advance);
+            first_in_column = false;
         }
 
         height = std::max(height, current_column_height);
-        // 列数 × (最大文字幅 + 列間隔)
-        width = column_count * (max_char_width + _columnSpacing + _lineSpacing) - _lineSpacing;
+
+        // 列幅は描画側の columnWidth（= getMaxCharWidth()）に合わせる。
+        // 従来は走査中の最大文字幅を使っており、描画側と基準が異なっていた。
+        width = column_count * (getMaxCharWidth() + _lineSpacing) - _lineSpacing;
     }
 }
 
@@ -1217,8 +1514,13 @@ CharCategory TypoWrite::getCharCategory(uint16_t unicode_char)
     }
 
     // 括弧類
+    // U+3008〜U+3011 は 〈〉《》「」『』【】 の10文字すべてが括弧なので範囲判定でよい。
+    // 以前はこの後に (0x300C〜0x300F) の判定が続いていたが、
+    // 上の範囲に完全に含まれるため到達しない冗長な条件だった（削除）。
+    // また 〔U+3014〕U+3015 は _verticalGlyphMap には登録されているのに
+    // ここでの分類から漏れていたため追加した。
     if ((unicode_char >= 0x3008 && unicode_char <= 0x3011) ||
-        (unicode_char >= 0x300C && unicode_char <= 0x300F) ||
+        unicode_char == 0x3014 || unicode_char == 0x3015 ||
         unicode_char == 0x0028 || unicode_char == 0x0029 ||
         unicode_char == 0x005B || unicode_char == 0x005D ||
         unicode_char == 0x007B || unicode_char == 0x007D)
@@ -1268,7 +1570,7 @@ void TypoWrite::debugPrintSmallCharMap() const
         }
     }
 
-    ESP_LOGI(TAG, "Total: %d mappings", _smallToLargeMap.size());
+    ESP_LOGI(TAG, "Total: %u mappings", static_cast<unsigned>(_smallToLargeMap.size()));
     ESP_LOGI(TAG, "=====================================");
 }
 
@@ -1304,63 +1606,33 @@ void TypoWrite::debugShowCharAdjustments()
     ESP_LOGI(TAG, "Character adjustment: %s",
              _enableCharAdjustment ? "ENABLED" : "DISABLED");
 
-    const char *categoryNames[] = {
+    // CharCategory の宣言順と一致させること
+    static const char *const categoryNames[] = {
         "NORMAL", "BRACKET", "HORIZONTAL_BAR",
         "PUNCTUATION", "SMALL_CHAR", "OTHER_SPECIAL"};
+    constexpr size_t categoryNameCount = sizeof(categoryNames) / sizeof(categoryNames[0]);
 
     for (const auto &pair : _charAdjustments)
     {
-        CharCategory cat = pair.first;
-        CharTypeAdjustment adj = pair.second;
+        const CharCategory cat = pair.first;
+        const CharTypeAdjustment &adj = pair.second;
+
+        // 範囲チェックを追加。従来は categoryNames[static_cast<int>(cat)] を
+        // 無検査で参照しており、CharCategory に要素が追加されると
+        // 配列外アクセスになる状態だった。
+        const size_t index = static_cast<size_t>(cat);
+        const char *name = (index < categoryNameCount) ? categoryNames[index] : "UNKNOWN";
 
         ESP_LOGI(TAG, "%s: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
-                 categoryNames[static_cast<int>(cat)],
+                 name,
                  adj.widthScale, adj.heightScale,
                  adj.spacingOffset, adj.verticalOffset, adj.horizontalOffset);
     }
     ESP_LOGI(TAG, "==================================");
 }
 
-void TypoWrite::debugShowFixedAdjustments()
-{
-    ESP_LOGI(TAG, "=== Fixed Character Type Adjustments ===");
-    ESP_LOGI(TAG, "Character adjustment: %s",
-             _enableCharAdjustment ? "ENABLED" : "DISABLED");
-
-    ESP_LOGI(TAG, "SMALL_CHAR: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
-             TypoWriteConstants::SmallChar::WIDTH_SCALE,
-             TypoWriteConstants::SmallChar::HEIGHT_SCALE,
-             TypoWriteConstants::SmallChar::SPACING_OFFSET,
-             TypoWriteConstants::SmallChar::VERTICAL_OFFSET,
-             TypoWriteConstants::SmallChar::HORIZONTAL_OFFSET);
-
-    ESP_LOGI(TAG, "PUNCTUATION: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
-             TypoWriteConstants::Punctuation::WIDTH_SCALE,
-             TypoWriteConstants::Punctuation::HEIGHT_SCALE,
-             TypoWriteConstants::Punctuation::SPACING_OFFSET,
-             TypoWriteConstants::Punctuation::VERTICAL_OFFSET,
-             TypoWriteConstants::Punctuation::HORIZONTAL_OFFSET);
-
-    ESP_LOGI(TAG, "BRACKET: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
-             TypoWriteConstants::Bracket::WIDTH_SCALE,
-             TypoWriteConstants::Bracket::HEIGHT_SCALE,
-             TypoWriteConstants::Bracket::SPACING_OFFSET,
-             TypoWriteConstants::Bracket::VERTICAL_OFFSET,
-             TypoWriteConstants::Bracket::HORIZONTAL_OFFSET);
-
-    ESP_LOGI(TAG, "HORIZONTAL_BAR: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
-             TypoWriteConstants::HorizontalBar::WIDTH_SCALE,
-             TypoWriteConstants::HorizontalBar::HEIGHT_SCALE,
-             TypoWriteConstants::HorizontalBar::SPACING_OFFSET,
-             TypoWriteConstants::HorizontalBar::VERTICAL_OFFSET,
-             TypoWriteConstants::HorizontalBar::HORIZONTAL_OFFSET);
-
-    ESP_LOGI(TAG, "NORMAL: w=%.2f, h=%.2f, s=%d, v=%d, h=%d",
-             TypoWriteConstants::Normal::WIDTH_SCALE,
-             TypoWriteConstants::Normal::HEIGHT_SCALE,
-             TypoWriteConstants::Normal::SPACING_OFFSET,
-             TypoWriteConstants::Normal::VERTICAL_OFFSET,
-             TypoWriteConstants::Normal::HORIZONTAL_OFFSET);
-
-    ESP_LOGI(TAG, "========================================");
-}
+// 補足: debugShowFixedAdjustments() をここに実装していたが、
+//       同じ内容を debugShowCharAdjustments() が
+//       （定数直読みではなく実際の _charAdjustments テーブルから）出力するため削除した。
+//       テーブルは定数から構築されるので出力は一致し、
+//       かつテーブル側を読むほうが実態を反映する。

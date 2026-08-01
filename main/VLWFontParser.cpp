@@ -15,7 +15,7 @@ static const uint32_t VLW_EXPECTED_VERSION = 11;    // 期待されるバージ�
 
 VLWFontParser::VLWFontParser()
     : _fontData(nullptr), _dataSize(0), _initialized(false),
-      _glyphTable(nullptr), _glyphTableSize(0) {
+      _glyphTable(nullptr), _glyphTableSize(0), _glyphTableSorted(false) {
     
     // フォントメトリクスを初期化
     memset(&_fontMetrics, 0, sizeof(_fontMetrics));
@@ -32,6 +32,7 @@ void VLWFontParser::cleanup() {
         _glyphTable = nullptr;
     }
     _glyphTableSize = 0;
+    _glyphTableSorted = false;
     _initialized = false;
     _fontMetrics.isValid = false;
 }
@@ -88,8 +89,12 @@ bool VLWFontParser::init(const uint8_t* fontData, size_t dataSize) {
     _fontMetrics.isValid = true;
     
     ESP_LOGI(TAG, "VLW font initialized successfully");
-    debugPrintFontInfo();
-    
+
+    // ここで debugPrintFontInfo() を無条件に呼んでいたが、
+    // 呼び出し側（textDisplayDemo()）も明示的に呼んでいるため
+    // 起動ログに同じ内容が2回出力されていた。
+    // デバッグ出力は呼び出し側の判断に任せる。
+
     return true;
 }
 
@@ -218,11 +223,27 @@ bool VLWFontParser::buildGlyphTable() {
         }
         
         ESP_LOGD(TAG, "Glyph %lu: U+%04X, size=%lux%lu, setWidth=%lu, topExtent=%ld, leftExtent=%ld",
-                 i, glyph.unicode, glyph.width, glyph.height, glyph.setWidth, 
+                 i, glyph.unicode, glyph.width, glyph.height, glyph.setWidth,
                  (long)glyph.topExtent, (long)glyph.leftExtent);
     }
-    
-    ESP_LOGI(TAG, "Glyph table built successfully with %lu entries", _glyphTableSize);
+
+    // グリフが unicode 昇順に並んでいるかを判定する。
+    // VLWは通常昇順なので二分探索（O(log N)）が使えるが、
+    // 保証されているわけではないため実データで確認し、
+    // 崩れている場合は findGlyph() を線形検索にフォールバックさせる。
+    _glyphTableSorted = true;
+    for (uint32_t i = 1; i < _glyphTableSize; i++) {
+        if (_glyphTable[i - 1].unicode >= _glyphTable[i].unicode) {
+            _glyphTableSorted = false;
+            ESP_LOGW(TAG, "Glyph table is not sorted by unicode "
+                          "(index %lu: U+%04X >= U+%04X). Falling back to linear search.",
+                     i, _glyphTable[i - 1].unicode, _glyphTable[i].unicode);
+            break;
+        }
+    }
+
+    ESP_LOGI(TAG, "Glyph table built successfully with %lu entries (lookup: %s)",
+             _glyphTableSize, _glyphTableSorted ? "binary search" : "linear search");
     return true;
 }
 
@@ -273,18 +294,43 @@ void VLWFontParser::calculateFontMetrics() {
 }
 
 const VLWFontParser::GlyphInfo* VLWFontParser::findGlyph(uint16_t unicode) const {
-    if (!_glyphTable) {
+    if (!_glyphTable || _glyphTableSize == 0) {
         return nullptr;
     }
-    
-    // 線形検索（小さなフォントの場合は十分高速）
-    // 大きなフォントの場合はバイナリサーチを検討
+
+    if (_glyphTableSorted) {
+        // 二分探索 O(log N)
+        // 日本語フォント（約4400グリフ）では最大13回程度の比較で済む。
+        // 従来は線形検索で、TypoWrite が1文字あたり
+        // getCharWidth/getCharHeight/getCharSetWidth と3回呼ぶため
+        // 1文字ごとに最悪 3 × 4400 回の比較が発生していた。
+        uint32_t low = 0;
+        uint32_t high = _glyphTableSize - 1;
+        while (low <= high) {
+            uint32_t mid = low + (high - low) / 2;
+            const uint16_t code = _glyphTable[mid].unicode;
+            if (code == unicode) {
+                return &_glyphTable[mid];
+            }
+            if (code < unicode) {
+                low = mid + 1;
+            } else {
+                if (mid == 0) {
+                    break;   // low が unsigned なのでアンダーフローを防ぐ
+                }
+                high = mid - 1;
+            }
+        }
+        return nullptr;
+    }
+
+    // 昇順でない場合のフォールバック（線形検索 O(N)）
     for (uint32_t i = 0; i < _glyphTableSize; i++) {
         if (_glyphTable[i].unicode == unicode) {
             return &_glyphTable[i];
         }
     }
-    
+
     return nullptr;
 }
 
@@ -324,8 +370,13 @@ uint32_t VLWFontParser::getCharWidth(uint16_t unicode) const {
 }
 
 uint32_t VLWFontParser::getCharHeight(uint16_t unicode) const {
+    // 以前は height + topExtent を返していたが、height はビットマップ高、
+    // topExtent はベースラインからの距離であり、両者の和には幾何的な意味がない。
+    // getCharMetrics().height（= glyph->height）と定義が食い違っていたため、
+    // ビットマップ高に統一した。見つからない場合のフォールバックも
+    // getCharMetrics() と同じ _fontMetrics.fontHeight に揃えてある。
     const GlyphInfo* glyph = findGlyph(unicode);
-    return glyph ? glyph->height + glyph->topExtent : _fontMetrics.fontHeight;
+    return glyph ? glyph->height : _fontMetrics.fontHeight;
 }
 
 uint32_t VLWFontParser::getCharSetWidth(uint16_t unicode) const {
@@ -337,99 +388,20 @@ bool VLWFontParser::hasChar(uint16_t unicode) const {
     return findGlyph(unicode) != nullptr;
 }
 
-uint32_t VLWFontParser::calculateTextWidth(const char* text) const {
-    if (!text || !_initialized) {
-        return 0;
-    }
-    
-    uint32_t totalWidth = 0;
-    size_t textLen = strlen(text);
-    size_t i = 0;
-    
-    while (i < textLen) {
-        uint16_t unicode = 0;
-        
-        // UTF-8をUnicodeに変換
-        if ((text[i] & 0x80) == 0) {
-            // 1バイト文字
-            unicode = text[i];
-            i++;
-        } else if ((text[i] & 0xE0) == 0xC0) {
-            // 2バイト文字
-            if (i + 1 < textLen) {
-                unicode = ((text[i] & 0x1F) << 6) | (text[i + 1] & 0x3F);
-                i += 2;
-            } else {
-                break;
-            }
-        } else if ((text[i] & 0xF0) == 0xE0) {
-            // 3バイト文字
-            if (i + 2 < textLen) {
-                unicode = ((text[i] & 0x0F) << 12) | 
-                         ((text[i + 1] & 0x3F) << 6) | 
-                         (text[i + 2] & 0x3F);
-                i += 3;
-            } else {
-                break;
-            }
-        } else {
-            // 4バイト文字はスキップ
-            i += 4;
-            continue;
-        }
-        
-        totalWidth += getCharSetWidth(unicode);
-    }
-    
-    return totalWidth;
-}
+// 補足:
+//   calculateTextWidth(const char*) と
+//   utf8ToUnicode(const char*, uint16_t*, size_t)
+// をここに実装していたが、いずれも呼び出し元が存在しない死蔵コードだったため削除した。
+//
+// 加えて、UTF-8デコード処理が本ファイル内で2箇所、さらに
+// TypoWrite::utf8ToUnicode() にも1箇所と、計3実装に重複していた
+// （境界チェックの有無が三者で異なっていた）。
+// 現在使われているのは TypoWrite 側の実装のみ。
+//
+// なお calculateTextWidth() は改行を考慮せず全文字を横方向に合算する実装で、
+// 複数行テキストでは意味のない値を返す不具合があった。
+// 再導入する場合は共通ユーティリティとして1本化し、改行の扱いを決めること。
 
-size_t VLWFontParser::utf8ToUnicode(const char* utf8Text, uint16_t* unicodeArray, size_t maxLength) const {
-    if (!utf8Text || !unicodeArray || maxLength == 0) {
-        return 0;
-    }
-    
-    size_t textLen = strlen(utf8Text);
-    size_t i = 0;
-    size_t outIndex = 0;
-    
-    while (i < textLen && outIndex < maxLength) {
-        uint16_t unicode = 0;
-        
-        // UTF-8をUnicodeに変換
-        if ((utf8Text[i] & 0x80) == 0) {
-            // 1バイト文字
-            unicode = utf8Text[i];
-            i++;
-        } else if ((utf8Text[i] & 0xE0) == 0xC0) {
-            // 2バイト文字
-            if (i + 1 < textLen) {
-                unicode = ((utf8Text[i] & 0x1F) << 6) | (utf8Text[i + 1] & 0x3F);
-                i += 2;
-            } else {
-                break; // 不完全な文字
-            }
-        } else if ((utf8Text[i] & 0xF0) == 0xE0) {
-            // 3バイト文字
-            if (i + 2 < textLen) {
-                unicode = ((utf8Text[i] & 0x0F) << 12) | 
-                         ((utf8Text[i + 1] & 0x3F) << 6) | 
-                         (utf8Text[i + 2] & 0x3F);
-                i += 3;
-            } else {
-                break; // 不完全な文字
-            }
-        } else {
-            // 4バイト文字は16ビットに収まらないのでスキップ
-            i += 4;
-            continue;
-        }
-        
-        unicodeArray[outIndex++] = unicode;
-    }
-    
-    return outIndex;
-}
 
 void VLWFontParser::debugPrintFontInfo() const {
     if (!_initialized) {

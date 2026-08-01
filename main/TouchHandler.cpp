@@ -2,6 +2,7 @@
 #include "TouchHandler.hpp"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include <cstdlib>   // abs()（従来はM5GFX経由の推移的includeに依存していた）
 
 // ログタグ
 static const char* TAG = "TOUCH";
@@ -64,7 +65,11 @@ bool TouchHandler::update() {
     
     // イベントの初期化
     _lastEvent = TouchEvent::None;
-    
+    // _lastSwipe も毎回クリアする。以前はリリース時にしか代入しておらず、
+    // 一度スワイプすると次のリリースまで getLastSwipe() / isSwipeUp() 等が
+    // 古い方向を返し続けていた。
+    _lastSwipe = SwipeDirection::None;
+
     if (_touched) {
         // タッチ位置の更新
         _lastPoint.x = _rawPoint.x;
@@ -86,14 +91,15 @@ bool TouchHandler::update() {
     } else if (_wasTouched) {
         // タッチ終了を検出
         _touchEndPoint = _lastPoint;
+        // スワイプが成立しても Release のままにする。
+        // 以前はここを Swipe で上書きしていたため、リリース処理を
+        // 取りこぼす側（ButtonManager）でボタンが押下表示のまま残っていた。
         _lastEvent = TouchEvent::Release;
-        
+
         // スワイプ検出
         _lastSwipe = detectSwipe(_touchStartPoint, _touchEndPoint);
-        
+
         if (_lastSwipe != SwipeDirection::None) {
-            _lastEvent = TouchEvent::Swipe;
-            
             // スワイプコールバック実行
             if (_onSwipe) {
                 _onSwipe(_lastSwipe, _touchStartPoint, _touchEndPoint);

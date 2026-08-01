@@ -45,7 +45,20 @@ private:
     };
     
     SDConfig _config;
-    
+
+    /**
+     * @brief マウントポイントを補ってフルパスを構築する
+     *
+     * path が既に mount_point で始まっていればそのまま複製し、そうでなければ
+     * "<mount_point>/<path>" を組み立てる。snprintf を使うため出力は常にNUL終端される。
+     *
+     * @param path    入力パス（相対・絶対どちらでもよい）
+     * @param out     出力バッファ
+     * @param outSize 出力バッファのサイズ
+     * @return 成功時true。切り詰めが発生した場合や引数が不正な場合はfalse
+     */
+    bool buildFullPath(const char* path, char* out, size_t outSize) const;
+
     // MSC関連の内部関数
     bool initMSC();
     //bool initMSC(const char*, const char*, const char*);

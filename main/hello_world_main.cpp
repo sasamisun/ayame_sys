@@ -3,8 +3,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/idf_additions.h"
-#include "esp_task_wdt.h"
+#include "freertos/idf_additions.h"   // xTaskCreatePinnedToCore の宣言元（task.h からは辿れない）
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <M5GFX.h>
@@ -13,7 +12,6 @@
 #include "Button.hpp"
 #include "TypoWrite.hpp"
 #include "VLWFontParser.hpp"
-#include "CanvasTest.hpp"
 #include "SimpleTransition.hpp"    // 新しいシンプルトランジション！
 
 #include "fonts/shippori_16.h"
@@ -31,21 +29,21 @@ TouchHandler touchHandler;
 ButtonManager *buttonManager = nullptr;
 Button *btnTest = nullptr;
 Button *btnUSBMSC = nullptr;
-Button *btnCanvasTest = nullptr;
 Button *btnTransitionTest = nullptr;     // シンプルトランジションテスト用
 Button *btnCanvasStop = nullptr;
 
 VLWFontParser vlwParser;
-CanvasTest *canvasTest = nullptr;
+
+// テキスト描画器。initTextSystem() で1回だけ生成して使い回す
+// （毎回作り直すとフォント再解析とテーブル再構築で重い）
+TypoWrite *verticalWriter = nullptr;
+TypoWrite *horizontalWriter = nullptr;
 SimpleTransition *simpleTransition = nullptr;    // 新しい！超シンプルトランジション
 
 // 超シンプル！テスト実行状態管理
 enum class TestMode
 {
   NORMAL,               // 通常モード
-  CANVAS_MEMORY,        // キャンバスメモリテスト
-  CANVAS_DOUBLE,        // ダブルバッファテスト
-  CANVAS_PERFORMANCE,   // パフォーマンステスト
   SIMPLE_TRANSITION     // 新しい！シンプルトランジションデモ
 };
 
@@ -233,39 +231,102 @@ void advanceToNextScene(SimpleTransitionType transitionType = SimpleTransitionTy
 }
 
 /**
- * @brief 縦書きと横書きテキスト表示のデモ
+ * @brief テキスト描画系の初期化（起動時に1回だけ呼ぶ）
+ *
+ * VLWフォントの解析と TypoWrite の生成・設定をここで済ませる。
+ *
+ * 以前は textDisplayDemo() が呼ばれるたびに
+ *   ・vlwParser.init()  … 約138KBの再確保 + 4414グリフの再解析
+ *   ・TypoWrite を2個構築 … 各53件のマッピングテーブル構築 + スプライト確保
+ *   ・上記の破棄
+ * を実行していた。フォントデータは不変なので初期化は1回で足りる。
+ * 描画のたびに再構築するとメトリクスキャッシュも毎回捨てられ、
+ * ヒープ断片化の要因にもなる。
+ *
+ * @return 成功時true
+ */
+bool initTextSystem()
+{
+    if (!vlwParser.init(shippori, sizeof(shippori)))
+    {
+        ESP_LOGE(TAG, "Failed to initialize VLW font");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "VLW font initialized successfully");
+    vlwParser.debugPrintFontInfo();
+
+    // --- 縦書き（画面右側の帯） ---
+    verticalWriter = new TypoWrite(&display);
+    verticalWriter->setVLWParser(&vlwParser);
+    verticalWriter->loadFontFromArray(shippori);
+    verticalWriter->setPosition(400, 0);
+    verticalWriter->setArea(130, 700);
+    verticalWriter->setColor(TFT_WHITE);
+    verticalWriter->setBackgroundColor(TFT_TRANSPARENT);
+    verticalWriter->setDirection(TextDirection::VERTICAL);
+    verticalWriter->setFontSize(1.0);
+    verticalWriter->setLineSpacing(6);
+
+    // 縦書きの字間。
+    //
+    // 送りは em 固定（setWidth = 17px）なので、0 で「ベタ組み」になる。
+    // shippori_16 の実測では、あ(h=15/topExtent=13) を並べたとき
+    //   charSpacing=0  -> 送り17px, インク間隔 2px（適正）
+    //   charSpacing=-4 -> 送り13px, 2px 重なる
+    //   charSpacing=-8 -> 送り 9px, 6px 重なる
+    // 詰めたい場合でも -4 程度までにとどめること。
+    verticalWriter->setCharSpacing(0);
+
+    // --- 横書き（画面下側の帯） ---
+    //
+    // 送り幅は setWidth ベース（プロポーショナル）なので、
+    // 全角は一定間隔、半角英数（fon）は詰まって描かれるのが正しい。
+    // 縦書きと違い小文字の変位・回転を通らないため、切り分けにも使える。
+    horizontalWriter = new TypoWrite(&display);
+    horizontalWriter->setVLWParser(&vlwParser);
+    horizontalWriter->loadFontFromArray(shippori);
+    horizontalWriter->setPosition(10, 420);
+    horizontalWriter->setArea(380, 180);
+    horizontalWriter->setColor(TFT_WHITE);
+    horizontalWriter->setBackgroundColor(TFT_TRANSPARENT);
+    horizontalWriter->setDirection(TextDirection::HORIZONTAL);
+    horizontalWriter->setFontSize(1.0);
+    horizontalWriter->setLineSpacing(6);
+    horizontalWriter->setCharSpacing(0);
+    horizontalWriter->setAlignment(TextAlignment::LEFT);
+
+    ESP_LOGI(TAG, "Text renderers ready (vertical: 400,0 130x700 / horizontal: 10,420 380x180)");
+    return true;
+}
+
+/**
+ * @brief 縦書きと横書きテキストを描画する
+ *
+ * 初期化は initTextSystem() で済んでいる前提。ここでは描画だけを行う。
  */
 void textDisplayDemo()
 {
-    ESP_LOGI(TAG, "Starting VLW font demo...");
-
-    if (vlwParser.init(shippori, sizeof(shippori)))
+    if (!verticalWriter || !horizontalWriter)
     {
-        ESP_LOGI(TAG, "VLW font initialized successfully");
-        vlwParser.debugPrintFontInfo();
-
-        TypoWrite verticalWriter(&display);
-        verticalWriter.setVLWParser(&vlwParser);
-        verticalWriter.loadFontFromArray(shippori);
-        verticalWriter.setPosition(400, 0);
-        verticalWriter.setArea(130, 700);
-        verticalWriter.setColor(TFT_WHITE);
-        verticalWriter.setBackgroundColor(TFT_TRANSPARENT);
-        verticalWriter.setDirection(TextDirection::VERTICAL);
-        verticalWriter.setFontSize(1.0);
-        verticalWriter.setLineSpacing(6);
-        verticalWriter.setCharSpacing(-8);
-
-        verticalWriter.drawText("ジャン・フィリップ・トゥーサン\nおはよう。いんたぁねっと\nフォンふぉんfon\nぁぃぅぇぉヵゃゅょゎっぁぃぅぇぉちゃんちゃん\nベイクドもチョモチョ");
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Failed to initialize VLW font");
+        ESP_LOGE(TAG, "Text renderers not initialized");
         display.setTextColor(TFT_RED);
         display.setTextSize(1);
         display.setCursor(10, 100);
         display.println("VLW Font Load Failed");
+        return;
     }
+
+    // 縦書きと横書きで同じ文言を出し、送り・配置を見比べられるようにする
+    static const char *SAMPLE_TEXT =
+        "ジャン・フィリップ・トゥーサン\n"
+        "おはよう。いんたぁねっと\n"
+        "フォンふぉんfon\n"
+        "ぁぃぅぇぉヵゃゅょゎっぁぃぅぇぉちゃんちゃん\n"
+        "ベイクドもチョモチョ";
+
+    verticalWriter->drawText(SAMPLE_TEXT);
+    horizontalWriter->drawText(SAMPLE_TEXT);
 }
 
 /**
@@ -314,6 +375,31 @@ void listAndDisplayFiles()
         display.setCursor(10, 10);
         display.println("Failed to read SD card directory");
     }
+}
+
+/**
+ * @brief 通常表示（ファイル一覧＋テキストデモ＋ボタン）を描き直す
+ *
+ * テスト終了後などに元の画面へ戻すための共通処理。
+ * 同じ4行が3箇所に複製されていたのでまとめた。
+ *
+ * 末尾で refreshScreen() を呼び、描画していない領域も含めて
+ * 全画素を再駆動する。電子ペーパーは更新した矩形の外側に電圧がかからず
+ * 時間とともに薄くなるため、操作待ちに入る前にコントラストを揃えておく。
+ */
+void redrawNormalScreen()
+{
+    display.fillScreen(TFT_BLACK);
+    listAndDisplayFiles();
+    textDisplayDemo();
+
+    if (buttonManager)
+    {
+        buttonManager->drawButtons();
+    }
+
+    // 全画面を再駆動してコントラストを揃える（内容は変わらない・フラッシュなし）
+    SimpleTransition::refreshScreen(&display);
 }
 
 // === タッチイベントコールバック（変更なし） ===
@@ -442,65 +528,6 @@ void onUSBMSCButtonReleased(Button *btn)
     }
 }
 
-// キャンバステストボタンコールバック（変更なし）
-void onCanvasTestButtonPressed(Button *btn)
-{
-    ESP_LOGI(TAG, "Canvas test button pressed");
-}
-
-void onCanvasTestButtonReleased(Button *btn)
-{
-    ESP_LOGI(TAG, "Canvas test button released");
-
-    if (currentTestMode != TestMode::NORMAL)
-    {
-        return;
-    }
-
-    if (!canvasTest)
-    {
-        ESP_LOGE(TAG, "Canvas test not initialized");
-        return;
-    }
-
-    display.fillScreen(TFT_BLACK);
-    display.setTextColor(TFT_CYAN);
-    display.setTextSize(2);
-    display.setCursor(10, 50);
-    display.println("Starting Canvas Tests...");
-    display.println("Please wait...");
-
-    btn->setLabel("Testing...");
-    btn->setEnabled(false);
-    btnCanvasStop->setVisible(true);
-    buttonManager->drawButtons();
-
-    ESP_LOGI(TAG, "Running Canvas Memory Test...");
-    currentTestMode = TestMode::CANVAS_MEMORY;
-    canvasTest->testMemoryUsage();
-    vTaskDelay(pdMS_TO_TICKS(3000));
-
-    ESP_LOGI(TAG, "Running Canvas Performance Test...");
-    currentTestMode = TestMode::CANVAS_PERFORMANCE;
-    canvasTest->testDrawingPerformance();
-
-    ESP_LOGI(TAG, "Running Canvas Double Buffer Test...");
-    currentTestMode = TestMode::CANVAS_DOUBLE;
-    canvasTest->runDoubleBufferTest();
-
-    currentTestMode = TestMode::NORMAL;
-    btn->setLabel("Canvas Test");
-    btn->setEnabled(true);
-    btnCanvasStop->setVisible(false);
-
-    display.fillScreen(TFT_BLACK);
-    listAndDisplayFiles();
-    textDisplayDemo();
-    buttonManager->drawButtons();
-
-    ESP_LOGI(TAG, "Canvas tests completed");
-}
-
 // === 新しい！超シンプルトランジションテストボタン ===
 void onTransitionTestButtonPressed(Button *btn)
 {
@@ -565,28 +592,9 @@ void onCanvasStopButtonReleased(Button *btn)
         btn->setVisible(false);
         btn->setLabel("Stop Test");
 
-        display.fillScreen(TFT_BLACK);
-        listAndDisplayFiles();
-        textDisplayDemo();
-        buttonManager->drawButtons();
+        redrawNormalScreen();
 
         ESP_LOGI(TAG, "Simple transition demo stopped by user");
-    }
-    else if (canvasTest && canvasTest->isTestRunning())
-    {
-        canvasTest->stopTest();
-
-        currentTestMode = TestMode::NORMAL;
-        btnCanvasTest->setLabel("Canvas Test");
-        btnCanvasTest->setEnabled(true);
-        btn->setVisible(false);
-
-        display.fillScreen(TFT_BLACK);
-        listAndDisplayFiles();
-        textDisplayDemo();
-        buttonManager->drawButtons();
-
-        ESP_LOGI(TAG, "Canvas test stopped by user");
     }
 }
 
@@ -655,9 +663,47 @@ void setup()
 {
     ESP_LOGI(TAG, "Initializing M5Paper S3 with Simple Transition...");
     display.begin();
+
+    // 画面の向き。
+    //
+    // パネルの物理的な向きは 960x540（横長）で、M5GFX のパネル定義が
+    // offset_rotation = 3 を持つため、setRotation() の値はこれに加算される。
+    //   Panel_HasBuffer::setRotation():
+    //     _internal_rotation = ((r + offset_rotation) & 3) | ...
+    //
+    //   r=0 -> 540x960（縦長・既定）
+    //   r=1 -> 960x540（横長）
+    //   r=2 -> 540x960（縦長・180度反転）  ← これを使う
+    //   r=3 -> 960x540（横長・180度反転）
+    //
+    // r=0 と r=2 は同じ 540x960 なので、画面サイズを前提にした
+    // 既存のレイアウト座標はそのまま使える。
+    //
+    // 注意: 描画より前に設定すること。
+    display.setRotation(2);
+
     display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
     display.setColorDepth(1);
+
+    // 起動直後に残像を除去して、パネルの物理状態をドライバの仮定に合わせる。
+    //
+    // Panel_EPD は初期化時に「画面は全白」と仮定して内部バッファを埋めるが
+    // （_buf を 0xFF、_step_framebuf を 0xFFFF で初期化）、
+    // E-Paper はリセットしても直前の像を保持している。
+    // この不一致があると、実際は黒い画素に「白から」の波形がかかって
+    // 駆動しきれず、前の像が残る。
+    // コールド起動は比較的きれいなのにリセット後は残像がひどい、という
+    // 症状の原因がこれ。白→黒→白で全画素を駆動して状態を揃えておく。
+    SimpleTransition::clearGhosting(&display);
+
     display.fillScreen(TFT_BLACK);
+
+    // テキスト描画系はここで1回だけ初期化する。
+    // フォント解析と TypoWrite の生成をここで済ませ、以降は描画のみ行う。
+    if (!initTextSystem())
+    {
+        ESP_LOGE(TAG, "Text system initialization failed");
+    }
 
     // 1. SDカードの初期化（変更なし）
     ESP_LOGI(TAG, "Initializing SD card via SPI...");
@@ -691,23 +737,6 @@ void setup()
         display.setTextSize(2);
         display.setCursor(10, 10);
         display.println("SD Card Init Failed");
-    }
-
-    // 2. キャンバステストオブジェクトの初期化（変更なし）
-    ESP_LOGI(TAG, "Initializing Canvas Test...");
-    canvasTest = new CanvasTest(&display);
-    if (canvasTest && canvasTest->init())
-    {
-        ESP_LOGI(TAG, "Canvas test initialized successfully");
-    }
-    else
-    {
-        ESP_LOGE(TAG, "Canvas test initialization failed");
-        if (canvasTest)
-        {
-            delete canvasTest;
-            canvasTest = nullptr;
-        }
     }
 
     // 3. 新しい！超シンプルトランジションオブジェクトの初期化
@@ -771,10 +800,6 @@ void setup()
         btnUSBMSC->setOnPressed(onUSBMSCButtonPressed);
         btnUSBMSC->setOnReleased(onUSBMSCButtonReleased);
 
-        btnCanvasTest = new Button(&display, 230, 350, 100, 40, "Canvas Test");
-        btnCanvasTest->setOnPressed(onCanvasTestButtonPressed);
-        btnCanvasTest->setOnReleased(onCanvasTestButtonReleased);
-
         // 新しい！シンプルトランジションテストボタン
         btnTransitionTest = new Button(&display, 340, 350, 100, 40, "Simple Trans");
         btnTransitionTest->setOnPressed(onTransitionTestButtonPressed);
@@ -786,11 +811,6 @@ void setup()
         btnCanvasStop->setVisible(false);
 
         // スタイル設定
-        ButtonStyle canvasStyle = ButtonStyle::defaultStyle();
-        canvasStyle.bgColor = TFT_PURPLE;
-        canvasStyle.textColor = TFT_WHITE;
-        btnCanvasTest->setStyle(canvasStyle);
-
         ButtonStyle transitionStyle = ButtonStyle::defaultStyle();
         transitionStyle.bgColor = TFT_DARKGREEN;
         transitionStyle.textColor = TFT_WHITE;
@@ -804,7 +824,6 @@ void setup()
         // ボタンマネージャーに追加
         buttonManager->addButton(btnTest);
         buttonManager->addButton(btnUSBMSC);
-        buttonManager->addButton(btnCanvasTest);
         buttonManager->addButton(btnTransitionTest);
         buttonManager->addButton(btnCanvasStop);
 
@@ -817,24 +836,39 @@ void setup()
     }
 
     textDisplayDemo();
+
+    // 操作待ちに入る前に画面全体を再駆動してコントラストを揃える。
+    //
+    // setup() は PNG表示・画面クリア・ファイル一覧・ボタン・テキストデモと
+    // 短時間に多数の描画を行う。更新が連続すると Panel_EPD 側の
+    //     bool refresh = (remain == 0);
+    // が false になって部分更新に落ち、さらに更新した矩形の外側は
+    // そもそも電圧がかからないため、領域ごとに濃さがばらつく。
+    // フラッシュなしの全画面再駆動で揃えておく。
+    SimpleTransition::refreshScreen(&display);
 }
 
 void loop(void)
 {
-    // 1. 超重要！シンプルトランジション更新（最優先）
+    // 1. トランジション実行中は描画を進めることに専念する
     if (simpleTransition && simpleTransition->isActive()) {
         simpleTransition->update();  // 1ステップ実行
-        return;  // トランジション中は他の処理をスキップ
+        return;
     }
 
-    // 2. シンプルトランジションデモ中のタッチ処理
+    // 2. タッチの取得はここで1回だけ行う。
+    //
+    // TouchHandler::update() はハードウェアを読んで内部状態を更新し、
+    // イベントを1回だけ返す破壊的メソッドである。
+    // 複数箇所で呼ぶと2回目以降は必ず None を返し、イベントを取りこぼす。
+    // 以前は loop() と ButtonManager::update() の両方が呼んでいた。
+    const bool hasTouchEvent = touchHandler.update();
+
+    // 3. トランジションデモ中はタッチで次のシーンへ進む
     if (currentTestMode == TestMode::SIMPLE_TRANSITION) {
-        if (touchHandler.update() && touchHandler.isTouchEvent()) {
-            const ExtendedTouchPoint& point = touchHandler.getLastPoint();
-            
-            // タッチされたら次のシーンに進む（様々なトランジション効果で）
-            static int transitionTypeIndex = 0;
-            SimpleTransitionType transitions[] = {
+        if (hasTouchEvent && touchHandler.isTouchEvent()) {
+            // 効果を順番に巡回させる
+            static constexpr SimpleTransitionType TRANSITIONS[] = {
                 SimpleTransitionType::FADE_IN,
                 SimpleTransitionType::SLIDE_LEFT,
                 SimpleTransitionType::SLIDE_RIGHT,
@@ -845,30 +879,32 @@ void loop(void)
                 SimpleTransitionType::REVEAL_CENTER,
                 SimpleTransitionType::REVEAL_CORNER
             };
-            
-            const int transitionCount = sizeof(transitions) / sizeof(transitions[0]);
-            SimpleTransitionType currentTransition = transitions[transitionTypeIndex % transitionCount];
-            transitionTypeIndex++;
-            
-            ESP_LOGI(TAG, "Touch detected! Advancing to next scene with transition type %d", 
-                     static_cast<int>(currentTransition));
-            
-            // 次のシーンに進む（超シンプル！）
-            advanceToNextScene(currentTransition);
+            static constexpr int TRANSITION_COUNT =
+                sizeof(TRANSITIONS) / sizeof(TRANSITIONS[0]);
+
+            static int transitionIndex = 0;
+            const SimpleTransitionType effect = TRANSITIONS[transitionIndex];
+            transitionIndex = (transitionIndex + 1) % TRANSITION_COUNT;
+
+            ESP_LOGI(TAG, "Touch detected. Advancing to next scene (effect %d)",
+                     static_cast<int>(effect));
+
+            advanceToNextScene(effect);
         }
-        return;  // デモ中は他の処理をスキップ
+        return;
     }
 
-    // 3. 通常の処理（トランジション完了時のみ実行）
-    static int64_t last_check = 0;
-    int64_t now = esp_timer_get_time() / 1000;
+    // 4. USB MSC の接続状態を5秒間隔で表示する
+    static int64_t lastUsbCheckMs = 0;
+    const int64_t nowMs = esp_timer_get_time() / 1000;
 
-    if (now - last_check > 5000) {
-        last_check = now;
+    if (nowMs - lastUsbCheckMs > 5000) {
+        lastUsbCheckMs = nowMs;
 
         if (currentTestMode == TestMode::NORMAL && SD.isUSBMSCEnabled()) {
-            bool connected = SD.isUSBMSCConnected();
-            ESP_LOGI(TAG, "USB MSC connection status: %s", connected ? "Connected" : "Disconnected");
+            const bool connected = SD.isUSBMSCConnected();
+            ESP_LOGI(TAG, "USB MSC connection status: %s",
+                     connected ? "Connected" : "Disconnected");
 
             display.setTextColor(TFT_WHITE, TFT_BLACK);
             display.setTextSize(1);
@@ -877,34 +913,26 @@ void loop(void)
         }
     }
 
-    // 4. ボタン更新処理
+    // 5. 取得済みのイベントをボタンへ配送する
+    //
+    // 以前はこの後に「buttonManager が無いときだけタッチ座標を表示する」分岐が
+    // あったが、buttonManager が null になるのは TouchHandler::init() が
+    // 失敗したときだけで、その場合そもそもタッチが取れないため到達不能だった。
     if (buttonManager) {
         buttonManager->update();
-    }
-
-    // 5. 通常のタッチ処理
-    if (currentTestMode == TestMode::NORMAL && touchHandler.update() &&
-        touchHandler.isTouched() && !buttonManager) {
-        const ExtendedTouchPoint &point = touchHandler.getLastPoint();
-        touchHandler.drawCircleAtTouch(10, TFT_RED);
-        ESP_LOGI(TAG, "Touch at (%d, %d)", point.x, point.y);
-
-        display.setTextColor(TFT_GREEN, TFT_BLACK);
-        display.setTextSize(1);
-        display.setCursor(10, display.height() - 40);
-        display.printf("Touch: (%d, %d)     ", point.x, point.y);
     }
 }
 
 void runMainLoop(void *args)
 {
     setup();
+    // このループは抜けない（タスクは常駐）。
+    // 以前はループ後に vTaskDelete(g_handle) を置いていたが到達不能なため削除した。
     for (;;)
     {
         loop();
         vTaskDelay(1);
     }
-    vTaskDelete(g_handle);
 }
 
 void initializeTask()

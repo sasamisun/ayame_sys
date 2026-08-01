@@ -44,7 +44,9 @@ bool Button::containsPoint(int x, int y) const
 void Button::setDrawTarget(lgfx::LGFX_Sprite *canvas)
 {
     _drawTarget = canvas;
-    ESP_LOGI(TAG, "Button draw target set to %s", canvas ? "canvas" : "display");
+    // ボタン追加時や一括切替時にボタン数だけ呼ばれるため ESP_LOGD にする
+    // （まとめた件数は ButtonManager::setDrawTarget() が ESP_LOGI で出す）
+    ESP_LOGD(TAG, "Button draw target set to %s", canvas ? "canvas" : "display");
 }
 
 void Button::draw()
@@ -74,96 +76,47 @@ void Button::draw()
         break;
     }
 
-    // ★ 描画先を判別してif分岐で処理
+    // 描画先を決定（Canvas優先、なければDisplay）。
+    // lgfx::LGFX_Sprite も M5GFX も lgfx::LovyanGFX 派生なので、
+    // 基底ポインタに束ねて単一の描画実装へ渡す。
+    lgfx::LovyanGFX *target = nullptr;
+    const char *targetName = nullptr;
+
     if (_drawTarget != nullptr)
     {
-        // Canvas（lgfx::LGFX_Sprite）に描画
-        drawToCanvas(_drawTarget, bgColor, textColor, borderColor);
-        ESP_LOGD(TAG, "Button '%s' drawn to canvas at (%d,%d)", _label, _x, _y);
+        target = _drawTarget;
+        targetName = "canvas";
     }
     else if (_display != nullptr)
     {
-        // Display（M5GFX）に直接描画
-        drawToDisplay(_display, bgColor, textColor, borderColor);
-        ESP_LOGD(TAG, "Button '%s' drawn to display at (%d,%d)", _label, _x, _y);
+        target = _display;
+        targetName = "display";
     }
-    else
+
+    if (target == nullptr)
     {
         ESP_LOGE(TAG, "No valid draw target available for button '%s'", _label);
+        return;
     }
+
+    drawTo(target, bgColor, textColor, borderColor);
+    ESP_LOGD(TAG, "Button '%s' drawn to %s at (%d,%d)", _label, targetName, _x, _y);
 }
 
-void Button::drawToCanvas(lgfx::LGFX_Sprite* canvas, uint32_t bgColor, uint32_t textColor, uint32_t borderColor)
+void Button::drawTo(lgfx::LovyanGFX* target, uint32_t bgColor, uint32_t textColor, uint32_t borderColor)
 {
-    // Canvas（lgfx::LGFX_Sprite）への描画処理
-    
     // 背景を描画
     if (_style.cornerRadius > 0)
     {
         // 角が丸いボタン
-        canvas->fillRoundRect(_x, _y, _width, _height, _style.cornerRadius, bgColor);
+        target->fillRoundRect(_x, _y, _width, _height, _style.cornerRadius, bgColor);
 
         // 枠線を描画
         if (_style.borderWidth > 0)
         {
             for (int i = 0; i < _style.borderWidth; i++)
             {
-                canvas->drawRoundRect(_x + i, _y + i, _width - i * 2, _height - i * 2,
-                                     _style.cornerRadius, borderColor);
-            }
-        }
-    }
-    else
-    {
-        // 角が四角いボタン
-        canvas->fillRect(_x, _y, _width, _height, bgColor);
-
-        // 枠線を描画
-        if (_style.borderWidth > 0)
-        {
-            for (int i = 0; i < _style.borderWidth; i++)
-            {
-                canvas->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, borderColor);
-            }
-        }
-    }
-
-    // テキストを描画
-    if (_label[0] != '\0')
-    {
-        // フォントやテキストサイズを設定
-        if (_font)
-        {
-            canvas->setFont(_font);
-        }
-        canvas->setTextColor(textColor);
-        canvas->setTextSize(_textSize);
-
-        // テキスト中央寄せで描画
-        canvas->setTextDatum(middle_center);
-        canvas->drawString(_label, _x + _width / 2, _y + _height / 2);
-
-        // テキスト配置を元に戻す
-        canvas->setTextDatum(top_left);
-    }
-}
-
-void Button::drawToDisplay(M5GFX* display, uint32_t bgColor, uint32_t textColor, uint32_t borderColor)
-{
-    // Display（M5GFX）への描画処理
-    
-    // 背景を描画
-    if (_style.cornerRadius > 0)
-    {
-        // 角が丸いボタン
-        display->fillRoundRect(_x, _y, _width, _height, _style.cornerRadius, bgColor);
-
-        // 枠線を描画
-        if (_style.borderWidth > 0)
-        {
-            for (int i = 0; i < _style.borderWidth; i++)
-            {
-                display->drawRoundRect(_x + i, _y + i, _width - i * 2, _height - i * 2,
+                target->drawRoundRect(_x + i, _y + i, _width - i * 2, _height - i * 2,
                                       _style.cornerRadius, borderColor);
             }
         }
@@ -171,14 +124,14 @@ void Button::drawToDisplay(M5GFX* display, uint32_t bgColor, uint32_t textColor,
     else
     {
         // 角が四角いボタン
-        display->fillRect(_x, _y, _width, _height, bgColor);
+        target->fillRect(_x, _y, _width, _height, bgColor);
 
         // 枠線を描画
         if (_style.borderWidth > 0)
         {
             for (int i = 0; i < _style.borderWidth; i++)
             {
-                display->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, borderColor);
+                target->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, borderColor);
             }
         }
     }
@@ -189,67 +142,27 @@ void Button::drawToDisplay(M5GFX* display, uint32_t bgColor, uint32_t textColor,
         // フォントやテキストサイズを設定
         if (_font)
         {
-            display->setFont(_font);
+            target->setFont(_font);
         }
-        display->setTextColor(textColor);
-        display->setTextSize(_textSize);
+        target->setTextColor(textColor);
+        target->setTextSize(_textSize);
 
         // テキスト中央寄せで描画
-        display->setTextDatum(middle_center);
-        display->drawString(_label, _x + _width / 2, _y + _height / 2);
+        target->setTextDatum(middle_center);
+        target->drawString(_label, _x + _width / 2, _y + _height / 2);
 
         // テキスト配置を元に戻す
-        display->setTextDatum(top_left);
+        // TODO: 呼び出し前の datum を保存して復元するのが正しい（現状は top_left 決め打ち）
+        target->setTextDatum(top_left);
     }
 }
 
-// 更新関数 - ExtendedTouchPointを使用するように変更
-bool Button::update(const ExtendedTouchPoint &touchPoint, bool isTouched)
-{
-    if (!_visible || _state == ButtonState::Disabled)
-        return false;
+// 補足: Button::update(const ExtendedTouchPoint&, bool) をここに実装していたが削除した。
+//       ButtonManager::update() が同じ状態遷移をインラインで実装しており、
+//       2重実装になっていた（領域外で指を離したときの挙動が両者で異なっていた）。
+//       唯一の呼び出し元だった ButtonManager::handleTouch() を削除した時点で
+//       呼び出し元0件になったため、ButtonManager::update() 側に一本化した。
 
-    bool wasPressed = (_state == ButtonState::Pressed);
-    bool containsTouch = containsPoint(touchPoint.x, touchPoint.y);
-
-    // タッチの状態に応じてボタンの状態を更新
-    if (isTouched && containsTouch)
-    {
-        // タッチされている場合
-        if (!wasPressed)
-        {
-            // 押下状態に変更
-            _state = ButtonState::Pressed;
-
-            // 押されたイベントを発火
-            if (_onPressed)
-            {
-                _onPressed(this);
-            }
-
-            // 再描画
-            draw();
-            return true;
-        }
-    }
-    else if (wasPressed)
-    {
-        // タッチが離された場合
-        _state = ButtonState::Normal;
-
-        // 離されたイベントを発火
-        if (_onReleased)
-        {
-            _onReleased(this);
-        }
-
-        // 再描画
-        draw();
-        return true;
-    }
-
-    return false;
-}
 
 // スワイプイベントを処理
 bool Button::handleSwipe(SwipeDirection direction)
@@ -411,66 +324,35 @@ void ButtonManager::drawButtons()
              _drawTarget ? "canvas" : "display");
 }
 
-void ButtonManager::drawButtonsToTarget(lgfx::LGFX_Sprite *target)
-{
-    // 一時的に描画先を変更
-    lgfx::LGFX_Sprite *originalTarget = _drawTarget;
-    
-    // 全ボタンの描画先を一時変更
-    for (int i = 0; i < _buttonCount; i++)
-    {
-        if (_buttons[i])
-        {
-            _buttons[i]->setDrawTarget(target);
-        }
-    }
-    
-    // 描画実行
-    drawButtons();
-    
-    // 元の描画先に戻す
-    for (int i = 0; i < _buttonCount; i++)
-    {
-        if (_buttons[i])
-        {
-            _buttons[i]->setDrawTarget(originalTarget);
-        }
-    }
-    
-    ESP_LOGI(TAG, "Drew %d buttons to specified target", _buttonCount);
-}
+// 補足: drawButtonsToTarget() をここに実装していたが、呼び出し元が存在しない死蔵コードだった。
+//       実装にも問題があり、全ボタンの描画先を一時変更する際にボタン数だけ
+//       setDrawTarget() のログが出るうえ、_drawTarget メンバ自体は変更しないため
+//       drawButtons() 末尾のログが誤った描画先を表示していた。削除した。
 
-void ButtonManager::handleTouch()
-{
-    // タッチハンドラが有効でなければ何もしない
-    if (!_touchHandler)
-        return;
 
-    // タッチイベントを処理
-    bool isTouched = _touchHandler->isTouched();
-    const ExtendedTouchPoint &touchPoint = _touchHandler->getLastPoint();
+// 補足: handleTouch() をここに実装していたが、ヘッダで「非推奨」と明記されたうえ
+//       呼び出し元も存在しない死蔵コードだったため削除した。
+//       実際の入力処理は ButtonManager::update() が行っている。
+//       なお handleTouch() は Button::update() の唯一の呼び出し元だったため、
+//       この削除により Button::update() は未使用になる（§12.3 #27 の判断待ち）。
 
-    // 各ボタンの状態を更新
-    for (int i = 0; i < _buttonCount; i++)
-    {
-        if (_buttons[i] && _buttons[i]->isVisible())
-        {
-            _buttons[i]->update(touchPoint, isTouched);
-        }
-    }
-}
 
 void ButtonManager::update()
 {
-    // タッチハンドラの更新
     if (!_touchHandler)
         return;
 
-    // タッチハンドラを更新
-    if (_touchHandler->update())
+    // 注意: ここでは TouchHandler::update() を呼ばない。
+    //
+    // TouchHandler::update() はハードウェアを読んで内部状態を更新し、
+    // イベントを1回だけ返す破壊的メソッドである。
+    // 2回呼ぶと2回目は必ず None を返し、_wasTouched も潰れてイベントを取りこぼす。
+    //
+    // 以前はこのメソッドが内部でポーリングしており、呼び出し側の loop() でも
+    // 別途 touchHandler.update() を呼んでいたため、
+    // どちらか一方がイベントを取り逃していた。
+    // ポーリングは呼び出し側で1回だけ行い、本メソッドはその結果を読むだけにする。
     {
-        // タッチイベントが発生した場合
-
         if (_touchHandler->isTouchEvent())
         {
             // タッチ開始イベント
@@ -499,8 +381,14 @@ void ButtonManager::update()
         }
         else if (_touchHandler->isReleaseEvent())
         {
-            // タッチ終了イベント
+            // タッチ終了イベント。
+            // スワイプが成立した場合も TouchEvent::Release として通知されるため、
+            // ここでリリース処理とスワイプ配送の両方を行う。
+            // 以前は else if (isSwipeEvent()) を連ねていたので、
+            // スワイプ時にリリース処理が丸ごとスキップされ、
+            // 押下状態のボタンが押されたままの表示で固まっていた。
             const ExtendedTouchPoint &point = _touchHandler->getLastPoint();
+            const bool swiped = _touchHandler->isSwipeEvent();
 
             // 押下状態のボタンを探して、リリース処理を行う
             for (int i = 0; i < _buttonCount; i++)
@@ -509,14 +397,15 @@ void ButtonManager::update()
                     _buttons[i]->getState() == ButtonState::Pressed)
                 {
 
-                    // ボタンを通常状態に戻す
+                    // ボタンを通常状態に戻す（スワイプでも必ず実行する）
                     _buttons[i]->setState(ButtonState::Normal);
 
                     // ボタンを再描画
                     _buttons[i]->draw();
 
-                    // タッチ終了位置がボタン内ならReleasedイベントを発火
-                    if (_buttons[i]->containsPoint(point.x, point.y))
+                    // タッチ終了位置がボタン内ならReleasedイベントを発火。
+                    // ただしスワイプが成立した場合はタップではないので発火しない。
+                    if (!swiped && _buttons[i]->containsPoint(point.x, point.y))
                     {
                         if (_buttons[i]->getOnReleased())
                         {
@@ -525,25 +414,25 @@ void ButtonManager::update()
                     }
                 }
             }
-        }
-        else if (_touchHandler->isSwipeEvent())
-        {
-            // スワイプイベント
-            const ExtendedTouchPoint &startPoint = _touchHandler->getTouchStartPoint();
-            SwipeDirection direction = _touchHandler->getLastSwipe();
 
-            // スワイプ開始位置を含むボタンを探す
-            for (int i = 0; i < _buttonCount; i++)
+            // スワイプはタッチ開始位置のボタンへ配送する
+            if (swiped)
             {
-                if (_buttons[i] && _buttons[i]->isVisible() && _buttons[i]->isEnabled() &&
-                    _buttons[i]->containsPoint(startPoint.x, startPoint.y))
-                {
+                const ExtendedTouchPoint &startPoint = _touchHandler->getTouchStartPoint();
+                SwipeDirection direction = _touchHandler->getLastSwipe();
 
-                    // ボタンのスワイプイベントを処理
-                    if (_buttons[i]->handleSwipe(direction))
+                for (int i = 0; i < _buttonCount; i++)
+                {
+                    if (_buttons[i] && _buttons[i]->isVisible() && _buttons[i]->isEnabled() &&
+                        _buttons[i]->containsPoint(startPoint.x, startPoint.y))
                     {
-                        // イベントが処理された場合は終了
-                        break;
+
+                        // ボタンのスワイプイベントを処理
+                        if (_buttons[i]->handleSwipe(direction))
+                        {
+                            // イベントが処理された場合は終了
+                            break;
+                        }
                     }
                 }
             }

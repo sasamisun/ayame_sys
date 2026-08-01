@@ -24,12 +24,18 @@ enum class SwipeDirection
 };
 
 // タッチイベントの列挙型
+//
+// 注意: 以前は Swipe という値を持ち、スワイプ成立時に _lastEvent を
+// Release から Swipe へ上書きしていた。そのため isReleaseEvent() が false になり、
+// 「押したまま指を動かして離す」とボタンの onReleased が発火せず、
+// 押下表示のまま固まる不具合があった。
+// 現在はスワイプの有無を _lastSwipe（isSwipeEvent()）で別に表現し、
+// _lastEvent は Touch / Release のみを取る。
 enum class TouchEvent
 {
     None,    // イベントなし
     Touch,   // タッチ開始
-    Release, // タッチ終了
-    Swipe    // スワイプ
+    Release  // タッチ終了（スワイプが成立した場合もこの値になる）
 };
 
 // タッチ状態を管理するクラス
@@ -89,6 +95,7 @@ public:
     TouchEvent getLastEvent() const { return _lastEvent; }
 
     // 最後のスワイプ方向を取得
+    // update() ごとにクリアされるため、同じ更新サイクル内で参照すること
     SwipeDirection getLastSwipe() const { return _lastSwipe; }
 
     // 画面上のタッチ位置に円を描画（デバッグ用）
@@ -106,9 +113,11 @@ public:
     void setOnSwipe(SwipeCallback callback) { _onSwipe = callback; }
 
     // イベント発生判定ヘルパー関数
+    // isReleaseEvent() と isSwipeEvent() は同時に true になりうる
+    // （スワイプは「方向を伴うタッチ終了」として扱う）
     bool isTouchEvent() const { return _lastEvent == TouchEvent::Touch; }
     bool isReleaseEvent() const { return _lastEvent == TouchEvent::Release; }
-    bool isSwipeEvent() const { return _lastEvent == TouchEvent::Swipe; }
+    bool isSwipeEvent() const { return _lastSwipe != SwipeDirection::None; }
 
     // スワイプ方向判定ヘルパー関数
     bool isSwipeUp() const { return _lastSwipe == SwipeDirection::Up; }
