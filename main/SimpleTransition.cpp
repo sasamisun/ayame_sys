@@ -4,6 +4,8 @@
 #include "SimpleTransition.hpp"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <algorithm>
 #include <cmath>
 
@@ -587,47 +589,67 @@ void SimpleTransition::refreshScreen(M5GFX* display, lgfx::v1::epd_mode_t mode)
     const lgfx::v1::epd_mode_t previous = display->getEpdMode();
     display->setEpdMode(mode);
 
-    // 更新タスクがビジー（remain > 0）だと
+    // 更新タスクを「キューが空 かつ remain == 0」の完全なアイドルにしてから
+    // 矩形を積む。これを外すと本メソッドは何も表示を変えない。
+    //
+    // 更新タスクは、キューから取り出した一群の矩形に対して
     //     bool refresh = (remain == 0);
-    // が false になり、変化した画素だけを駆動する部分更新に落ちる。
-    // 全画素を駆動させたいのでアイドルを待つ。
+    // を **バッチの先頭で1回だけ** 評価する。refresh が false の回に
+    // 処理されると
+    //     if (d0 != s0) { d[0] = s0 + lut_offset; }
+    // の分岐に落ち、値が変化した画素しか駆動しない。
+    // refreshScreen() は内容を変えないので、この分岐では 1 画素も駆動されず、
+    // コントラストがまったく戻らない。
+    //
+    // waitDisplay() を 1 回呼ぶだけでは足りない。_display_busy は
+    // for(;;) の先頭で remain から更新される（キュー取り出しより前）ため、
+    // キューに未処理の矩形が残っていても一瞬 false になる窓がある。
+    //     me->_display_busy = (remain != 0);   // ここで false になりうる
+    //     if (xQueueReceive(...)) { me->_display_busy = true; }
+    // 直前に描画が集中していると、その矩形群の処理が 2048us の打ち切りに
+    // 達してバッチが分割され、こちらの全画面矩形は remain != 0 の回へ回される。
+    //
+    // 「待つ→少し置く」を繰り返し、ビジーに戻らなくなるまで確認する。
+    for (int i = 0; i < 4; ++i)
+    {
+        display->waitDisplay();
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
     display->waitDisplay();
 
     // 更新範囲を全画面に指定して再駆動する。
     // 描画内容（パネル側の _buf）はそのままなので見た目は変わらないが、
     // 全画素に波形がかかるので薄くなっていた領域のコントラストが戻る。
     //
-    // 【重要】display() は「物理」座標を取る。論理座標ではない。
+    // 【重要】パネルへ直接指示する。M5GFX の display() は経由できない。
     //
+    // 更新範囲 _range_mod は「物理」座標で管理されている。
     // 描画系（writeImage 等）は _update_transferred_rect() が _rotate_pos() で
-    // 論理→物理に変換してから更新範囲 _range_mod を広げるのに対し、
-    // Panel_EPD::display(x, y, w, h) は引数を変換せず _range_mod に入れる。
-    // つまり _range_mod は常に物理座標であり、display() の引数も物理座標。
+    // 論理→物理に変換してから積むのに対し、
+    // Panel_EPD::display(x, y, w, h) は引数を無変換で積むためである。
     //
-    // このパネルの物理形状は 960x540（横長）で、offset_rotation = 3 により
-    // 論理座標が 540x960（縦長）になっている。ここで論理サイズを渡すと
-    // 物理 x が 0..539（960 列中）にしか広がらず、右側 420 列が駆動されない。
-    // その帯は setRotation() の値によらず同じ位置に残る（引数が回転に依存
-    // しない定数のため）。加えて物理 y が 0..959 と実際の 540 行を超え、
-    // 更新タスクが _buf の範囲外を読む。
+    // ところが LGFXBase::display() は、引数を「論理」座標として境界クリップ
+    // したうえで、回転変換はせずそのままパネルへ渡す（LGFXBase.cpp）。
+    //
+    //     if (w > width()  - x) w = width()  - x;   // 論理幅 540 でクリップ
+    //     if (h > height() - y) h = height() - y;   // 論理高 960 でクリップ
+    //     _panel->display(x, y, w, h);              // 物理座標として解釈される
+    //
+    // このパネルは物理 960x540 / 論理 540x960。全画面のつもりで
+    // (0, 0, 960, 540) を渡しても論理幅 540 に切り詰められ、
+    // 物理 960 列のうち 540 列しか駆動されない。
+    // 残る 420 列は論理座標では画面の高さ方向に対応するので、
+    // 「画面の一部だけリフレッシュされない」という症状になる。
+    //
+    // クリップを避けるため、パネルの display() を直接呼ぶ。
+    // startWrite/endWrite で挟むのは LGFXBase::display() と同じ作法。
+    // このとき _range_mod は送信成功時に空へ戻るため、
+    // endWrite() 側の display() は何もしない。
     const auto& panelConfig = display->panel()->config();
 
-    // TODO: 残像調査用の一時ログ。原因特定後に削除する。
-    ESP_LOGI(TAG,
-             "refreshScreen: logical=%dx%d panel=%dx%d memory=%dx%d "
-             "offset=(%d,%d) offset_rotation=%d rotation=%d",
-             static_cast<int>(display->width()),
-             static_cast<int>(display->height()),
-             static_cast<int>(panelConfig.panel_width),
-             static_cast<int>(panelConfig.panel_height),
-             static_cast<int>(panelConfig.memory_width),
-             static_cast<int>(panelConfig.memory_height),
-             static_cast<int>(panelConfig.offset_x),
-             static_cast<int>(panelConfig.offset_y),
-             static_cast<int>(panelConfig.offset_rotation),
-             static_cast<int>(display->getRotation()));
-
-    display->display(0, 0, panelConfig.panel_width, panelConfig.panel_height);
+    display->startWrite();
+    display->panel()->display(0, 0, panelConfig.panel_width, panelConfig.panel_height);
+    display->endWrite();
 
     display->waitDisplay();
     display->setEpdMode(previous);
