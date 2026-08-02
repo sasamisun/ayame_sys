@@ -1,0 +1,21 @@
+# Project-specific configuration.
+# Kept here so the settings survive sdkconfig regeneration.
+#
+# NOTE: This file must stay ASCII-only.
+# kconfgen reads it with the system codepage (cp932 on Japanese Windows),
+# so non-ASCII comments break the build with a UnicodeDecodeError.
+
+# --- FATFS: enable long file names (LFN) ---
+#
+# The default is CONFIG_FATFS_LFN_NONE, which only supports 8.3 names
+# (8-char base + 3-char extension). Scenarios live on the SD card as
+#     /scenarios/<scenario_id>/scenario.json
+# and none of those names fit 8.3:
+#   scenarios     -> 9-char base
+#   sample_001    -> 10-char base
+#   scenario.json -> 4-char extension
+#
+# HEAP is chosen over STACK because the LFN work buffer (up to 255*2 bytes)
+# would otherwise sit on the task stack and risk overflow.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255

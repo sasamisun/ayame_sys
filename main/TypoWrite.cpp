@@ -5,6 +5,24 @@
 
 static const char *TAG = "TypoWrite";
 
+namespace {
+/**
+ * @brief 字面を持たない空白文字か
+ *
+ * スペースは「インクを持たない」という定義なので、フォントに専用グリフを
+ * 持たないことが多い（shippori_16 は U+0020 と U+3000 のどちらも持っていない。
+ * 未収録の ASCII は U+0020 ただ1つ）。
+ * その状態で描画へ回すとグリフが見つからず代替字形が描かれ、
+ * 縦線のようなゴミが出る。メトリクスと描画の両方でここを見て弾く。
+ */
+inline bool isBlankChar(uint16_t unicode_char)
+{
+    return unicode_char == 0x0020    // 半角スペース
+        || unicode_char == 0x3000    // 全角スペース
+        || unicode_char == 0x0009;   // タブ
+}
+}  // namespace
+
 // ========================================
 // 固定微調整値の定数定義
 // ========================================
@@ -243,7 +261,9 @@ TypoWrite::TypoWrite(M5GFX *display)
       _smallCharSettings(SmallCharSettings::getDefault()),
       _showBorder(TypoWriteConstants::Border::DEFAULT_SHOW),
       _borderColor(TypoWriteConstants::Border::DEFAULT_COLOR),
-      _enableCharAdjustment(true)
+      _enableCharAdjustment(true),
+      _rubyEnabled(false),
+      _rubyScale(0.5f)
 {
     // 全テーブルの一括初期化（シンプル！）
     initializeAllTables();
@@ -345,8 +365,23 @@ CharMetrics TypoWrite::getCharMetrics(uint16_t unicode_char)
         ESP_LOGW(TAG, "No metrics source for U+%04X (font=null, VLW parser unavailable)",
                  unicode_char);
 
-        const int32_t fallback = static_cast<int32_t>(16 * _fontSize);
-        metrics = {fallback, fallback, fallback, 0};
+        int32_t fallback = static_cast<int32_t>(16 * _fontSize);
+
+        if (isBlankChar(unicode_char))
+        {
+            // 空白は字面を持たないため、フォントに収録されていないことが多い
+            // （shippori_16 は U+0020 も U+3000 も持っていない）。
+            // 汎用の fallback は 1em なので、そのままでは
+            // 半角スペースが全角幅になってしまう。幅を分けて与える。
+            const int32_t halfEm = static_cast<int32_t>(8 * _fontSize);
+            const int32_t advance = (unicode_char == 0x3000) ? fallback : halfEm;
+            // 字面が無いので width/height は 0。送りだけを持たせる。
+            metrics = {0, 0, advance, 0};
+        }
+        else
+        {
+            metrics = {fallback, fallback, fallback, 0};
+        }
     }
 
     // キャッシュに保存する。
@@ -371,6 +406,12 @@ CharMetrics TypoWrite::getCharMetrics(uint16_t unicode_char)
 void TypoWrite::drawEnhancedCharacter(uint16_t unicode_char, int x, int y,
                                       float widthScale, float heightScale)
 {
+    // 空白は送りだけ進めればよく、描いてはいけない
+    if (isBlankChar(unicode_char))
+    {
+        return;
+    }
+
     // スケール調整が不要な場合は直接描画
     if (widthScale == 1.0f && heightScale == 1.0f)
     {
@@ -443,6 +484,12 @@ void TypoWrite::drawEnhancedCharacterWithRotation(uint16_t unicode_char, int x, 
                                                   float widthScale, float heightScale,
                                                   float rotation)
 {
+    // 空白は送りだけ進めればよく、描いてはいけない
+    if (isBlankChar(unicode_char))
+    {
+        return;
+    }
+
     // 回転もスケールも不要な場合は直接描画
     if (widthScale == 1.0f && heightScale == 1.0f && rotation == 0.0f)
     {
@@ -594,15 +641,19 @@ void TypoWrite::drawScaledCharacter(uint16_t unicode_char, int x, int y,
 // ========================================
 // 横書きテキスト描画
 // ========================================
-void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
+size_t TypoWrite::drawHorizontalTextEnhanced(const std::vector<uint16_t> &unicode_chars,
+                                             size_t start,
+                                             const std::vector<RubyRun> &rubyRuns)
 {
-    const std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
+    // ルビ帯は本文の上に確保する（横組みのルビは本文の上）。
+    // ルビの有無にかかわらず全行に同じ帯を取ることで行間が一定に保たれる。
+    const int rubyStrip = getRubyStripSize();
 
     // 行の高さは全体で不変なのでループ外で1回だけ求める
-    const int lineHeight = getLineHeight();
+    const int lineHeight = getLineHeight() + rubyStrip;
 
     _currentY = 0;
-    size_t i = 0;
+    size_t i = start;
 
     while (i < unicode_chars.size())
     {
@@ -622,27 +673,42 @@ void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
         int lineWidth = 0;
         while (lineEnd < unicode_chars.size() && unicode_chars[lineEnd] != '\n')
         {
-            const uint16_t ch = unicode_chars[lineEnd];
-            const CharMetrics metrics = getCharMetrics(ch);
-            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
+            // ルビ付き範囲は「ひとかたまり」として扱い、途中で折り返さない。
+            // 理由は縦書き側と同じ（ページ境界が範囲内に落ちると記法を読み直せない）。
+            size_t groupEnd = lineEnd + 1;
+            const size_t runIdx = findRubyRunStartingAt(rubyRuns, lineEnd);
+            if (runIdx < rubyRuns.size())
+            {
+                groupEnd = rubyRuns[runIdx].baseEnd;
+            }
 
-            // 送りはフォントが定める送り幅(setWidth)を使う。
-            // グリフのビットマップ幅(width)ではプロポーショナル字形で詰まりすぎるうえ、
-            // calculateTextSize() が setWidth で計算しているため値が食い違っていた。
-            const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
-            const int spacing = _charSpacing + adjustment.spacingOffset;
+            int groupWidth = lineWidth;
+            for (size_t m = lineEnd; m < groupEnd; ++m)
+            {
+                const uint16_t ch = unicode_chars[m];
+                const CharMetrics metrics = getCharMetrics(ch);
+                const CharTypeAdjustment adjustment = getCharAdjustment(ch);
 
-            const int candidate = (lineEnd == i) ? advance
-                                                 : lineWidth + spacing + advance;
-            if (_wrap && lineEnd > i && candidate > _width)
+                // 送りはフォントが定める送り幅(setWidth)を使う。
+                // グリフのビットマップ幅(width)ではプロポーショナル字形で詰まりすぎるうえ、
+                // calculateTextSize() が setWidth で計算しているため値が食い違っていた。
+                const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
+                const int spacing = _charSpacing + adjustment.spacingOffset;
+
+                groupWidth = (m == i) ? advance : groupWidth + spacing + advance;
+            }
+
+            if (_wrap && lineEnd > i && groupWidth > _width)
             {
                 break;  // ここで折り返す
             }
-            lineWidth = candidate;
-            ++lineEnd;
+            lineWidth = groupWidth;
+            lineEnd = groupEnd;
         }
 
         // 描画範囲チェック（行単位）
+        // ここで抜けたとき i はこの行の先頭を指したままなので、
+        // そのまま次ページの開始位置として返せる。
         if (_currentY + lineHeight > _height)
         {
             break;
@@ -667,8 +733,23 @@ void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
 
         // --- 2パス目: 実際に描画する ---
         _currentX = lineOffsetX;
+
+        // ルビは本文を描き終えてから、その範囲の中央に揃えて描く。
+        size_t activeRun = rubyRuns.size();
+        int rubyXStart = 0;
+
         for (size_t k = i; k < lineEnd; ++k)
         {
+            if (activeRun == rubyRuns.size())
+            {
+                const size_t idx = findRubyRunStartingAt(rubyRuns, k);
+                if (idx < rubyRuns.size())
+                {
+                    activeRun = idx;
+                    rubyXStart = _currentX;
+                }
+            }
+
             const uint16_t ch = unicode_chars[k];
             const CharMetrics metrics = getCharMetrics(ch);
             const CharTypeAdjustment adjustment = getCharAdjustment(ch);
@@ -679,12 +760,39 @@ void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
             const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
             const int spacing = _charSpacing + adjustment.spacingOffset;
 
+            // 本文はルビ帯のぶん下げて描く（帯は行の上側に確保してある）
             drawEnhancedCharacter(ch,
                                   _currentX + adjustment.horizontalOffset,
-                                  _currentY + adjustment.verticalOffset,
+                                  _currentY + rubyStrip + adjustment.verticalOffset,
                                   adjustment.widthScale, adjustment.heightScale);
 
             _currentX += advance + spacing;
+
+            // ルビ範囲の最後の文字を描き終えた。本文の上にルビを描く。
+            if (activeRun < rubyRuns.size() && (k + 1) == rubyRuns[activeRun].baseEnd)
+            {
+                const RubyRun &run = rubyRuns[activeRun];
+                const int runLeft = rubyXStart;
+                const int runRight = _currentX - spacing;
+
+                int rubyTotal = 0;
+                for (size_t n = 0; n < run.ruby.size(); ++n)
+                {
+                    rubyTotal += getRubyAdvance(run.ruby[n]);
+                }
+
+                int rubyX = runLeft + ((runRight - runLeft) - rubyTotal) / 2;
+                if (rubyX < 0) { rubyX = 0; }
+
+                for (size_t n = 0; n < run.ruby.size(); ++n)
+                {
+                    drawEnhancedCharacter(run.ruby[n], rubyX, _currentY,
+                                          _rubyScale, _rubyScale);
+                    rubyX += getRubyAdvance(run.ruby[n]);
+                }
+
+                activeRun = rubyRuns.size();
+            }
         }
 
         // 次の行へ
@@ -695,23 +803,32 @@ void TypoWrite::drawHorizontalTextEnhanced(const std::string &text)
         }
         _currentY += lineHeight + _lineSpacing;
     }
+
+    return i;
 }
 
 
 // ========================================
 // 縦書きテキスト描画（簡略化版）
 // ========================================
-void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
+size_t TypoWrite::drawVerticalTextEnhanced(const std::vector<uint16_t> &unicode_chars,
+                                           size_t start,
+                                           const std::vector<RubyRun> &rubyRuns)
 {
-    const std::vector<uint16_t> unicode_chars = utf8ToUnicode(text);
-
     // 列幅と列送りはテキスト全体で不変なのでループ外で1回だけ求める。
     // 小文字の変位計算に使う em ボックス寸法（全文字共通）
     int emW = 0;
     int emH = 0;
     getEmBoxSize(emW, emH);
 
-    const int columnWidth = getMaxCharWidth();
+    const int baseColumnWidth = getMaxCharWidth();
+
+    // ルビ帯は本文の右側に確保する（縦組みのルビは本文の右）。
+    // ルビの有無にかかわらず全列に同じ帯を取ることで列の間隔が一定に保たれる。
+    // 列ごとに幅が変わると、ルビのある列だけ隣がずれて読みにくくなる。
+    const int rubyStrip = getRubyStripSize();
+    const int columnWidth = baseColumnWidth + rubyStrip;
+
     // 縦組みでは「行」＝「列」なので、列の間隔は _lineSpacing で表す。
     // 以前は _columnSpacing と _lineSpacing の両方を加算しており、
     // 同じ意味の設定が二重に効く状態だった（_columnSpacing は廃止）。
@@ -785,7 +902,7 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
 
     // 縦書きは右上の列から始める
     _currentX = _width - columnWidth;
-    size_t i = 0;
+    size_t i = start;
 
     while (i < unicode_chars.size())
     {
@@ -803,18 +920,37 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
         int colHeight = 0;
         while (colEnd < unicode_chars.size() && unicode_chars[colEnd] != '\n')
         {
-            const ResolvedChar r = resolve(unicode_chars[colEnd]);
-            const int candidate = (colEnd == i) ? r.advance
-                                                : colHeight + r.spacing + r.advance;
-            if (_wrap && colEnd > i && candidate > _height)
+            // ルビ付き範囲は「ひとかたまり」として扱い、途中で折り返さない。
+            //
+            // 範囲の途中で列が切れると、そこがページ境界になったときに
+            // 記法を読み直せなくなる（baseByteOffsets が ｜ の位置を指すのは
+            // 範囲の先頭文字だけのため）。ルビが本文から外れて表示される。
+            size_t groupEnd = colEnd + 1;
+            const size_t runIdx = findRubyRunStartingAt(rubyRuns, colEnd);
+            if (runIdx < rubyRuns.size())
+            {
+                groupEnd = rubyRuns[runIdx].baseEnd;
+            }
+
+            int groupHeight = colHeight;
+            for (size_t m = colEnd; m < groupEnd; ++m)
+            {
+                const ResolvedChar r = resolve(unicode_chars[m]);
+                groupHeight = (m == i) ? r.advance
+                                       : groupHeight + r.spacing + r.advance;
+            }
+
+            if (_wrap && colEnd > i && groupHeight > _height)
             {
                 break;  // ここで次の列へ折り返す
             }
-            colHeight = candidate;
-            ++colEnd;
+            colHeight = groupHeight;
+            colEnd = groupEnd;
         }
 
         // 描画範囲チェック（列単位）
+        // ここで抜けたとき i はこの列の先頭を指したままなので、
+        // そのまま次ページの開始位置として返せる。
         if (_currentX < 0)
         {
             break;
@@ -839,8 +975,24 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
 
         // --- 2パス目: 実際に描画する ---
         _currentY = colOffsetY;
+
+        // ルビは本文を描き終えてから、その範囲の中央に揃えて描く。
+        // 開始位置を覚えておき、範囲の最後の文字を描いた時点で確定させる。
+        size_t activeRun = rubyRuns.size();
+        int rubyYStart = 0;
+
         for (size_t k = i; k < colEnd; ++k)
         {
+            if (activeRun == rubyRuns.size())
+            {
+                const size_t idx = findRubyRunStartingAt(rubyRuns, k);
+                if (idx < rubyRuns.size())
+                {
+                    activeRun = idx;
+                    rubyYStart = _currentY;
+                }
+            }
+
             const ResolvedChar r = resolve(unicode_chars[k]);
 
             // 列の左端は _currentX と一致させる。
@@ -859,6 +1011,36 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
                                               r.widthScale, r.heightScale, r.rotation);
 
             _currentY += r.advance + r.spacing;
+
+            // ルビ範囲の最後の文字を描き終えた。本文の右側にルビを描く。
+            // 末尾の字間は範囲の高さに含めない（中央揃えがずれるため）。
+            if (activeRun < rubyRuns.size() && (k + 1) == rubyRuns[activeRun].baseEnd)
+            {
+                const RubyRun &run = rubyRuns[activeRun];
+                const int runTop = rubyYStart;
+                const int runBottom = _currentY - r.spacing;
+
+                int rubyTotal = 0;
+                for (size_t n = 0; n < run.ruby.size(); ++n)
+                {
+                    rubyTotal += getRubyAdvance(run.ruby[n]);
+                }
+
+                int rubyY = runTop + ((runBottom - runTop) - rubyTotal) / 2;
+                if (rubyY < 0) { rubyY = 0; }
+
+                const int rubyX = _currentX + baseColumnWidth;
+                for (size_t n = 0; n < run.ruby.size(); ++n)
+                {
+                    // ルビも縦組みなので、句読点などは縦書き用グリフに置き換える
+                    drawEnhancedCharacterWithRotation(convertToVerticalGlyph(run.ruby[n]),
+                                                      rubyX, rubyY,
+                                                      _rubyScale, _rubyScale, 0.0f);
+                    rubyY += getRubyAdvance(run.ruby[n]);
+                }
+
+                activeRun = rubyRuns.size();
+            }
         }
 
         // 次の列へ
@@ -869,6 +1051,8 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
         }
         _currentX -= columnStep;
     }
+
+    return i;
 }
 
 // ========================================
@@ -878,7 +1062,16 @@ void TypoWrite::drawVerticalTextEnhanced(const std::string &text)
 // 文字変換ヘルパー
 std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
 {
+    std::vector<size_t> ignored;
+    return utf8ToUnicode(utf8_string, ignored);
+}
+
+std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string,
+                                               std::vector<size_t> &byteOffsets)
+{
     std::vector<uint16_t> unicode_chars;
+    byteOffsets.clear();
+
     const uint8_t *str = (const uint8_t *)utf8_string.c_str();
     size_t len = utf8_string.length();
     size_t i = 0;
@@ -886,6 +1079,7 @@ std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
     while (i < len)
     {
         uint16_t unicode_char = 0;
+        const size_t charStart = i;
 
         if ((str[i] & 0x80) == 0)
         {
@@ -913,7 +1107,12 @@ std::vector<uint16_t> TypoWrite::utf8ToUnicode(const std::string &utf8_string)
         }
 
         unicode_chars.push_back(unicode_char);
+        byteOffsets.push_back(charStart);
     }
+
+    // 末尾に文字列全体の長さを入れておく。
+    // 「全部描き切った」ときの nextOffset がこれになる。
+    byteOffsets.push_back(len);
 
     return unicode_chars;
 }
@@ -1178,6 +1377,166 @@ void TypoWrite::setTransparentBackground(bool transparent)
     ESP_LOGD(TAG, "Transparent background: %s", transparent ? "enabled" : "disabled");
 }
 
+// ========================================
+// ルビ（ふりがな）
+// ========================================
+
+void TypoWrite::setRubyEnabled(bool enabled)
+{
+    _rubyEnabled = enabled;
+    ESP_LOGD(TAG, "Ruby %s", enabled ? "enabled" : "disabled");
+}
+
+void TypoWrite::setRubyScale(float scale)
+{
+    if (scale <= 0.0f || scale >= 1.0f)
+    {
+        ESP_LOGW(TAG, "Ruby scale %.2f out of range (0, 1). Ignored", scale);
+        return;
+    }
+    _rubyScale = scale;
+    ESP_LOGD(TAG, "Ruby scale set to %.2f", scale);
+}
+
+// ルビ記法の区切り文字。
+//
+// 青空文庫式の正式な記法は全角（｜漢字《かんじ》）だが、
+// ｜ も 《》 も日本語入力から出しにくい。
+// シナリオは SD 上のテキストを手で書くことになるため、
+// 半角（|漢字<かんじ>）でも同じように書けるようにしてある。
+// 既存の全角記法もそのまま使える。
+namespace {
+inline bool isRubyMark(uint16_t c)
+{
+    return c == 0xFF5C     // ｜ 全角縦棒
+        || c == 0x007C;    // |  半角縦棒
+}
+inline bool isRubyOpen(uint16_t c)
+{
+    return c == 0x300A     // 《
+        || c == 0x003C     // <
+        || c == 0xFF1C;    // ＜ 全角不等号
+}
+inline bool isRubyClose(uint16_t c)
+{
+    return c == 0x300B     // 》
+        || c == 0x003E     // >
+        || c == 0xFF1E;    // ＞ 全角不等号
+}
+}  // namespace
+
+void TypoWrite::parseRubyMarkup(const std::vector<uint16_t> &raw,
+                                const std::vector<size_t> &rawByteOffsets,
+                                size_t rawTextLength,
+                                std::vector<uint16_t> &baseChars,
+                                std::vector<size_t> &baseByteOffsets,
+                                std::vector<RubyRun> &runs)
+{
+    baseChars.clear();
+    baseByteOffsets.clear();
+    runs.clear();
+
+    size_t i = 0;
+    while (i < raw.size())
+    {
+        if (!isRubyMark(raw[i]))
+        {
+            baseChars.push_back(raw[i]);
+            baseByteOffsets.push_back(rawByteOffsets[i]);
+            ++i;
+            continue;
+        }
+
+        // 縦棒を見つけた。対応する開き括弧と閉じ括弧を探す。
+        size_t open = i + 1;
+        while (open < raw.size() && !isRubyOpen(raw[open]) && raw[open] != '\n')
+        {
+            ++open;
+        }
+        size_t close = (open < raw.size()) ? open + 1 : raw.size();
+        while (close < raw.size() && !isRubyClose(raw[close]) && raw[close] != '\n')
+        {
+            ++close;
+        }
+
+        const bool wellFormed = (open < raw.size() && isRubyOpen(raw[open])) &&
+                                (close < raw.size() && isRubyClose(raw[close])) &&
+                                (open > i + 1);   // ベースが空でないこと
+
+        if (!wellFormed)
+        {
+            // 記法が壊れている。縦棒を普通の文字として扱い、本文を失わないようにする。
+            // 本文中にたまたま | が出てきた場合もここに来る。
+            ESP_LOGW(TAG, "Malformed ruby markup at char %u (treating as literal)",
+                     static_cast<unsigned>(i));
+            baseChars.push_back(raw[i]);
+            baseByteOffsets.push_back(rawByteOffsets[i]);
+            ++i;
+            continue;
+        }
+
+        RubyRun run;
+        run.baseStart = baseChars.size();
+
+        for (size_t m = i + 1; m < open; ++m)
+        {
+            baseChars.push_back(raw[m]);
+            // 範囲の先頭文字には ｜ の位置を入れる。
+            // ページ送りでこの位置から再開したとき、記法ごと読み直せるようにするため。
+            baseByteOffsets.push_back((m == i + 1) ? rawByteOffsets[i] : rawByteOffsets[m]);
+        }
+
+        run.baseEnd = baseChars.size();
+        for (size_t m = open + 1; m < close; ++m)
+        {
+            run.ruby.push_back(raw[m]);
+        }
+
+        if (!run.ruby.empty())
+        {
+            runs.push_back(run);
+        }
+
+        i = close + 1;
+    }
+
+    // 末尾に文字列全体の長さを入れる（全部描き切ったときの nextOffset）
+    baseByteOffsets.push_back(rawTextLength);
+}
+
+size_t TypoWrite::findRubyRunStartingAt(const std::vector<RubyRun> &runs, size_t index) const
+{
+    for (size_t n = 0; n < runs.size(); ++n)
+    {
+        if (runs[n].baseStart == index)
+        {
+            return n;
+        }
+    }
+    return runs.size();
+}
+
+int TypoWrite::getRubyAdvance(uint16_t unicode_char)
+{
+    const CharMetrics metrics = getCharMetrics(unicode_char);
+    return static_cast<int>(metrics.setWidth * _rubyScale);
+}
+
+int TypoWrite::getRubyStripSize()
+{
+    if (!_rubyEnabled)
+    {
+        return 0;
+    }
+    int emW = 0;
+    int emH = 0;
+    getEmBoxSize(emW, emH);
+    // 縦書きは幅、横書きは高さを使う。em ボックスは正方形に近いので
+    // どちらでも大差ないが、方向に合わせておく。
+    const int base = (_direction == TextDirection::VERTICAL) ? emW : emH;
+    return static_cast<int>(base * _rubyScale);
+}
+
 // 折り返しの設定
 void TypoWrite::setWrap(bool wrap)
 {
@@ -1267,6 +1626,49 @@ void TypoWrite::setCharSpacing(int spacing)
 // テキスト描画
 void TypoWrite::drawText(const std::string &text)
 {
+    // 先頭から描くだけ。収まらない分は捨てられる（従来どおりの挙動）。
+    drawTextPaged(text, 0);
+}
+
+TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t startOffset)
+{
+    std::vector<size_t> rawByteOffsets;
+    const std::vector<uint16_t> raw = utf8ToUnicode(text, rawByteOffsets);
+
+    // ルビ記法を本文とルビ範囲に分解する。
+    // 無効時は記法を解釈しないので raw がそのまま本文になる
+    // （｜ や 《》 は普通の文字として表示される）。
+    std::vector<uint16_t> unicode_chars;
+    std::vector<size_t> byteOffsets;
+    std::vector<RubyRun> rubyRuns;
+
+    if (_rubyEnabled)
+    {
+        parseRubyMarkup(raw, rawByteOffsets, text.size(),
+                        unicode_chars, byteOffsets, rubyRuns);
+    }
+    else
+    {
+        unicode_chars = raw;
+        byteOffsets = rawByteOffsets;
+    }
+
+    // startOffset（バイト）を文字の添字へ直す。
+    // UTF-8 の途中を指していた場合は直前の文字境界へ切り下げる。
+    size_t startIndex = 0;
+    while (startIndex < unicode_chars.size() && byteOffsets[startIndex] < startOffset)
+    {
+        ++startIndex;
+    }
+
+    // 既に末尾に達しているなら何も描かない。
+    // 背景クリアもしないのは、呼び出し側が終端を検出する前に
+    // 画面を消してしまわないようにするため。
+    if (startIndex >= unicode_chars.size())
+    {
+        return DrawResult{text.size(), false};
+    }
+
     // クリッピング領域を設定
     lgfx::LovyanGFX *target = _drawTarget ? static_cast<lgfx::LovyanGFX *>(_drawTarget) : static_cast<lgfx::LovyanGFX *>(_display);
 
@@ -1289,19 +1691,31 @@ void TypoWrite::drawText(const std::string &text)
     applyTextStyle(target);
 
     // テキスト描画
+    size_t endIndex;
     if (_direction == TextDirection::HORIZONTAL)
     {
-        drawHorizontalTextEnhanced(text);
+        endIndex = drawHorizontalTextEnhanced(unicode_chars, startIndex, rubyRuns);
     }
     else
     {
-        drawVerticalTextEnhanced(text);
+        endIndex = drawVerticalTextEnhanced(unicode_chars, startIndex, rubyRuns);
     }
 
     releaseTextStyle(target);
 
     // クリッピング領域を解除
     target->clearClipRect();
+
+    // 1文字も進まなかった場合は無限ループになるため強制的に打ち切る。
+    // 描画領域が1文字分の高さすら無いときに起こりうる。
+    if (endIndex == startIndex)
+    {
+        ESP_LOGW(TAG, "drawTextPaged: no progress at offset %u (area %dx%d too small?)",
+                 static_cast<unsigned>(startOffset), _width, _height);
+        return DrawResult{text.size(), false};
+    }
+
+    return DrawResult{byteOffsets[endIndex], endIndex < unicode_chars.size()};
 }
 
 // ========================================

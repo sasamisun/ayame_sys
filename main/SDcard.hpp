@@ -135,6 +135,33 @@ public:
     
     // 新しく追加したメソッド: DirInfo構造体のメモリを解放
     void freeDirInfo(DirInfo* dirInfo);
+
+    /**
+     * @brief ファイル全体を PSRAM に読み込む
+     *
+     * `size()` → `open()` → `read()` → `close()` をまとめたもの。
+     * 末尾に NUL を足すので、テキストならそのまま C 文字列として使える。
+     *
+     * ## なぜ全部読むのか
+     *
+     * 本クラスは `FILE*` を1本しか持たないため、**同時に開けるファイルは1つ**。
+     * シナリオJSONを開いたままだと画像を描画できない。
+     * JSONは最初に全部メモリへ載せて閉じてしまい、以降のSDアクセスを
+     * 画像とセーブに明け渡す。
+     *
+     * ## 確保先
+     *
+     * PSRAM を明示指定する。`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` により
+     * 16KB 未満は内部RAMへ行ってしまうため、小さいファイルでも
+     * 内部RAM（起動時312KB）を削らないようにしている。
+     *
+     * @param path    読み込むファイル（`/sdcard` 起点の相対パスでよい）
+     * @param outLen  [out] 読み込んだバイト数（NUL は含まない）。不要なら nullptr
+     * @return 確保したバッファ。**呼び出し側が free() すること**。失敗時は nullptr
+     *
+     * @note USB MSC が有効な間は必ず失敗する（全ファイル操作が禁止されるため）。
+     */
+    char* readFileToBuffer(const char* path, size_t* outLen = nullptr);
     
     // operator overload for Arduino compatibility
     operator bool() { return _initialized; }

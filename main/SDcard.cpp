@@ -5,6 +5,7 @@
 #include "tinyusb.h"
 #include "tusb_msc_storage.h"
 #include <dirent.h>
+#include "esp_heap_caps.h"   // heap_caps_malloc（readFileToBuffer で PSRAM を明示指定）
 
 // ログタグ
 const char* SDCardWrapper::TAG = "SD_CARD";
@@ -636,6 +637,71 @@ DirInfo* SDCardWrapper::listDir(const char* path)
     ESP_LOGI(TAG, "Directory listing completed: %s, %u entries found",
              path, static_cast<unsigned>(dirInfo->count));
     return dirInfo;
+}
+
+char* SDCardWrapper::readFileToBuffer(const char* path, size_t* outLen)
+{
+    if (outLen) {
+        *outLen = 0;
+    }
+
+    // USB MSC 中は size() も open() も失敗するので、
+    // 中途半端に進まないよう先に弾いて理由を明確に出す
+    if (_usbMscEnabled) {
+        ESP_LOGE(TAG, "Cannot read file while USB MSC is enabled: %s", path);
+        return nullptr;
+    }
+
+    const uint32_t fileSize = size(path);
+    if (fileSize == 0) {
+        ESP_LOGE(TAG, "File is empty or not found: %s", path);
+        return nullptr;
+    }
+
+    // PSRAM を明示指定する。既定の malloc では
+    // CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384 により
+    // 16KB 未満が内部RAMへ行き、内部RAMを削ってしまう。
+    char* buffer = static_cast<char*>(
+        heap_caps_malloc(fileSize + 1, MALLOC_CAP_SPIRAM));
+    if (!buffer) {
+        ESP_LOGE(TAG, "Failed to allocate %lu bytes in PSRAM for %s",
+                 static_cast<unsigned long>(fileSize + 1), path);
+        return nullptr;
+    }
+
+    if (!open(path)) {
+        ESP_LOGE(TAG, "Failed to open: %s", path);
+        free(buffer);
+        return nullptr;
+    }
+
+    // 短く返ることがあるので、要求量に届くまで繰り返す
+    size_t total = 0;
+    while (total < fileSize) {
+        const int got = read(reinterpret_cast<uint8_t*>(buffer) + total,
+                             fileSize - total);
+        if (got <= 0) {
+            break;
+        }
+        total += static_cast<size_t>(got);
+    }
+    close();
+
+    if (total != fileSize) {
+        ESP_LOGE(TAG, "Short read on %s: %u of %lu bytes",
+                 path, static_cast<unsigned>(total),
+                 static_cast<unsigned long>(fileSize));
+        free(buffer);
+        return nullptr;
+    }
+
+    buffer[total] = '\0';   // テキストとしてそのまま扱えるように
+    if (outLen) {
+        *outLen = total;
+    }
+
+    ESP_LOGI(TAG, "Read %u bytes from %s", static_cast<unsigned>(total), path);
+    return buffer;
 }
 
 void SDCardWrapper::freeDirInfo(DirInfo* dirInfo)

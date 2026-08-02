@@ -9,7 +9,8 @@ static const char *TAG = "BUTTON";
 // Button クラスの実装
 Button::Button(M5GFX *display, int x, int y, int width, int height, const char *label)
     : _x(x), _y(y), _width(width), _height(height), _state(ButtonState::Normal),
-      _display(display), _drawTarget(nullptr), _font(nullptr), _textSize(1.0f), _visible(true),
+      _display(display), _drawTarget(nullptr), _font(nullptr), _vlwFont(nullptr),
+      _textSize(1.0f), _visible(true),
       _onPressed(nullptr), _onReleased(nullptr),
       _onSwipeUp(nullptr), _onSwipeDown(nullptr), _onSwipeLeft(nullptr), _onSwipeRight(nullptr)
 {
@@ -139,8 +140,15 @@ void Button::drawTo(lgfx::LovyanGFX* target, uint32_t bgColor, uint32_t textColo
     // テキストを描画
     if (_label[0] != '\0')
     {
-        // フォントやテキストサイズを設定
-        if (_font)
+        // フォントやテキストサイズを設定。
+        //
+        // VLW（日本語）は loadFont() で読む必要があり、setFont() では扱えない。
+        // 両方指定されていれば VLW を優先する。
+        if (_vlwFont)
+        {
+            target->loadFont(_vlwFont);
+        }
+        else if (_font)
         {
             target->setFont(_font);
         }
@@ -154,6 +162,13 @@ void Button::drawTo(lgfx::LovyanGFX* target, uint32_t bgColor, uint32_t textColo
         // テキスト配置を元に戻す
         // TODO: 呼び出し前の datum を保存して復元するのが正しい（現状は top_left 決め打ち）
         target->setTextDatum(top_left);
+
+        // 読み込んだフォントは解放する。
+        // 残したままだと、以降このターゲットへ描く別の文字列にも VLW が効いてしまう。
+        if (_vlwFont)
+        {
+            target->unloadFont();
+        }
     }
 }
 

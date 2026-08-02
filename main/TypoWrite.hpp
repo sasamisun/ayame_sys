@@ -135,6 +135,10 @@ private:
     bool _showBorder;                  // 枠線表示フラグ
     uint16_t _borderColor;             // 枠線色
     bool _enableCharAdjustment;        // 文字調整有効フラグ（固定値適用の ON/OFF）
+
+    // ========== ルビ（ふりがな） ==========
+    bool _rubyEnabled;                 // ルビ記法を解釈するか
+    float _rubyScale;                  // 本文に対するルビの倍率
     std::unordered_map<CharCategory, CharTypeAdjustment> _charAdjustments; // 固定値調整テーブル
     
     // ========== マッピングテーブル ==========
@@ -254,12 +258,108 @@ public:
     
     
     // ========================================
+    // ルビ（ふりがな）
+    // ========================================
+
+    /**
+     * @brief ルビ記法の解釈を有効にする
+     *
+     * 有効にすると、本文中の記法を読み取ってルビを描く。
+     *
+     * ```
+     * |漢字<かんじ>      半角（入力しやすい）
+     * ｜漢字《かんじ》    全角（青空文庫式）
+     * ```
+     *
+     * 縦棒がルビを振る範囲の開始、括弧がルビの囲み。
+     * **半角と全角のどちらでも書ける**（混在も可）。
+     * シナリオは SD 上のテキストを手で書くため、`｜` や `《》` を出しにくい
+     * 環境でも入力できるようにしてある。
+     *
+     * | 役割 | 受け付ける文字 |
+     * |---|---|
+     * | 開始 | `\|`(U+007C) / `｜`(U+FF5C) |
+     * | 開き | `<`(U+003C) / `《`(U+300A) / `＜`(U+FF1C) |
+     * | 閉じ | `>`(U+003E) / `》`(U+300B) / `＞`(U+FF1E) |
+     *
+     * ルビは**縦書きなら本文の右、横書きなら本文の上**に描かれる。
+     *
+     * @note 有効にすると**行の高さ（縦書きなら列の幅）がルビ帯のぶん増える**。
+     *       ルビの有無にかかわらず全行に帯を確保するため、行間が一定に保たれる。
+     *       そのぶん1画面に入る文字数は減る。
+     * @note 無効のときは記法を解釈しないので、縦棒や括弧がそのまま表示される。
+     * @note 本文中にたまたま `|` が現れ、後ろにルビの括弧が無い場合は、
+     *       普通の文字として扱われる（警告ログは出る）。
+     *
+     * @warning ルビが本文より長い場合、はみ出して隣の文字に重なることがある
+     *          （本文側の送りを広げる処理は未実装）。
+     *          漢字1文字にかな2文字までなら収まる。
+     */
+    void setRubyEnabled(bool enabled);
+    bool isRubyEnabled() const { return _rubyEnabled; }
+
+    /**
+     * @brief 本文に対するルビの倍率を設定する
+     * @param scale 既定は 0.5（本文の半分）
+     */
+    void setRubyScale(float scale);
+    float getRubyScale() const { return _rubyScale; }
+
+    // ========================================
     // メインテキスト描画メソッド
     // ========================================
-    
+
     // テキスト描画（固定値調整適用版）
+    //
+    // 描画領域に収まらない分は切り捨てられる。
+    // 続きを次のページに出したい場合は drawTextPaged() を使う。
     void drawText(const std::string &text);
-    
+
+    /**
+     * @brief ページ送り描画の結果
+     *
+     * @see drawTextPaged()
+     */
+    struct DrawResult {
+        size_t nextOffset;  //!< 次ページの開始バイトオフセット。全部描けたなら text.size()
+        bool hasMore;       //!< まだ描き切れていない文字が残っているか
+    };
+
+    /**
+     * @brief 指定位置からテキストを描画し、描き切れなかった位置を返す
+     *
+     * 描画領域に収まる分だけを描き、**次に描くべき位置**を返す。
+     * 戻り値の `nextOffset` をそのまま次回の `startOffset` に渡せば続きが出る。
+     *
+     * ```cpp
+     * size_t offset = 0;
+     * do {
+     *     auto r = writer->drawTextPaged(longText, offset);
+     *     offset = r.nextOffset;
+     *     // ここでタップ待ち
+     * } while (offset < longText.size());
+     * ```
+     *
+     * @param text        本文全体（毎回同じ文字列を渡す。内部で切り出す）
+     * @param startOffset 描画を開始するバイトオフセット
+     * @return 次ページの開始位置と、続きがあるかどうか
+     *
+     * @note `startOffset` は**バイト単位**であり文字数ではない。
+     *       UTF-8 の途中を指した場合は、直前の文字境界へ切り下げる。
+     * @note `drawText()` は本メソッドを `startOffset = 0` で呼ぶだけの薄い包み。
+     *
+     * @warning **背景透過時は前ページの消去を呼び出し側で行うこと。**
+     *          背景が不透明（`setBackgroundColor()` に実色を指定）なら
+     *          本メソッドが描画前に領域を塗りつぶすが、透過モード
+     *          （`TFT_TRANSPARENT` 指定 / `setTransparentBackground(true)`）では
+     *          塗りつぶさないため、**前ページの文字が残って重なる**。
+     *          透過は背景画像の上に文字を重ねるための機能であり、
+     *          下に何があるかを知っているのは呼び出し側だけなので、
+     *          消去も呼び出し側の責任になる。
+     *          単色でよければ `clearArea(color)` が使える。
+     */
+    DrawResult drawTextPaged(const std::string &text, size_t startOffset = 0);
+
     // 中央揃えでテキスト描画
     void drawTextCentered(const std::string &text);
     
@@ -308,11 +408,69 @@ private:
     // 内部描画メソッド
     // ========================================
     
+    /**
+     * @brief ルビ付き範囲。本文中の連続した数文字に対して1つ対応する
+     */
+    struct RubyRun {
+        size_t baseStart;             //!< 本文（記法除去後）上の開始添字
+        size_t baseEnd;               //!< 終了添字（exclusive）
+        std::vector<uint16_t> ruby;   //!< ルビ文字列
+    };
+
+    /**
+     * @brief ルビ記法を解釈し、本文とルビ範囲に分解する
+     *
+     * `|漢字<かんじ>`（半角）と `｜漢字《かんじ》`（全角・青空文庫式）の
+     * どちらも読み取る。受け付ける文字は setRubyEnabled() の表を参照。
+     *
+     * @param raw            記法を含んだままの文字列
+     * @param rawByteOffsets raw の各文字の先頭バイト位置
+     * @param baseChars      [out] 記法を取り除いた本文
+     * @param baseByteOffsets [out] baseChars の各文字に対応する「元の文字列上の」
+     *                        バイト位置。ルビ範囲の先頭文字には `｜` の位置を入れる
+     *                        （その位置から再解釈すればルビが復元できるようにするため）。
+     *                        要素数は baseChars + 1 で、末尾は元の文字列全体の長さ
+     * @param runs           [out] 検出したルビ範囲
+     *
+     * @note 対応する `《` や `》` が見つからない不正な記法は、
+     *       `｜` を普通の文字として扱って読み進める（本文を失わないため）。
+     */
+    void parseRubyMarkup(const std::vector<uint16_t> &raw,
+                         const std::vector<size_t> &rawByteOffsets,
+                         size_t rawTextLength,
+                         std::vector<uint16_t> &baseChars,
+                         std::vector<size_t> &baseByteOffsets,
+                         std::vector<RubyRun> &runs);
+
+    /**
+     * @brief 添字 index から始まるルビ範囲を探す
+     * @return 見つかればその添字、無ければ runs.size()
+     */
+    size_t findRubyRunStartingAt(const std::vector<RubyRun> &runs, size_t index) const;
+
+    // ルビ1文字あたりの送り量（本文の送りに _rubyScale を掛けた値）
+    int getRubyAdvance(uint16_t unicode_char);
+
+    // ルビ帯の厚み（縦書きなら幅、横書きなら高さ）
+    int getRubyStripSize();
+
+    // 横書き/縦書きの描画本体。
+    //
+    // ページ送りのため「開始位置を受け取り、描き切れなかった位置を返す」形にしてある。
+    // 文字列ではなく変換済みの配列を受け取るのは、
+    // ページごとに utf8ToUnicode() をやり直さないため。
+    //
+    // @param chars 変換済みの全文字列
+    // @param start 描画を開始する chars 上の添字
+    // @return 描画できなかった最初の文字の添字。全部描けたなら chars.size()
+
     // 横書きテキスト描画（固定値調整適用版）
-    void drawHorizontalTextEnhanced(const std::string &text);
-    
+    size_t drawHorizontalTextEnhanced(const std::vector<uint16_t> &chars, size_t start,
+                                      const std::vector<RubyRun> &runs);
+
     // 縦書きテキスト描画（固定値調整適用版）
-    void drawVerticalTextEnhanced(const std::string &text);
+    size_t drawVerticalTextEnhanced(const std::vector<uint16_t> &chars, size_t start,
+                                    const std::vector<RubyRun> &runs);
     
     // 枠線描画
     void drawAreaBorder();
@@ -428,6 +586,15 @@ private:
     
     // UTF-8からUnicodeへの変換
     std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string);
+
+    // UTF-8からUnicodeへの変換（各文字の先頭バイト位置つき）
+    //
+    // ページ送りは「次に描く位置」をバイトオフセットで返す必要があるため、
+    // 文字の添字からバイト位置を引けるようにする。
+    // byteOffsets は chars と同じ要素数 + 1 で、末尾には文字列全体の長さが入る
+    // （全部描き切ったときの nextOffset に使う）。
+    std::vector<uint16_t> utf8ToUnicode(const std::string &utf8_string,
+                                        std::vector<size_t> &byteOffsets);
     
     // UnicodeからUTF-8への変換
     std::string unicodeToUtf8(uint16_t unicode_char);

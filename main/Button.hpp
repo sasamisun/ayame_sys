@@ -62,7 +62,8 @@ private:
     ButtonStyle _style;           // ボタンのスタイル
     M5GFX *_display;              // ディスプレイへの参照（フォールバック用）
     lgfx::LGFX_Sprite *_drawTarget; // Canvas描画先（nullptrでディスプレイに直接描画）
-    lgfx::IFont *_font;           // フォント
+    lgfx::IFont *_font;           // フォント（静的なもの）
+    const uint8_t *_vlwFont;      // VLWフォント（日本語用。loadFont で読む）
     float _textSize;              // テキストサイズ
     bool _visible;                // 表示/非表示フラグ
 
@@ -142,6 +143,21 @@ public:
     void setState(ButtonState state) { _state = state; }
     void setVisible(bool visible) { _visible = visible; }
     void setFont(lgfx::IFont *font) { _font = font; }
+
+    /**
+     * @brief VLW フォント（日本語）を使う
+     *
+     * `setFont()` は静的な `IFont*` 用で、**VLW バイナリには使えない**。
+     * VLW は `loadFont()` で読み込む必要があるため、経路を分けてある。
+     * これを設定しないと、ラベルの日本語が既定フォントで豆腐になる。
+     *
+     * @param vlwData VLW バイナリの先頭。`nullptr` で既定フォントに戻る
+     *
+     * @note データは呼び出し側が保持し続けること（コピーしない）。
+     * @note 描画のたびに `loadFont()` が走る。ボタンは画面ごとに1回しか
+     *       描かないので問題にならないが、頻繁に描き直す用途では注意。
+     */
+    void setVlwFont(const uint8_t *vlwData) { _vlwFont = vlwData; }
     void setTextSize(float size) { _textSize = size; }
     void setStyle(const ButtonStyle &style) { _style = style; }
 

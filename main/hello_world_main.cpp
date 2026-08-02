@@ -13,6 +13,12 @@
 #include "TypoWrite.hpp"
 #include "VLWFontParser.hpp"
 #include "SimpleTransition.hpp"    // 新しいシンプルトランジション！
+#include "Buzzer.hpp"              // ブザー出力（LEDC/PWM, GPIO21）
+#include "ScenarioLoader.hpp"      // シナリオJSONの読み込み
+#include "ScenarioPlayer.hpp"      // シナリオの実行
+
+#include <string>
+#include <vector>
 
 #include "fonts/shippori_16.h"
 
@@ -31,6 +37,14 @@ Button *btnTest = nullptr;
 Button *btnUSBMSC = nullptr;
 Button *btnTransitionTest = nullptr;     // シンプルトランジションテスト用
 Button *btnCanvasStop = nullptr;
+Button *btnPagedText = nullptr;
+Button *btnScenario = nullptr;
+
+// SDカードから読むシナリオ。まずは固定のIDで動かす
+// （選択メニューはシステムメニュー実装時に入れる）
+const char *SCENARIO_ID = "sample_001";
+ScenarioLoader scenarioLoader;
+ScenarioPlayer scenarioPlayer;
 
 VLWFontParser vlwParser;
 
@@ -44,7 +58,9 @@ SimpleTransition *simpleTransition = nullptr;    // 新しい！超シンプル�
 enum class TestMode
 {
   NORMAL,               // 通常モード
-  SIMPLE_TRANSITION     // 新しい！シンプルトランジションデモ
+  SIMPLE_TRANSITION,    // 新しい！シンプルトランジションデモ
+  PAGED_TEXT,           // ページ送りデモ（TypoWrite::drawTextPaged の確認用）
+  SCENARIO              // SDカードのJSONからシナリオを再生する
 };
 
 TestMode currentTestMode = TestMode::NORMAL;
@@ -321,12 +337,103 @@ void textDisplayDemo()
     static const char *SAMPLE_TEXT =
         "ジャン・フィリップ・トゥーサン\n"
         "おはよう。いんたぁねっと\n"
-        "フォンふぉんfon\n"
+        "フォン ふぉん　fon\n"
         "ぁぃぅぇぉヵゃゅょゎっぁぃぅぇぉちゃんちゃん\n"
-        "ベイクドもチョモチョ";
+        "｛｝「」（）()[]{}ベイクド も　チョモチョ";
 
     verticalWriter->drawText(SAMPLE_TEXT);
     horizontalWriter->drawText(SAMPLE_TEXT);
+}
+
+// ========================================
+// ページ送りデモ
+// ========================================
+
+// 縦書き領域(130x700)に収まらない長さの本文。3ページ程度に分かれる。
+//
+// ルビ記法の確認も兼ねる。基本は入力しやすい半角 |漢字<かんじ> を使い、
+// 全角 ｜漢字《かんじ》 も併せて使って両方が通ることを確かめる。
+static const char *PAGED_SAMPLE_TEXT =
+    "むかしむかし、あるところにおじいさんとおばあさんが住んでいました。"
+    "おじいさんは|山<やま>へしばかりに、おばあさんは|川<かわ>へ"
+    "せんたくに行きました。\n"
+    "おばあさんが川でせんたくをしていると、大きな|桃<もも>が"
+    "どんぶらこ、どんぶらこと流れてきました。"
+    "おばあさんはその桃を拾って家へ持ち帰りました。\n"
+    "おじいさんが帰ってきて、|二人<ふたり>で桃を切ろうとすると、"
+    "桃はひとりでに割れて中から|元気<げんき>な男の子が飛び出してきました。\n"
+    "二人はたいそう喜んで、その子に|桃太郎<ももたろう>と名づけて"
+    "大切に育てました。"
+    "桃太郎はぐんぐん大きくなり、やがて｜村一番《むらいちばん》の"
+    "力持ちになりました。\n"
+    "ある日、桃太郎はおじいさんとおばあさんに言いました。"
+    "|鬼<おに>が島へ｜鬼退治《おにたいじ》に行ってまいります。\n"
+    "おばあさんはきびだんごをこしらえ、桃太郎に持たせました。";
+
+// 次に描くページの開始バイトオフセット
+static size_t pagedTextOffset = 0;
+static int pagedTextPageNumber = 0;
+// 直前に描いたページの時点で続きが残っていたか。
+// タップ時にこれを見て「次ページ」か「デモ終了」かを決める。
+static bool pagedTextHasMore = false;
+
+/**
+ * @brief ページ送りデモの1ページを描画する
+ *
+ * @return まだ続きがあれば true
+ */
+bool pagedTextDemoDrawPage()
+{
+    if (!verticalWriter || !horizontalWriter)
+    {
+        return false;
+    }
+
+    // 前ページの描画を消す。
+    //
+    // この2つの writer は setBackgroundColor(TFT_TRANSPARENT) で
+    // 背景透過にしてあるため、drawTextPaged() は領域を塗りつぶさない
+    // （背景画像の上に文字を重ねられるようにするための仕様）。
+    // 透過モードでは「下に何があるか」を知っているのは呼び出し側だけなので、
+    // 消去も呼び出し側で行う。ここは背景が黒なので黒で潰す。
+    verticalWriter->clearArea(TFT_BLACK);
+    horizontalWriter->clearArea(TFT_BLACK);
+
+    // ページ送りの合図。非同期なので描画を待たせない
+    buzzer.tone(880, 60);
+
+    const std::string body(PAGED_SAMPLE_TEXT);
+
+    const TypoWrite::DrawResult result =
+        verticalWriter->drawTextPaged(body, pagedTextOffset);
+
+    ++pagedTextPageNumber;
+
+    ESP_LOGI(TAG, "Paged text: page %d, offset %u -> %u, hasMore=%d",
+             pagedTextPageNumber,
+             static_cast<unsigned>(pagedTextOffset),
+             static_cast<unsigned>(result.nextOffset),
+             static_cast<int>(result.hasMore));
+
+    // 横書き領域に現在の状態と、横書きルビの見本を出す。
+    // 縦書きと横書きでルビの位置（右/上）が違うので両方確認できるようにする。
+    char status[256];
+    snprintf(status, sizeof(status),
+             "PAGE %d  %u / %u bytes\n%s\n"
+             "以下は横書きの"
+             "|ルビ見本<けんぽん>です。\n"
+             "|桃太郎<ももたろう>と"
+             "|鬼<おに>の"
+             "｜戦い《たたかい》",
+             pagedTextPageNumber,
+             static_cast<unsigned>(result.nextOffset),
+             static_cast<unsigned>(body.size()),
+             result.hasMore ? "tap: next page" : "tap: back to normal");
+    horizontalWriter->drawText(status);
+
+    pagedTextOffset = result.nextOffset;
+    pagedTextHasMore = result.hasMore;
+    return result.hasMore;
 }
 
 /**
@@ -599,6 +706,191 @@ void onCanvasStopButtonReleased(Button *btn)
 }
 
 // スワイプイベントのコールバック関数（変更なし）
+// ========================================
+// ページ送りデモのボタン
+// ========================================
+
+void onPagedTextButtonPressed(Button *btn)
+{
+    ESP_LOGI(TAG, "Paged text button pressed");
+}
+
+void onPagedTextButtonReleased(Button *btn)
+{
+    ESP_LOGI(TAG, "Entering paged text mode");
+
+    currentTestMode = TestMode::PAGED_TEXT;
+    pagedTextOffset = 0;
+    pagedTextPageNumber = 0;
+
+    // ルビはこのデモの中だけ有効にする。
+    // 通常画面（textDisplayDemo）はルビ無しのまま残しておき、
+    // 「ルビを入れたことで既存の組版が崩れていないか」を比較できるようにする。
+    verticalWriter->setRubyEnabled(true);
+    horizontalWriter->setRubyEnabled(true);
+
+    display.fillScreen(TFT_BLACK);
+    pagedTextDemoDrawPage();
+    SimpleTransition::refreshScreen(&display);
+}
+
+// ========================================
+// シナリオの選択肢 UI
+// ========================================
+//
+// 選択肢のボタンはここで作って捨てる。
+// ScenarioPlayer は文言と可否を公開するだけで、描画も入力も持たない
+// （プレイヤーが ButtonManager を握ると、メニュー側とレイアウトが二重になるため）。
+
+std::vector<Button *> choiceButtons;
+
+/**
+ * @brief 通常画面のボタン（デモ用）の表示を切り替える
+ *
+ * `ButtonManager` は登録済みのボタンを1本のリストで持つため、
+ * シナリオ再生中も通常画面のボタンが描かれ、**タッチにも反応してしまう**。
+ * 再生中に「USB MSC」などが押せるのは事故のもとなので隠す。
+ *
+ * `setVisible(false)` は描画だけでなく入力も止める
+ * （`Button::contains()` と `ButtonManager::update()` が可視状態を見ている）。
+ *
+ * @note これはデモ画面のための暫定処置。
+ *       システムメニューを作る段階で、画面ごとにボタンの集合を分ける設計に変える。
+ */
+void setDemoButtonsVisible(bool visible)
+{
+    Button *const demoButtons[] = {
+        btnTest, btnUSBMSC, btnTransitionTest, btnPagedText, btnScenario
+    };
+
+    for (Button *btn : demoButtons)
+    {
+        if (btn)
+        {
+            btn->setVisible(visible);
+        }
+    }
+
+    // btnCanvasStop はトランジションデモ中だけ出すボタンなので、
+    // ここでは触らない（表示条件が別管理）。
+}
+
+void clearChoiceButtons()
+{
+    for (Button *btn : choiceButtons)
+    {
+        if (buttonManager)
+        {
+            buttonManager->removeButton(btn);
+        }
+        delete btn;
+    }
+    choiceButtons.clear();
+}
+
+void onChoiceButtonReleased(Button *btn)
+{
+    // 押されたボタンが何番目かを探して、その番号をプレイヤーへ渡す
+    for (size_t i = 0; i < choiceButtons.size(); ++i)
+    {
+        if (choiceButtons[i] == btn)
+        {
+            ESP_LOGI(TAG, "Choice button %u tapped", static_cast<unsigned>(i));
+            clearChoiceButtons();
+            display.fillScreen(TFT_BLACK);
+            scenarioPlayer.selectChoice(i);
+            return;
+        }
+    }
+}
+
+/**
+ * @brief 選択肢のボタンを並べる
+ */
+void showChoiceButtons()
+{
+    clearChoiceButtons();
+
+    const std::vector<std::string> &labels = scenarioPlayer.choiceLabels();
+    const std::vector<bool> &enabled = scenarioPlayer.choiceEnabled();
+
+    // 画面下側に縦に積む。1個ずつ高さ56、間隔8。
+    const int width = 320;
+    const int height = 56;
+    const int gap = 8;
+    const int startY = display.height() - 40 - static_cast<int>(labels.size()) * (height + gap);
+
+    for (size_t i = 0; i < labels.size(); ++i)
+    {
+        const int y = startY + static_cast<int>(i) * (height + gap);
+        Button *btn = new Button(&display, 20, y, width, height, labels[i].c_str());
+        btn->setOnReleased(onChoiceButtonReleased);
+
+        // 選択肢は日本語なので VLW を指定する。
+        // 既定フォントのままでは豆腐になる。
+        btn->setVlwFont(shippori);
+
+        ButtonStyle style = ButtonStyle::defaultStyle();
+        // 条件を満たさない選択肢は灰色にして、選べないことを見せる
+        style.bgColor = enabled[i] ? TFT_DARKGREY : TFT_BLACK;
+        style.textColor = enabled[i] ? TFT_WHITE : TFT_DARKGREY;
+        btn->setStyle(style);
+
+        buttonManager->addButton(btn);
+        choiceButtons.push_back(btn);
+    }
+
+    buttonManager->drawButtons();
+    SimpleTransition::refreshScreen(&display);
+
+    ESP_LOGI(TAG, "Showing %u choice button(s)", static_cast<unsigned>(labels.size()));
+}
+
+// ========================================
+// シナリオ再生のボタン
+// ========================================
+
+void onScenarioButtonPressed(Button *btn)
+{
+    ESP_LOGI(TAG, "Scenario button pressed");
+}
+
+void onScenarioButtonReleased(Button *btn)
+{
+    ESP_LOGI(TAG, "Loading scenario '%s'", SCENARIO_ID);
+
+    display.fillScreen(TFT_BLACK);
+
+    if (!scenarioLoader.load(SCENARIO_ID))
+    {
+        // 読めなかった理由は SCENARIO タグのログに出 している。
+        // 画面にも出して、SDを挿し忘れたのかJSONが壊れているのか気づけるようにする。
+        ESP_LOGE(TAG, "Failed to load scenario");
+        display.setTextColor(TFT_RED, TFT_BLACK);
+        display.setTextSize(2);
+        display.setCursor(20, 100);
+        display.printf("Scenario load failed:");
+        display.setCursor(20, 130);
+        display.printf("scenarios/%s/scenario.json", SCENARIO_ID);
+        SimpleTransition::refreshScreen(&display);
+        return;
+    }
+
+    currentTestMode = TestMode::SCENARIO;
+
+    // 再生中は通常画面のボタンを隠す。
+    // 出したままだと選択肢と一緒に並び、しかもタッチにも反応してしまう。
+    setDemoButtonsVisible(false);
+
+    // シナリオ本文はルビ記法を使う前提
+    verticalWriter->setRubyEnabled(true);
+    horizontalWriter->setRubyEnabled(true);
+
+    scenarioPlayer.begin(&display, &scenarioLoader,
+                         verticalWriter, horizontalWriter, simpleTransition);
+    scenarioPlayer.start();
+}
+
 void onButtonSwipeUp(Button *btn, SwipeDirection dir)
 {
     ESP_LOGI(TAG, "Button swiped up: %s", btn->getLabel());
@@ -695,6 +987,16 @@ void setup()
     // コールド起動は比較的きれいなのにリセット後は残像がひどい、という
     // 症状の原因がこれ。白→黒→白で全画素を駆動して状態を揃えておく。
     SimpleTransition::clearGhosting(&display);
+
+    // ブザーの初期化。失敗しても表示系は動くので起動は続ける
+    if (!buzzer.begin())
+    {
+        ESP_LOGE(TAG, "Buzzer initialization failed (sound disabled)");
+    }
+
+    // cJSON の確保先を PSRAM に向ける。
+    // 解析を始める前に、プロセス全体で1回だけ呼ぶ必要がある。
+    ScenarioLoader::initAllocator();
 
     display.fillScreen(TFT_BLACK);
 
@@ -810,6 +1112,17 @@ void setup()
         btnCanvasStop->setOnReleased(onCanvasStopButtonReleased);
         btnCanvasStop->setVisible(false);
 
+        // ページ送りデモ（既存ボタンの間隔 x=225..335 が空いている）
+        btnPagedText = new Button(&display, 225, 350, 105, 40, "Paged Text");
+        btnPagedText->setOnPressed(onPagedTextButtonPressed);
+        btnPagedText->setOnReleased(onPagedTextButtonReleased);
+
+        // シナリオ再生。y=350 の行は埋まっているので1段上に置く
+        // （縦書き領域は x>=400 なので x=10 側は空いている）
+        btnScenario = new Button(&display, 10, 300, 120, 40, "Scenario");
+        btnScenario->setOnPressed(onScenarioButtonPressed);
+        btnScenario->setOnReleased(onScenarioButtonReleased);
+
         // スタイル設定
         ButtonStyle transitionStyle = ButtonStyle::defaultStyle();
         transitionStyle.bgColor = TFT_DARKGREEN;
@@ -821,11 +1134,23 @@ void setup()
         stopStyle.textColor = TFT_WHITE;
         btnCanvasStop->setStyle(stopStyle);
 
+        ButtonStyle pagedStyle = ButtonStyle::defaultStyle();
+        pagedStyle.bgColor = TFT_NAVY;
+        pagedStyle.textColor = TFT_WHITE;
+        btnPagedText->setStyle(pagedStyle);
+
+        ButtonStyle scenarioStyle = ButtonStyle::defaultStyle();
+        scenarioStyle.bgColor = TFT_MAROON;
+        scenarioStyle.textColor = TFT_WHITE;
+        btnScenario->setStyle(scenarioStyle);
+
         // ボタンマネージャーに追加
         buttonManager->addButton(btnTest);
         buttonManager->addButton(btnUSBMSC);
         buttonManager->addButton(btnTransitionTest);
         buttonManager->addButton(btnCanvasStop);
+        buttonManager->addButton(btnPagedText);
+        buttonManager->addButton(btnScenario);
 
         // ボタンを描画
         buttonManager->drawButtons();
@@ -890,6 +1215,82 @@ void loop(void)
                      static_cast<int>(effect));
 
             advanceToNextScene(effect);
+        }
+        return;
+    }
+
+    // 3a. シナリオ再生中
+    if (currentTestMode == TestMode::SCENARIO) {
+        // 画面遷移の完了を待っている間は、上の分岐が update() を回している。
+        // ここへ来た時点で遷移は終わっているので、続きを再開させる。
+        if (scenarioPlayer.isWaitingTransition()) {
+            scenarioPlayer.onTransitionFinished();
+        }
+        else if (scenarioPlayer.isWaitingChoice()) {
+            // 選択肢はボタンで受ける。まだ並べていなければここで出す。
+            // 入力は ButtonManager::update()（この関数の末尾）が拾い、
+            // onChoiceButtonReleased() から selectChoice() が呼ばれる。
+            if (choiceButtons.empty()) {
+                showChoiceButtons();
+            }
+        }
+        else if (hasTouchEvent && touchHandler.isTouchEvent()) {
+            scenarioPlayer.onTap();
+        }
+
+        // 選択待ちの間はボタンへ入力を流す必要があるため、
+        // ここで return せず末尾の buttonManager->update() まで進める。
+        if (scenarioPlayer.isWaitingChoice()) {
+            if (buttonManager) {
+                buttonManager->update();
+            }
+            return;
+        }
+
+        if (scenarioPlayer.isFinished()) {
+            ESP_LOGI(TAG, "Scenario finished (ending='%s'). Returning to normal",
+                     scenarioPlayer.endingId().c_str());
+            clearChoiceButtons();
+            setDemoButtonsVisible(true);
+            verticalWriter->setRubyEnabled(false);
+            horizontalWriter->setRubyEnabled(false);
+            scenarioLoader.unload();     // PSRAM を返す
+            currentTestMode = TestMode::NORMAL;
+            redrawNormalScreen();
+        }
+        return;
+    }
+
+    // 3b. ページ送りデモ中はタッチで次のページへ進む
+    if (currentTestMode == TestMode::PAGED_TEXT) {
+        if (hasTouchEvent && touchHandler.isTouchEvent()) {
+            // 続きがあるかは「前回描いた結果」で判定する。
+            // 描いてから判定すると、最終ページを出した直後に
+            // 通常画面へ戻ってしまい最後の1ページが読めない。
+            if (pagedTextHasMore) {
+                pagedTextDemoDrawPage();
+                SimpleTransition::refreshScreen(&display);
+            } else {
+                ESP_LOGI(TAG, "Paged text finished. Returning to normal");
+
+                // 読了のファンファーレ。音列と休符の確認を兼ねる。
+                // 非同期なので、鳴っている間に画面の再描画が進む。
+                static const Note FINISH_MELODY[] = {
+                    { 523, 120 },   // ド
+                    { 659, 120 },   // ミ
+                    { 784, 120 },   // ソ
+                    {   0,  60 },   // 休符
+                    { 1046, 240 },  // 高いド
+                };
+                buzzer.playMelody(FINISH_MELODY,
+                                  sizeof(FINISH_MELODY) / sizeof(FINISH_MELODY[0]));
+
+                // 通常画面はルビ無しに戻す（比較用のベースラインを保つため）
+                verticalWriter->setRubyEnabled(false);
+                horizontalWriter->setRubyEnabled(false);
+                currentTestMode = TestMode::NORMAL;
+                redrawNormalScreen();
+            }
         }
         return;
     }
