@@ -44,6 +44,84 @@ ScenarioLoader::~ScenarioLoader()
     unload();
 }
 
+std::string ScenarioLoader::peekTitle(const char* scenarioId)
+{
+    if (!scenarioId || scenarioId[0] == '\0') {
+        return "";
+    }
+
+    const std::string fallback = scenarioId;
+    const std::string path = std::string(SCENARIOS_ROOT) + "/" + scenarioId +
+                             "/scenario.json";
+
+    // 先頭だけ読む。PSRAM を明示するのは、この大きさ（4KB）だと
+    // 既定の malloc では内部RAMに載ってしまうため。
+    char* buffer = static_cast<char*>(
+        heap_caps_malloc(TITLE_PEEK_BYTES, MALLOC_CAP_SPIRAM));
+    if (!buffer) {
+        return fallback;
+    }
+
+    const size_t got = SD.readFilePrefix(path.c_str(), buffer, TITLE_PEEK_BYTES);
+    if (got == 0) {
+        free(buffer);
+        return fallback;
+    }
+
+    // "title" を探して、その後ろの文字列値を取り出す。
+    //
+    // 読んだのは途中で切れた断片なので cJSON では解析できない。
+    // ここでは素朴に走査する。誤検出を避けるため、
+    // キーとしての "title" （後ろにコロンが続くもの）だけを拾う。
+    std::string title;
+    const char* p = buffer;
+    const char* end = buffer + got;
+
+    while ((p = strstr(p, "\"title\"")) != nullptr) {
+        p += 7;   // "title" の直後
+
+        // コロンまでの空白を飛ばす
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; }
+        if (p >= end || *p != ':') {
+            continue;   // キーではなかった。次の候補へ
+        }
+        ++p;
+        while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) { ++p; }
+        if (p >= end || *p != '"') {
+            continue;   // 文字列値ではない
+        }
+        ++p;
+
+        // 閉じ引用符まで。バックスラッシュで逃がされたものは終端としない。
+        while (p < end && *p != '"') {
+            if (*p == '\\' && (p + 1) < end) {
+                // \" や \\ をそのまま通す。日本語（UTF-8）は素通しでよい
+                title += *p;
+                ++p;
+            }
+            title += *p;
+            ++p;
+        }
+
+        if (p < end) {
+            break;   // 閉じ引用符まで届いた。取れた
+        }
+
+        // 4KB の途中で切れていた。中途半端な値は使わない
+        title.clear();
+        break;
+    }
+
+    free(buffer);
+
+    if (title.empty()) {
+        ESP_LOGD(TAG, "No title found in the first %u bytes of %s. Using the folder name",
+                 static_cast<unsigned>(TITLE_PEEK_BYTES), scenarioId);
+        return fallback;
+    }
+    return title;
+}
+
 void ScenarioLoader::initAllocator()
 {
     cJSON_Hooks hooks;

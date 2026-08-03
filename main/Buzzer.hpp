@@ -100,6 +100,18 @@ public:
     /// 鳴っていれば止める
     void stop();
 
+    /**
+     * @brief 消音を切り替える
+     *
+     * 消音中は `tone()` も `playMelody()` も何も鳴らさずに返る。
+     * 呼び出し側で分岐させず**ここで一括して止める**のは、
+     * 鳴らす場所が増えたときに消し忘れが出ないようにするため。
+     *
+     * @param muted true で消音。鳴っている音はその場で止める
+     */
+    void setMuted(bool muted);
+    bool isMuted() const { return _muted; }
+
     /// 再生中か
     bool isPlaying() const { return _playing; }
 
@@ -129,6 +141,7 @@ private:
     static constexpr uint32_t         DUTY_50      = (1u << 10) / 2;
 
     bool _ready = false;
+    bool _muted = false;
     volatile bool _playing = false;
     gpio_num_t _pin = GPIO_NUM_NC;
 

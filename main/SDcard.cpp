@@ -704,6 +704,87 @@ char* SDCardWrapper::readFileToBuffer(const char* path, size_t* outLen)
     return buffer;
 }
 
+size_t SDCardWrapper::readFilePrefix(const char* path, char* out, size_t maxLen)
+{
+    if (!out || maxLen == 0) {
+        return 0;
+    }
+    out[0] = '\0';
+
+    if (_usbMscEnabled) {
+        ESP_LOGD(TAG, "Cannot read while USB MSC is enabled: %s", path);
+        return 0;
+    }
+    if (!open(path)) {
+        return 0;
+    }
+
+    // 末尾の NUL のぶんを残す
+    const size_t want = maxLen - 1;
+    size_t total = 0;
+
+    while (total < want) {
+        const int got = read(reinterpret_cast<uint8_t*>(out) + total, want - total);
+        if (got <= 0) {
+            break;   // ファイルが短ければここで終わる
+        }
+        total += static_cast<size_t>(got);
+    }
+    close();
+
+    out[total] = '\0';
+    return total;
+}
+
+bool SDCardWrapper::writeFileFromBuffer(const char* path, const void* data, size_t len)
+{
+    // USB MSC 中は PC 側がストレージを握っている。
+    // ここで書くと双方の書き込みが衝突してファイルシステムが壊れる。
+    if (_usbMscEnabled) {
+        ESP_LOGE(TAG, "Cannot write while USB MSC is enabled: %s", path);
+        return false;
+    }
+
+    if (!_initialized) {
+        ESP_LOGE(TAG, "SD card is not initialized");
+        return false;
+    }
+    if (!path || !data) {
+        return false;
+    }
+
+    char full_path[256];
+    if (!buildFullPath(path, full_path, sizeof(full_path))) {
+        return false;
+    }
+
+    // 読み込み用の _file とは別に開く。
+    // この関数の中で開いて閉じるので、_file の「同時に1つ」制約には触れない。
+    FILE* out = fopen(full_path, "wb");
+    if (!out) {
+        ESP_LOGE(TAG, "Failed to open for writing: %s", full_path);
+        return false;
+    }
+
+    const size_t written = fwrite(data, 1, len, out);
+    const int closeResult = fclose(out);
+
+    if (written != len) {
+        ESP_LOGE(TAG, "Short write on %s: %u of %u bytes",
+                 full_path, static_cast<unsigned>(written), static_cast<unsigned>(len));
+        return false;
+    }
+    if (closeResult != 0) {
+        // fclose の失敗はフラッシュに失敗した可能性がある。
+        // 書けたように見えて中身が落ちていないことがあるので、成功にしない。
+        ESP_LOGE(TAG, "fclose failed on %s", full_path);
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Wrote %u bytes to %s", static_cast<unsigned>(len), path);
+    return true;
+}
+
 void SDCardWrapper::freeDirInfo(DirInfo* dirInfo)
 {
     if (dirInfo) {

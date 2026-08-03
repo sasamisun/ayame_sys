@@ -10,6 +10,7 @@ static const char *TAG = "BUTTON";
 Button::Button(M5GFX *display, int x, int y, int width, int height, const char *label)
     : _x(x), _y(y), _width(width), _height(height), _state(ButtonState::Normal),
       _display(display), _drawTarget(nullptr), _font(nullptr), _vlwFont(nullptr),
+      _iconData(nullptr), _iconLen(0),
       _textSize(1.0f), _visible(true),
       _onPressed(nullptr), _onReleased(nullptr),
       _onSwipeUp(nullptr), _onSwipeDown(nullptr), _onSwipeLeft(nullptr), _onSwipeRight(nullptr)
@@ -106,6 +107,28 @@ void Button::draw()
 
 void Button::drawTo(lgfx::LovyanGFX* target, uint32_t bgColor, uint32_t textColor, uint32_t borderColor)
 {
+    // アイコンが設定されていれば、それがボタンの見た目そのものになる。
+    // 背景・枠線・ラベルは描かない。
+    if (_iconData && _iconLen > 0)
+    {
+        if (!target->drawPng(_iconData, _iconLen, _x, _y))
+        {
+            // 画像が壊れていてもボタンの位置が分かるように枠だけ残す
+            target->drawRect(_x, _y, _width, _height, borderColor);
+        }
+
+        // 押されている間は反応が分かるよう縁取りを重ねる。
+        // 1bpp なので色ではなく形で示す。
+        if (_state == ButtonState::Pressed)
+        {
+            for (int i = 0; i < 3; ++i)
+            {
+                target->drawRect(_x + i, _y + i, _width - i * 2, _height - i * 2, textColor);
+            }
+        }
+        return;
+    }
+
     // 背景を描画
     if (_style.cornerRadius > 0)
     {

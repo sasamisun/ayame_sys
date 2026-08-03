@@ -1575,10 +1575,23 @@ bool TypoWrite::loadFontFromArray(const uint8_t *fontArray)
         return false;
     }
 
-    // フォントを読み込み
+    // 読めるフォントかどうかをここで判定する。
+    // 実際の描画時は applyTextStyle() が改めて loadFont() するので、
+    // 判定が済んだら**必ず解放して元の状態に戻す**。
+    //
+    // 以前はここで読み込んだまま解放しておらず、
+    // 描画先（M5GFX）に VLW が載りっぱなしになっていた。
+    // すると TypoWrite を通さない描画——例えばシステムメニューの
+    //     setTextSize(3); print("AYAME");
+    // ——が 16pt の VLW を3倍した 48px で描かれ、
+    // 想定していた既定フォント(8px)の3倍=24px と食い違っていた。
+    // シナリオを1度再生すると releaseTextStyle() が unloadFont() するため
+    // 症状が消え、「起動直後だけ文字が大きい」という分かりにくい形で出ていた。
     bool result = _display->loadFont(fontArray);
     if (result)
     {
+        _display->unloadFont();
+
         // 読み込んだフォントを現在のフォントとして設定。
         //
         // 描画時は _isCustomFont / _vlwFont が優先されるため _font は使われないが、

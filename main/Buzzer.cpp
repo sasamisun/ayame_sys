@@ -213,6 +213,12 @@ void Buzzer::playMelody(const Note* notes, size_t count, bool blocking)
         return;
     }
 
+    // 消音中は鳴らさない。
+    // tone() もここを通るので、消音の判定はこの1箇所で足りる。
+    if (_muted) {
+        return;
+    }
+
     if (count > MAX_NOTES) {
         ESP_LOGW(TAG, "Melody has %u notes, truncated to %u",
                  static_cast<unsigned>(count), static_cast<unsigned>(MAX_NOTES));
@@ -240,6 +246,18 @@ void Buzzer::playMelody(const Note* notes, size_t count, bool blocking)
     // ここで LEDC を触ってはいけない。
     while (_playing) {
         vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+void Buzzer::setMuted(bool muted)
+{
+    _muted = muted;
+    ESP_LOGI(TAG, "Sound %s", muted ? "muted" : "unmuted");
+
+    // 消音にした瞬間、鳴っている音も止める。
+    // 残したままだと「切ったのに鳴り続ける」ように見える。
+    if (muted) {
+        stop();
     }
 }
 

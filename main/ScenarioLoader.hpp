@@ -49,6 +49,27 @@ public:
     static constexpr const char* SCENARIOS_ROOT = "scenarios";
 
     /**
+     * @brief シナリオを読み込まずにタイトルだけ調べる
+     *
+     * メニューの一覧用。`scenario.json` の**先頭だけ**を読んで
+     * `meta.title` を取り出す。全文を読んで cJSON で解析すると、
+     * シナリオが増えるほどメニューの表示が待たされるため。
+     *
+     * @param scenarioId フォルダ名
+     * @return 見つかったタイトル。**見つからなければ scenarioId をそのまま返す**
+     *
+     * @note 先頭の断片は完全な JSON ではないので、cJSON では解析できない。
+     *       文字列として `"title"` を探している。
+     * @note そのため **`meta` はファイルの先頭付近に置く必要がある**
+     *       （`SCENARIO_SPEC.md` の 3.1 を参照）。
+     *       離れた位置にあると読み取れず、フォルダ名が表示される。
+     */
+    static std::string peekTitle(const char* scenarioId);
+
+    /// peekTitle() が読み込む先頭のバイト数
+    static constexpr size_t TITLE_PEEK_BYTES = 4096;
+
+    /**
      * @brief cJSON の確保先を PSRAM に向ける（**起動時に1回だけ**呼ぶ）
      *
      * cJSON は小さな確保を大量に行う。

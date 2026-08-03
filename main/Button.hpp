@@ -64,6 +64,8 @@ private:
     lgfx::LGFX_Sprite *_drawTarget; // Canvas描画先（nullptrでディスプレイに直接描画）
     lgfx::IFont *_font;           // フォント（静的なもの）
     const uint8_t *_vlwFont;      // VLWフォント（日本語用。loadFont で読む）
+    const uint8_t *_iconData;     // アイコンPNG（埋め込み。nullptr なら通常描画）
+    size_t _iconLen;              // アイコンPNGのバイト数
     float _textSize;              // テキストサイズ
     bool _visible;                // 表示/非表示フラグ
 
@@ -158,6 +160,29 @@ public:
      *       描かないので問題にならないが、頻繁に描き直す用途では注意。
      */
     void setVlwFont(const uint8_t *vlwData) { _vlwFont = vlwData; }
+
+    /**
+     * @brief ボタンの見た目を画像にする
+     *
+     * 設定すると、背景・枠線・ラベルの代わりに PNG を描く。
+     * 画像はボタンの寸法に合わせて用意すること（拡大縮小はしない）。
+     *
+     * @param pngData PNG のバイト列。`nullptr` で通常の描画に戻る
+     * @param pngLen  バイト数
+     *
+     * @note **画像はファームウェアに埋め込むこと。SD から読んではいけない。**
+     *       USB MSC が有効な間は全てのファイル操作が失敗するため、
+     *       SD 由来のアイコンは MSC 中に描けなくなる。
+     *       「USB を切る」ボタンが見えなくなって操作不能になる。
+     * @note データは呼び出し側が保持し続けること（コピーしない）。
+     */
+    void setIcon(const uint8_t *pngData, size_t pngLen)
+    {
+        _iconData = pngData;
+        _iconLen = pngLen;
+    }
+
+    bool hasIcon() const { return _iconData != nullptr && _iconLen > 0; }
     void setTextSize(float size) { _textSize = size; }
     void setStyle(const ButtonStyle &style) { _style = style; }
 

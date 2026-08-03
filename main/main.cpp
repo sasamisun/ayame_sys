@@ -13,9 +13,11 @@
 #include <M5GFX.h>
 
 #include "Buzzer.hpp"
+#include "Power.hpp"
 #include "SDcard.hpp"
 #include "ScenarioLoader.hpp"
 #include "ScenarioPlayer.hpp"
+#include "Settings.hpp"
 #include "SimpleTransition.hpp"
 #include "SystemMenu.hpp"
 #include "TextSystem.hpp"
@@ -147,6 +149,10 @@ void enterPlaying(const std::string &scenarioId)
         // 読めなかった理由は SCENARIO タグのログに出ている。
         // SDを抜いたのかJSONが壊れているのか、画面でも気づけるようにする。
         ESP_LOGE(TAG, "Failed to load scenario");
+
+        // setTextSize() は「今読み込まれているフォント」への倍率なので、
+        // VLW が載ったままだと想定外の大きさで描かれる。既定へ戻してから描く。
+        display.unloadFont();
         display.setTextColor(TFT_RED, TFT_BLACK);
         display.setTextSize(2);
         display.setCursor(20, 100);
@@ -215,6 +221,12 @@ void setup()
         ESP_LOGE(TAG, "Buzzer initialization failed (sound disabled)");
     }
 
+    // 電源制御と電池監視。失敗しても電源OFF自体は使えるので起動は続ける
+    if (!power.begin())
+    {
+        ESP_LOGE(TAG, "Power initialization failed (battery level unavailable)");
+    }
+
     // cJSON の確保先を PSRAM に向ける。
     // 解析を始める前に、プロセス全体で1回だけ呼ぶ必要がある。
     ScenarioLoader::initAllocator();
@@ -230,6 +242,11 @@ void setup()
     {
         ESP_LOGE(TAG, "SD card initialization failed");
     }
+
+    // 本体設定。SD の初期化後、かつ設定を使う前に読む。
+    // 読めなくても既定値で動くので、失敗しても起動は止めない。
+    settings.load();
+    buzzer.setMuted(!settings.soundEnabled());
 
     simpleTransition = new SimpleTransition(&display);
     if (!simpleTransition->init())

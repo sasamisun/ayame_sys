@@ -162,6 +162,45 @@ public:
      * @note USB MSC が有効な間は必ず失敗する（全ファイル操作が禁止されるため）。
      */
     char* readFileToBuffer(const char* path, size_t* outLen = nullptr);
+
+    /**
+     * @brief バッファの内容をファイルへ書き出す（既存は上書き）
+     *
+     * 本クラスは長らく読み込み専用（`open()` が `"rb"` 固定）で、
+     * 書き込みの手段が `mkdir` / `remove` しか無かった。
+     * 設定やセーブデータを残すために追加したもの。
+     *
+     * @param path 書き出し先（`/sdcard` 起点の相対パスでよい）
+     * @param data 書き出す内容
+     * @param len  バイト数
+     * @return 成功したか
+     *
+     * @note 親ディレクトリは**作らない**。無ければ失敗する。
+     *       必要なら呼び出し側で `mkdir()` すること。
+     * @note USB MSC が有効な間は必ず失敗する（全ファイル操作が禁止されるため）。
+     *       PC 側と同時に書くと内容が壊れるため、これは意図した制限。
+     */
+    bool writeFileFromBuffer(const char* path, const void* data, size_t len);
+
+    /**
+     * @brief ファイルの先頭だけを読む
+     *
+     * ファイル全体は要らず、冒頭の情報だけ欲しい場合に使う。
+     * メニューが各シナリオのタイトルを引くのが主な用途で、
+     * `readFileToBuffer()` で全文を読むと**シナリオが増えるほど表示が重くなる**。
+     *
+     * @param path   読み込むファイル
+     * @param out    書き込み先。末尾に NUL を置くので `maxLen` は
+     *               「NUL を含む」大きさで渡すこと
+     * @param maxLen `out` の大きさ
+     * @return 読み込めたバイト数（NUL を含まない）。失敗時は 0
+     *
+     * @note ファイルが `maxLen` より小さければその分だけ読む。
+     * @note **途中で切れた内容が返る**ので、JSON として解析してはいけない。
+     *       文字列として走査する用途に限る。
+     * @note USB MSC が有効な間は必ず失敗する。
+     */
+    size_t readFilePrefix(const char* path, char* out, size_t maxLen);
     
     // operator overload for Arduino compatibility
     operator bool() { return _initialized; }
