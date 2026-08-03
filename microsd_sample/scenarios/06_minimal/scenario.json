@@ -1,0 +1,32 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "06_minimal",
+    "title": "最小構成",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "text ひとつと end だけ",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "これだけです。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

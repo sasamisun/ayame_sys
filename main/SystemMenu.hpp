@@ -139,6 +139,15 @@ private:
     /// 確認状態を保つ時間。過ぎたら自動で解除する
     static constexpr int64_t POWER_OFF_CONFIRM_TIMEOUT_MS = 5000;
 
+    /**
+     * @brief 電源を切る前に表示の定着を待つ時間
+     *
+     * **短くすると画面上部に横線が入る。**
+     * 300ms では走査が終わりきらず、中途半端な行が残ることがあった。
+     * 電源断は頻繁な操作ではないので、確実さを優先して長めに取ってある。
+     */
+    static constexpr int SHUTDOWN_SETTLE_MS = 3000;
+
     /// 下段に並べるボタンの数。アイコン幅 x この数 が画面幅に一致する
     static constexpr int FOOTER_BUTTON_COUNT = 5;
 

@@ -1,0 +1,46 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "07_broken",
+    "title": "壊れたシナリオ（警告の確認）",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "存在しない遷移先や画像。起動が止まらないことを見る",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "nothing": "images/bg/does_not_exist.png"
+    },
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "このシナリオはわざと壊してあります。起動時のログに SCENARIO タグの警告が並ぶはずです。"
+        },
+        {
+          "type": "bg",
+          "image": "nothing"
+        },
+        {
+          "type": "bg",
+          "image": "undefined_name"
+        },
+        {
+          "type": "text",
+          "body": "存在しないシーンへ飛びます。"
+        },
+        {
+          "type": "jump",
+          "next": "no_such_scene"
+        }
+      ]
+    }
+  }
+}

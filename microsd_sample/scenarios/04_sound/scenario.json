@@ -1,0 +1,99 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "04_sound",
+    "title": "音の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "単音・音列・休符。サウンドを切ると鳴らないこと",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "body": "単音を鳴らします。"
+        },
+        {
+          "type": "beep",
+          "freq": 440,
+          "duration": 300
+        },
+        {
+          "type": "wait",
+          "ms": 500
+        },
+        {
+          "type": "text",
+          "body": "高い音を鳴らします。"
+        },
+        {
+          "type": "beep",
+          "freq": 1760,
+          "duration": 300
+        },
+        {
+          "type": "wait",
+          "ms": 500
+        },
+        {
+          "type": "text",
+          "body": "音階を鳴らします。休符も入ります。"
+        },
+        {
+          "type": "beep",
+          "melody": [
+            {
+              "freq": 262,
+              "duration": 200
+            },
+            {
+              "freq": 294,
+              "duration": 200
+            },
+            {
+              "freq": 330,
+              "duration": 200
+            },
+            {
+              "freq": 0,
+              "duration": 300
+            },
+            {
+              "freq": 392,
+              "duration": 200
+            },
+            {
+              "freq": 440,
+              "duration": 200
+            },
+            {
+              "freq": 523,
+              "duration": 400
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "body": "メニューでサウンドを切ってから来ると、何も鳴りません。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

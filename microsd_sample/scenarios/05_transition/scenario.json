@@ -1,0 +1,129 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "05_transition",
+    "title": "画面遷移の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "背景の切替と10種のトランジション",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "a": "images/bg/bg_a.png",
+      "b": "images/bg/bg_b.png"
+    },
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "body": "背景を切り替えながら遷移を順に見ます。"
+        },
+        {
+          "type": "bg",
+          "image": "a",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "body": "遷移: NONE"
+        },
+        {
+          "type": "bg",
+          "image": "b",
+          "transition": "FADE_IN"
+        },
+        {
+          "type": "text",
+          "body": "遷移: FADE_IN"
+        },
+        {
+          "type": "bg",
+          "image": "a",
+          "transition": "SLIDE_LEFT"
+        },
+        {
+          "type": "text",
+          "body": "遷移: SLIDE_LEFT"
+        },
+        {
+          "type": "bg",
+          "image": "b",
+          "transition": "SLIDE_RIGHT"
+        },
+        {
+          "type": "text",
+          "body": "遷移: SLIDE_RIGHT"
+        },
+        {
+          "type": "bg",
+          "image": "a",
+          "transition": "SLIDE_UP"
+        },
+        {
+          "type": "text",
+          "body": "遷移: SLIDE_UP"
+        },
+        {
+          "type": "bg",
+          "image": "b",
+          "transition": "SLIDE_DOWN"
+        },
+        {
+          "type": "text",
+          "body": "遷移: SLIDE_DOWN"
+        },
+        {
+          "type": "bg",
+          "image": "a",
+          "transition": "WIPE_HORIZONTAL"
+        },
+        {
+          "type": "text",
+          "body": "遷移: WIPE_HORIZONTAL"
+        },
+        {
+          "type": "bg",
+          "image": "b",
+          "transition": "WIPE_VERTICAL"
+        },
+        {
+          "type": "text",
+          "body": "遷移: WIPE_VERTICAL"
+        },
+        {
+          "type": "bg",
+          "image": "a",
+          "transition": "REVEAL_CENTER"
+        },
+        {
+          "type": "text",
+          "body": "遷移: REVEAL_CENTER"
+        },
+        {
+          "type": "bg",
+          "image": "b",
+          "transition": "REVEAL_CORNER"
+        },
+        {
+          "type": "text",
+          "body": "遷移: REVEAL_CORNER"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

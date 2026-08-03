@@ -28,7 +28,23 @@ UI の部品はファームウェア側に持たせる。
   中間調は潰れる。アンチエイリアスは切って作ること
 - PNG。グレースケールやカラーで作っても、この変換器が 2 値化する
 
-透過は白背景に合成してから2値化する。
+## 透過の扱い
+
+**透過がある画像（ロゴなど）は、白背景へ合成して階調をそのまま残す。**
+
+透明な部分は白（何も描かない）、不透明な部分は元の明るさのまま。
+**反転も2値化もしない。** 素材の明暗を推測して補正することはしない。
+
+したがって、**画面に出したい濃さでそのまま描くこと**。
+白い画面の上に置くので、白に近い色で描いた部分は薄く出る。
+
+**この経路は2値化しない。** `Panel_EPD` は常に 16 階調（4bpp）で扱い、
+`display.setColorDepth()` は引数を無視するので 1bpp にはならない。
+`epd_quality` / `epd_text` なら中間調がそのまま出る
+（`epd_fast` / `epd_fastest` はベイヤーディザで2階調になる）。
+
+**透過が無い画像は明るさで2値化する。**
+メニューのボタンのように、背景まで含めて描かれているものが該当する。
 ボタンは下地が描かれないので、背景も画像に含めること。
 """
 
@@ -75,19 +91,49 @@ def convert(path, expect_size=None):
 
     size = img.size
 
-    # アルファがあれば白背景に合成してから2値化する。
-    # 透過のまま落とすと、透明部分が黒として残ることがある。
-    if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-        img = img.convert("RGBA")
-        canvas = Image.new("RGBA", img.size, (255, 255, 255, 255))
-        canvas.alpha_composite(img)
-        img = canvas.convert("L")
-    else:
-        img = img.convert("L")
+    has_alpha = (img.mode in ("RGBA", "LA")
+                 or (img.mode == "P" and "transparency" in img.info))
 
-    # ディザリングを使わずしきい値で2値化する。
-    # 1bpp の電子ペーパーでは、ディザの網点が汚く見えるため。
-    img = img.point(lambda v: 255 if v >= THRESHOLD else 0, mode="1")
+    if has_alpha:
+        # **透過がある画像は、白背景へ合成して階調をそのまま残す。**
+        #
+        # 透明な部分は白（＝何も描かない）、不透明な部分は元の明るさのまま。
+        # 反転も2値化もしない。
+        #
+        # ## 2値化しない理由
+        #
+        # Panel_EPD は常に 16 階調（4bpp）で扱う。
+        # `display.setColorDepth()` は引数を無視するので 1bpp にはならない。
+        # epd_quality / epd_text なら中間調がそのまま出る。
+        # ここで潰すと、元画像のグレーが失われる。
+        #
+        # ## 反転しない理由（一度やって間違えた）
+        #
+        # 「不透明部分に明るい画素が多い」ことから
+        # 「白インクを透過背景に描いた素材」と誤って判断し、
+        # 明るさを反転したことがある。
+        # 実際には ayamelogo.png は
+        #     透明 23,371px / グレー(明るさ179) 8,085px / 黒(明るさ0) 630px
+        # の3領域で、多数派のグレーが閾値より明るかっただけだった。
+        # 反転すると 179→76、0→255 となり、**黒い部分が白く抜ける**。
+        #
+        # 素材の明暗を推測して補正しない。合成するだけにする。
+        rgba = img.convert("RGBA")
+        alpha = rgba.getchannel("A")
+        lum = rgba.convert("L")
+
+        # 透明な部分を白（255）に置き換える。
+        # 中途半端なアルファは、その割合ぶんだけ白へ寄る。
+        out = Image.new("L", img.size, 255)
+        out.paste(lum, (0, 0), alpha)
+        img = out
+    else:
+        # 透過が無い画像は明るさで2値化する。
+        # 背景まで含めて描かれているもの（メニューのアイコンなど）が該当する。
+        #
+        # ディザリングは使わない。
+        # 1bpp の電子ペーパーでは、ディザの網点が汚く見えるため。
+        img = img.convert("L").point(lambda v: 255 if v >= THRESHOLD else 0, mode="1")
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)

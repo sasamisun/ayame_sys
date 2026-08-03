@@ -1,0 +1,57 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "03_ruby",
+    "title": "ルビの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "半角と全角の記法、長い読みのはみ出しを見る",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "body": "半角の記法です。|漢字<かんじ>と|桃太郎<ももたろう>。"
+        },
+        {
+          "type": "text",
+          "body": "全角の記法です。｜漢字《かんじ》と｜桃太郎《ももたろう》。"
+        },
+        {
+          "type": "text",
+          "body": "混在もできます。|山<やま>と｜川《かわ》。"
+        },
+        {
+          "type": "text",
+          "body": "読みが長い場合ははみ出します。|承る<うけたまわる>と|遮二無二<しゃにむに>。隣に重なっていないか見てください。"
+        },
+        {
+          "type": "text",
+          "direction": "HORIZONTAL",
+          "body": "横書きのルビは本文の上に出ます。|横書<よこが>きの|見本<みほん>です。"
+        },
+        {
+          "type": "text",
+          "body": "記法が壊れている場合は普通の文字になります。|閉じ括弧なし<"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

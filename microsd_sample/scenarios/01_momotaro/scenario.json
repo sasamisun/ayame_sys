@@ -1,0 +1,258 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "01_momotaro",
+    "title": "桃太郎（総合サンプル）",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "分岐・変数・ルビ・音をひととおり使う",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {
+    "kibidango": 0,
+    "met_oni": false,
+    "route": "none"
+  },
+  "start": "opening",
+  "scenes": {
+    "opening": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "beep",
+          "freq": 880,
+          "duration": 80
+        },
+        {
+          "type": "text",
+          "body": "むかしむかし、あるところにおじいさんとおばあさんが住んでいました。おじいさんは|山<やま>へしばかりに、おばあさんは|川<かわ>へせんたくに行きました。"
+        },
+        {
+          "type": "text",
+          "speaker": "おばあさん",
+          "body": "まあ、大きな|桃<もも>。"
+        },
+        {
+          "type": "text",
+          "body": "|二人<ふたり>はその子に|桃太郎<ももたろう>と名づけ、大切に育てました。"
+        }
+      ],
+      "next": "choose"
+    },
+    "choose": {
+      "commands": [
+        {
+          "type": "text",
+          "speaker": "桃太郎",
+          "body": "|鬼<おに>が島へ|鬼退治<おにたいじ>に行ってまいります。"
+        },
+        {
+          "type": "choice",
+          "prompt": "誰を家来にする？",
+          "options": [
+            {
+              "label": "犬をつれていく",
+              "next": "dog"
+            },
+            {
+              "label": "猿をつれていく",
+              "next": "monkey"
+            },
+            {
+              "label": "ひとりで行く",
+              "next": "alone"
+            }
+          ]
+        }
+      ]
+    },
+    "dog": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "kibidango",
+          "op": "+=",
+          "value": 2
+        },
+        {
+          "type": "set",
+          "var": "route",
+          "value": "dog"
+        },
+        {
+          "type": "text",
+          "body": "|犬<いぬ>が家来になりました。"
+        }
+      ],
+      "next": "island"
+    },
+    "monkey": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "kibidango",
+          "op": "+=",
+          "value": 1
+        },
+        {
+          "type": "set",
+          "var": "route",
+          "value": "monkey"
+        },
+        {
+          "type": "text",
+          "body": "|猿<さる>が家来になりました。"
+        }
+      ],
+      "next": "island"
+    },
+    "alone": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "route",
+          "value": "alone"
+        },
+        {
+          "type": "text",
+          "body": "桃太郎はひとりで海を渡りました。"
+        }
+      ],
+      "next": "island"
+    },
+    "island": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "met_oni",
+          "value": true
+        },
+        {
+          "type": "text",
+          "body": "鬼が島に着きました。門の前に大きな鬼が立っています。"
+        },
+        {
+          "type": "if",
+          "cond": {
+            "var": "kibidango",
+            "op": ">=",
+            "value": 2
+          },
+          "then": [
+            {
+              "type": "text",
+              "body": "家来が力を合わせ、門をこじあけました。"
+            },
+            {
+              "type": "if",
+              "cond": {
+                "var": "route",
+                "op": "==",
+                "value": "dog"
+              },
+              "then": [
+                {
+                  "type": "text",
+                  "body": "犬が真っ先に飛びこんでいきます。"
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "body": "【入れ子の分岐から戻りました】"
+            }
+          ],
+          "else": [
+            {
+              "type": "text",
+              "body": "ひとりでは門が重く、桃太郎は考えこみました。"
+            }
+          ]
+        },
+        {
+          "type": "choice",
+          "prompt": "どうする？",
+          "options": [
+            {
+              "label": "戦う",
+              "next": "ending"
+            },
+            {
+              "label": "話し合う",
+              "next": "ending"
+            },
+            {
+              "label": "家来を呼ぶ（きびだんご2つ以上）",
+              "next": "ending",
+              "cond": {
+                "var": "kibidango",
+                "op": ">=",
+                "value": 2
+              }
+            },
+            {
+              "label": "逃げる（灰色で出るはず）",
+              "next": "ending",
+              "cond": {
+                "var": "met_oni",
+                "op": "==",
+                "value": false
+              },
+              "hide_if_false": false
+            }
+          ]
+        }
+      ]
+    },
+    "ending": {
+      "commands": [
+        {
+          "type": "beep",
+          "melody": [
+            {
+              "freq": 523,
+              "duration": 120
+            },
+            {
+              "freq": 659,
+              "duration": 120
+            },
+            {
+              "freq": 784,
+              "duration": 120
+            },
+            {
+              "freq": 0,
+              "duration": 60
+            },
+            {
+              "freq": 1046,
+              "duration": 240
+            }
+          ]
+        },
+        {
+          "type": "refresh",
+          "mode": "epd_quality"
+        },
+        {
+          "type": "text",
+          "body": "めでたし、めでたし。"
+        },
+        {
+          "type": "end",
+          "ending": "good_end",
+          "message": "おしまい"
+        }
+      ]
+    }
+  }
+}

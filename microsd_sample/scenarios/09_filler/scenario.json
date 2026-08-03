@@ -1,0 +1,32 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "09_filler",
+    "title": "一覧の9番目",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "一覧のページ送りを確かめるための埋め草",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "9 番目のシナリオです。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

@@ -209,7 +209,20 @@ void setup()
     display.setRotation(2);
 
     display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
-    display.setColorDepth(1);
+
+    // 色深度は設定しない。
+    //
+    // Panel_EPD::setColorDepth() は**引数を無視して常に grayscale_8bit にする**。
+    //     _write_depth = color_depth_t::grayscale_8bit;
+    //     _read_depth  = color_depth_t::grayscale_8bit;
+    // パネルのバッファも (幅 x 高さ) / 2 の 4bpp で、**常に16階調**。
+    //
+    // 以前ここに setColorDepth(1) と書いていたが、効果が無いうえに
+    // 「この機種は白黒2値」という誤解を生むので削除した。
+    //
+    // 階調が実際に出るかは EPD モードで決まる。
+    //   epd_quality / epd_text … 16階調そのまま
+    //   epd_fast / epd_fastest … ベイヤーディザで2階調
 
     // 電子ペーパーはリセットしても直前の像を保持しているが、
     // Panel_EPD は初期化時に「全白」と仮定して内部バッファを埋める。

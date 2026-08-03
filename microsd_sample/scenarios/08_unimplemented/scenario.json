@@ -1,0 +1,51 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "08_unimplemented",
+    "title": "未実装コマンドの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "chara と save が無視され警告が出ること",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "未実装のコマンドは無視され、警告がログに出るだけです。再生は止まりません。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "normal",
+          "x": 60,
+          "y": 400
+        },
+        {
+          "type": "save",
+          "slot": 1
+        },
+        {
+          "type": "load",
+          "slot": 1
+        },
+        {
+          "type": "text",
+          "body": "ここまで来ていれば正しく読み飛ばされています。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}
