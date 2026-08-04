@@ -12,8 +12,74 @@ TextSystem textSystem;
 
 TextSystem::~TextSystem()
 {
+    clearBoxes();
     delete _vertical;
     delete _horizontal;
+}
+
+TypoWrite* TextSystem::createWriter()
+{
+    TypoWrite* w = new TypoWrite(_display);
+    w->setVLWParser(&_parser);
+    w->loadFontFromArray(shippori);
+    w->setColor(TFT_WHITE);
+    w->setBackgroundColor(TFT_TRANSPARENT);
+    w->setRubyEnabled(_rubyEnabled);
+    return w;
+}
+
+bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
+                           bool vertical, float fontSize,
+                           int lineSpacing, int charSpacing, TextAlignment align)
+{
+    if (!_ready) {
+        ESP_LOGE(TAG, "Not initialized");
+        return false;
+    }
+    if (name.empty()) {
+        ESP_LOGE(TAG, "Text box needs a name");
+        return false;
+    }
+    if (w <= 0 || h <= 0) {
+        ESP_LOGE(TAG, "Text box '%s' has a bad size (%dx%d)", name.c_str(), w, h);
+        return false;
+    }
+
+    auto it = _boxes.find(name);
+    TypoWrite* writer = (it != _boxes.end()) ? it->second : nullptr;
+
+    if (!writer) {
+        // TypoWrite の生成はマッピングテーブルの構築とスプライト確保を伴い重い。
+        // 同じ名前が来たら作り直さず設定だけ入れ替える。
+        writer = createWriter();
+        _boxes[name] = writer;
+    }
+
+    writer->setPosition(x, y);
+    writer->setArea(w, h);
+    writer->setDirection(vertical ? TextDirection::VERTICAL : TextDirection::HORIZONTAL);
+    writer->setFontSize(fontSize);
+    writer->setLineSpacing(lineSpacing);
+    writer->setCharSpacing(charSpacing);
+    writer->setAlignment(align);
+
+    ESP_LOGI(TAG, "Text box '%s': (%d,%d) %dx%d %s x%.2f",
+             name.c_str(), x, y, w, h, vertical ? "vertical" : "horizontal", fontSize);
+    return true;
+}
+
+TypoWrite* TextSystem::box(const std::string& name)
+{
+    auto it = _boxes.find(name);
+    return (it != _boxes.end()) ? it->second : nullptr;
+}
+
+void TextSystem::clearBoxes()
+{
+    for (auto& kv : _boxes) {
+        delete kv.second;
+    }
+    _boxes.clear();
 }
 
 const uint8_t* TextSystem::fontData() const
@@ -31,6 +97,8 @@ bool TextSystem::begin(M5GFX* display)
         ESP_LOGE(TAG, "display is null");
         return false;
     }
+
+    _display = display;
 
     if (!_parser.init(shippori, sizeof(shippori))) {
         ESP_LOGE(TAG, "Failed to initialize VLW font");
@@ -87,10 +155,18 @@ bool TextSystem::begin(M5GFX* display)
 
 void TextSystem::setRubyEnabled(bool enabled)
 {
+    _rubyEnabled = enabled;
+
     if (_vertical) {
         _vertical->setRubyEnabled(enabled);
     }
     if (_horizontal) {
         _horizontal->setRubyEnabled(enabled);
+    }
+
+    // シナリオが定義したボックスにも同じ設定を配る。
+    // ここを忘れると、名前付きボックスだけルビが出ない。
+    for (auto& kv : _boxes) {
+        kv.second->setRubyEnabled(enabled);
     }
 }

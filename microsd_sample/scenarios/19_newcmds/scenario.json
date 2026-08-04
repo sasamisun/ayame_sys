@@ -1,0 +1,307 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "19_newcmds",
+    "title": "新コマンドと変数表示の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "変数埋め込み / random / call / return / image と5つのオプション",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "room": "images/bg/room.png",
+      "cg": "images/bg/cg_event.png"
+    },
+    "characters": {
+      "ayame": {
+        "normal": "images/chara/ayame_normal.png"
+      }
+    }
+  },
+  "variables": {
+    "name": "あやめ",
+    "affection": 0,
+    "dice": 0,
+    "visits": 0
+  },
+  "start": "intro",
+  "scenes": {
+    "intro": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "room"
+        },
+        {
+          "type": "text",
+          "body": "■ 変数の埋め込み"
+        },
+        {
+          "type": "text",
+          "speaker": "{name}",
+          "body": "わたしの名前は {name} です。好感度は {affection}。"
+        },
+        {
+          "type": "set",
+          "var": "affection",
+          "op": "+=",
+          "value": 25
+        },
+        {
+          "type": "text",
+          "body": "好感度を上げました。今は {affection} です。"
+        },
+        {
+          "type": "text",
+          "body": "記号を出したいときは二重にします → {{name}} と書けば {{name}} になります。"
+        },
+        {
+          "type": "text",
+          "body": "未定義の変数は {undefined_one} のようにそのまま残り、警告が出ます。"
+        }
+      ],
+      "next": "rnd"
+    },
+    "rnd": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "■ random（乱数）"
+        },
+        {
+          "type": "random",
+          "var": "dice",
+          "min": 1,
+          "max": 6
+        },
+        {
+          "type": "text",
+          "body": "さいころを振りました。出目は {dice} です。"
+        },
+        {
+          "type": "if",
+          "cond": {
+            "var": "dice",
+            "op": ">=",
+            "value": 4
+          },
+          "then": [
+            {
+              "type": "text",
+              "body": "4以上。大当たりです。"
+            }
+          ],
+          "else": [
+            {
+              "type": "text",
+              "body": "3以下。はずれです。"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "body": "もう一度振ります。"
+        },
+        {
+          "type": "random",
+          "var": "dice",
+          "min": 1,
+          "max": 6
+        },
+        {
+          "type": "text",
+          "body": "今度は {dice} でした。毎回変わるか確かめてください。"
+        }
+      ],
+      "next": "callret"
+    },
+    "callret": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "■ call / return（共通処理の再利用）"
+        },
+        {
+          "type": "call",
+          "scene": "status"
+        },
+        {
+          "type": "text",
+          "body": "1回目の call から戻りました。"
+        },
+        {
+          "type": "call",
+          "scene": "status"
+        },
+        {
+          "type": "text",
+          "body": "2回目の call から戻りました。同じシーンを何度でも呼べます。"
+        },
+        {
+          "type": "call",
+          "scene": "outer"
+        },
+        {
+          "type": "text",
+          "body": "入れ子の call からも戻れました。"
+        }
+      ],
+      "next": "imgscene"
+    },
+    "status": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "visits",
+          "op": "+=",
+          "value": 1
+        },
+        {
+          "type": "text",
+          "body": "（共通の状態表示です。{visits} 回目の呼び出し。好感度 {affection}）"
+        },
+        {
+          "type": "return"
+        }
+      ]
+    },
+    "outer": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "（外側の call です。この中からさらに call します）"
+        },
+        {
+          "type": "call",
+          "scene": "status"
+        },
+        {
+          "type": "text",
+          "body": "（内側から戻ってきました）"
+        },
+        {
+          "type": "return"
+        }
+      ]
+    },
+    "imgscene": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "■ image（前面の一枚絵）"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "normal",
+          "x": 170,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "body": "立ち絵を出しました。次に一枚絵を重ねます。"
+        },
+        {
+          "type": "image",
+          "image": "cg",
+          "x": 70,
+          "y": 200
+        },
+        {
+          "type": "text",
+          "body": "立ち絵より手前に出ます。位置と大きさを指定できます。"
+        },
+        {
+          "type": "image",
+          "image": "cg",
+          "x": 70,
+          "y": 200,
+          "scale": 0.5
+        },
+        {
+          "type": "text",
+          "body": "scale 0.5 にしました。1bpp なので縮小は粗くなります。"
+        },
+        {
+          "type": "image",
+          "clear": true
+        },
+        {
+          "type": "text",
+          "body": "消しました。立ち絵と背景は残っています。"
+        }
+      ],
+      "next": "opts"
+    },
+    "opts": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "■ 5つのオプション"
+        },
+        {
+          "type": "text",
+          "body": "wait を3秒入れます。skippable なのでタップで飛ばせます。"
+        },
+        {
+          "type": "wait",
+          "ms": 3000,
+          "skippable": true
+        },
+        {
+          "type": "text",
+          "body": "飛ばせましたか。次は skippable:false の2秒です。タップしても待ちます。"
+        },
+        {
+          "type": "wait",
+          "ms": 2000,
+          "skippable": false
+        },
+        {
+          "type": "text",
+          "body": "refresh の mode を指定します。"
+        },
+        {
+          "type": "refresh",
+          "mode": "epd_text"
+        },
+        {
+          "type": "text",
+          "body": "epd_text で再駆動しました。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "normal",
+          "x": 170,
+          "y": 420,
+          "scale": 0.6
+        },
+        {
+          "type": "text",
+          "body": "立ち絵を scale 0.6 にしました。"
+        },
+        {
+          "type": "bg",
+          "image": "room",
+          "scale": 1.0
+        },
+        {
+          "type": "text",
+          "body": "最後に end の message を出します。"
+        },
+        {
+          "type": "end",
+          "ending": "done",
+          "message": "おしまい。\n{name} の好感度は {affection} でした。\nタップでメニューへ戻ります。"
+        }
+      ]
+    }
+  }
+}

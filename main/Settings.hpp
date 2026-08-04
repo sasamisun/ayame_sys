@@ -58,9 +58,22 @@ public:
     const char* lastScenario() const { return _lastScenario; }
     void setLastScenario(const char* id);
 
+    /**
+     * @brief 「続きから」で読むセーブスロット
+     *
+     * `suspend` で中断したときに書かれる。`-1` なら続きは無い。
+     * 一度再開したら消す（同じ栞を何度も使えると、
+     * いつの状態から始まるのか分からなくなるため）。
+     */
+    int resumeSlot() const { return _resumeSlot; }
+    void setResumeSlot(int slot) { _resumeSlot = slot; }
+    bool hasResume() const { return _resumeSlot >= 0 && _lastScenario[0] != '\0'; }
+    void clearResume() { _resumeSlot = -1; }
+
 private:
     bool _soundEnabled = true;
     char _lastScenario[64] = {0};
+    int _resumeSlot = -1;
 };
 
 /// グローバル実体

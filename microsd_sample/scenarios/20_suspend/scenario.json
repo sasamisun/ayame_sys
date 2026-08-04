@@ -1,0 +1,147 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "20_suspend",
+    "title": "中断と再開の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "suspend と「続きから」の動作確認",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "bookmark": "images/bg/bookmark.png"
+    },
+    "characters": {}
+  },
+  "variables": {
+    "page": 0,
+    "reader": "あなた"
+  },
+  "start": "p1",
+  "scenes": {
+    "p1": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "set",
+          "var": "page",
+          "value": 1
+        },
+        {
+          "type": "text",
+          "body": "第 {page} 章。ここは物語の始まりです。このサンプルは中断と再開を確かめるためのものです。"
+        }
+      ],
+      "next": "p2"
+    },
+    "p2": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "page",
+          "value": 2
+        },
+        {
+          "type": "checkpoint"
+        },
+        {
+          "type": "text",
+          "body": "第 {page} 章。ここに checkpoint を置いてあります。中断して「続きから」を選ぶと、この画面に戻ります。"
+        },
+        {
+          "type": "choice",
+          "prompt": "どうしますか？",
+          "options": [
+            {
+              "label": "ここで中断する",
+              "next": "suspend_p2"
+            },
+            {
+              "label": "読み進める",
+              "next": "p3"
+            }
+          ]
+        }
+      ]
+    },
+    "suspend_p2": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "中断します。電源が切れた後もこの画面が残るか見てください。"
+        },
+        {
+          "type": "suspend",
+          "message": "第 {page} 章まで読みました。\n{reader} の栞です。",
+          "image": "bookmark"
+        }
+      ]
+    },
+    "p3": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "page",
+          "value": 3
+        },
+        {
+          "type": "checkpoint"
+        },
+        {
+          "type": "text",
+          "body": "第 {page} 章。ここにも checkpoint があります。中断すると第 2 章ではなくこの画面に戻ります。"
+        },
+        {
+          "type": "choice",
+          "prompt": "どうしますか？",
+          "options": [
+            {
+              "label": "ここで中断する",
+              "next": "suspend_p3"
+            },
+            {
+              "label": "最後まで読む",
+              "next": "last"
+            }
+          ]
+        }
+      ]
+    },
+    "suspend_p3": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "中断します。電源が切れた後もこの画面が残るか見てください。"
+        },
+        {
+          "type": "suspend",
+          "message": "第 {page} 章まで読みました。\n{reader} の栞です。",
+          "image": "bookmark"
+        }
+      ]
+    },
+    "last": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "page",
+          "value": 4
+        },
+        {
+          "type": "text",
+          "body": "第 {page} 章。おしまいです。"
+        },
+        {
+          "type": "end",
+          "ending": "done",
+          "message": "読了しました。第 {page} 章まで。"
+        }
+      ]
+    }
+  }
+}

@@ -55,6 +55,18 @@ void SystemMenu::begin(M5GFX* display, TouchHandler* touch)
     }
 }
 
+bool SystemMenu::canResume() const
+{
+    if (!settings.hasResume()) {
+        return false;
+    }
+
+    // しおりの指すシナリオが SD から消えていることがある。
+    // 押しても読み込みに失敗するだけなので、最初から出さない。
+    const std::string id = settings.lastScenario();
+    return std::find(_scenarioIds.begin(), _scenarioIds.end(), id) != _scenarioIds.end();
+}
+
 int SystemMenu::pageCount() const
 {
     if (_scenarioIds.empty()) {
@@ -156,6 +168,9 @@ void SystemMenu::destroyButtons()
 
     delete _soundButton;
     _soundButton = nullptr;
+
+    delete _resumeButton;
+    _resumeButton = nullptr;
 }
 
 void SystemMenu::cancelPowerOffConfirm()
@@ -320,13 +335,40 @@ void SystemMenu::draw()
         }
     }
 
+    // --- 「続きから」（一覧の上） ---
+    //
+    // suspend で中断した位置が残っていれば最上段に出す。
+    // 一覧より上に置くのは、再開が最も使う操作になるため。
+    // 1ページ目にだけ出す（送った先に出ると押し間違える）。
+    int listTop = LIST_TOP;
+    if (_page == 0 && canResume()) {
+        const int h = 56;
+        Button* btn = new Button(_display, ITEM_LEFT, listTop,
+                                 _display->width() - ITEM_LEFT * 2, h,
+                                 "続きから");
+        btn->setOnReleased(&SystemMenu::onResumeTapped);
+        btn->setVlwFont(textSystem.fontData());
+
+        ButtonStyle style = ButtonStyle::defaultStyle();
+        style.bgColor = TFT_DARKGREEN;
+        style.textColor = TFT_WHITE;
+        btn->setStyle(style);
+
+        _buttons->addButton(btn);
+        _resumeButton = btn;
+
+        listTop += h + ITEM_GAP;
+    }
+
     // --- シナリオ一覧（現在ページぶん） ---
     const size_t first = static_cast<size_t>(_page) * MAX_LIST_ITEMS;
     const size_t last = std::min<size_t>(first + MAX_LIST_ITEMS, _scenarioIds.size());
 
     for (size_t i = first; i < last; ++i) {
         const int slot = static_cast<int>(i - first);
-        const int y = LIST_TOP + slot * (ITEM_HEIGHT + ITEM_GAP);
+        // listTop は「続きから」を出したぶん下がっている。
+        // LIST_TOP を直接使うと再開ボタンと重なる。
+        const int y = listTop + slot * (ITEM_HEIGHT + ITEM_GAP);
 
         // サムネイル。無ければ枠だけ描く。
         const std::string thumbPath =
@@ -384,7 +426,7 @@ void SystemMenu::draw()
     if (pageCount() > 1) {
         _display->setTextColor(TFT_ORANGE, TFT_BLACK);
         _display->setTextSize(2);
-        const int y = LIST_TOP + MAX_LIST_ITEMS * (ITEM_HEIGHT + ITEM_GAP) + 8;
+        const int y = listTop + MAX_LIST_ITEMS * (ITEM_HEIGHT + ITEM_GAP) + 8;
 
         _display->setCursor(ITEM_LEFT, y);
         _display->printf("%d / %d", _page + 1, pageCount());
@@ -571,6 +613,19 @@ void SystemMenu::update(bool hasTouchEvent)
     if (_buttons) {
         _buttons->update();
     }
+}
+
+void SystemMenu::onResumeTapped(Button* btn)
+{
+    (void)btn;
+    if (!s_instance) {
+        return;
+    }
+
+    s_instance->_selectedId = settings.lastScenario();
+    s_instance->_selectionIsResume = true;
+    ESP_LOGI(TAG, "Resume selected: %s (slot %d)",
+             s_instance->_selectedId.c_str(), settings.resumeSlot());
 }
 
 void SystemMenu::onScenarioTapped(Button* btn)

@@ -1,0 +1,404 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "18_fontscale",
+    "title": "文字スケールの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "font_size の倍率ごとの見え方を比べる",
+    "text_direction": "HORIZONTAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "textboxes": {
+    "h050": {
+      "x": 20,
+      "y": 110,
+      "w": 500,
+      "h": 45,
+      "direction": "HORIZONTAL",
+      "font_size": 0.5
+    },
+    "h075": {
+      "x": 20,
+      "y": 161,
+      "w": 500,
+      "h": 52,
+      "direction": "HORIZONTAL",
+      "font_size": 0.75
+    },
+    "h100": {
+      "x": 20,
+      "y": 219,
+      "w": 500,
+      "h": 60,
+      "direction": "HORIZONTAL",
+      "font_size": 1.0
+    },
+    "h125": {
+      "x": 20,
+      "y": 285,
+      "w": 500,
+      "h": 67,
+      "direction": "HORIZONTAL",
+      "font_size": 1.25
+    },
+    "h150": {
+      "x": 20,
+      "y": 358,
+      "w": 500,
+      "h": 75,
+      "direction": "HORIZONTAL",
+      "font_size": 1.5
+    },
+    "h200": {
+      "x": 20,
+      "y": 439,
+      "w": 500,
+      "h": 90,
+      "direction": "HORIZONTAL",
+      "font_size": 2.0
+    },
+    "h300": {
+      "x": 20,
+      "y": 535,
+      "w": 500,
+      "h": 120,
+      "direction": "HORIZONTAL",
+      "font_size": 3.0
+    },
+    "title": {
+      "x": 20,
+      "y": 20,
+      "w": 500,
+      "h": 70,
+      "direction": "HORIZONTAL",
+      "font_size": 1.5,
+      "align": "CENTER"
+    },
+    "v050": {
+      "x": 470,
+      "y": 100,
+      "w": 30,
+      "h": 700,
+      "direction": "VERTICAL",
+      "font_size": 0.5
+    },
+    "v100": {
+      "x": 420,
+      "y": 100,
+      "w": 40,
+      "h": 700,
+      "direction": "VERTICAL",
+      "font_size": 1.0
+    },
+    "v150": {
+      "x": 360,
+      "y": 100,
+      "w": 50,
+      "h": 700,
+      "direction": "VERTICAL",
+      "font_size": 1.5
+    },
+    "v200": {
+      "x": 290,
+      "y": 100,
+      "w": 60,
+      "h": 700,
+      "direction": "VERTICAL",
+      "font_size": 2.0
+    },
+    "v300": {
+      "x": 200,
+      "y": 100,
+      "w": 80,
+      "h": 700,
+      "direction": "VERTICAL",
+      "font_size": 3.0
+    },
+    "vtitle": {
+      "x": 20,
+      "y": 20,
+      "w": 500,
+      "h": 70,
+      "direction": "HORIZONTAL",
+      "font_size": 1.5,
+      "align": "CENTER"
+    },
+    "vnote": {
+      "x": 20,
+      "y": 830,
+      "w": 360,
+      "h": 110,
+      "direction": "HORIZONTAL"
+    },
+    "r075": {
+      "x": 20,
+      "y": 110,
+      "w": 500,
+      "h": 83,
+      "direction": "HORIZONTAL",
+      "font_size": 0.75
+    },
+    "r100": {
+      "x": 20,
+      "y": 201,
+      "w": 500,
+      "h": 95,
+      "direction": "HORIZONTAL",
+      "font_size": 1.0
+    },
+    "r150": {
+      "x": 20,
+      "y": 304,
+      "w": 500,
+      "h": 117,
+      "direction": "HORIZONTAL",
+      "font_size": 1.5
+    },
+    "r200": {
+      "x": 20,
+      "y": 429,
+      "w": 500,
+      "h": 140,
+      "direction": "HORIZONTAL",
+      "font_size": 2.0
+    },
+    "rtitle": {
+      "x": 20,
+      "y": 20,
+      "w": 500,
+      "h": 70,
+      "direction": "HORIZONTAL",
+      "font_size": 1.5,
+      "align": "CENTER"
+    },
+    "rnote": {
+      "x": 20,
+      "y": 587,
+      "w": 500,
+      "h": 120,
+      "direction": "HORIZONTAL"
+    },
+    "exTitle": {
+      "x": 20,
+      "y": 40,
+      "w": 500,
+      "h": 90,
+      "direction": "HORIZONTAL",
+      "font_size": 2.0,
+      "align": "CENTER"
+    },
+    "exName": {
+      "x": 20,
+      "y": 660,
+      "w": 200,
+      "h": 50,
+      "direction": "HORIZONTAL"
+    },
+    "exBody": {
+      "x": 20,
+      "y": 720,
+      "w": 500,
+      "h": 210,
+      "direction": "HORIZONTAL"
+    }
+  },
+  "variables": {},
+  "start": "horizontal",
+  "scenes": {
+    "horizontal": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "wait": false,
+          "body": "横書きの倍率比較"
+        },
+        {
+          "type": "text",
+          "box": "h050",
+          "wait": false,
+          "body": "0.50倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h075",
+          "wait": false,
+          "body": "0.75倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h100",
+          "wait": false,
+          "body": "1.00倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h125",
+          "wait": false,
+          "body": "1.25倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h150",
+          "wait": false,
+          "body": "1.50倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h200",
+          "wait": false,
+          "body": "2.00倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h300",
+          "wait": false,
+          "body": "3.00倍 あア漢字ABC123"
+        },
+        {
+          "type": "text",
+          "box": "h100",
+          "body": "上から 0.5 / 0.75 / 1.0 / 1.25 / 1.5 / 2.0 / 3.0 倍です。フォントは16ptの1種類だけなので、これは拡大縮小の結果です。タップで次へ。"
+        }
+      ],
+      "next": "vertical"
+    },
+    "vertical": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "box": "vtitle",
+          "wait": false,
+          "body": "縦書きの倍率比較"
+        },
+        {
+          "type": "text",
+          "box": "v050",
+          "wait": false,
+          "body": "0.5倍 あア漢字ABC"
+        },
+        {
+          "type": "text",
+          "box": "v100",
+          "wait": false,
+          "body": "1.0倍 あア漢字ABC"
+        },
+        {
+          "type": "text",
+          "box": "v150",
+          "wait": false,
+          "body": "1.5倍 あア漢字ABC"
+        },
+        {
+          "type": "text",
+          "box": "v200",
+          "wait": false,
+          "body": "2.0倍 あア漢字ABC"
+        },
+        {
+          "type": "text",
+          "box": "v300",
+          "wait": false,
+          "body": "3.0倍 あア漢字ABC"
+        },
+        {
+          "type": "text",
+          "box": "vnote",
+          "body": "右から 0.5 / 1.0 / 1.5 / 2.0 / 3.0 倍。縦書きは列の幅も倍率で変わります。"
+        }
+      ],
+      "next": "ruby"
+    },
+    "ruby": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "box": "rtitle",
+          "wait": false,
+          "body": "ルビつきの倍率比較"
+        },
+        {
+          "type": "text",
+          "box": "r075",
+          "wait": false,
+          "body": "0.75倍 |漢字<かんじ>と|桃太郎<ももたろう>"
+        },
+        {
+          "type": "text",
+          "box": "r100",
+          "wait": false,
+          "body": "1.00倍 |漢字<かんじ>と|桃太郎<ももたろう>"
+        },
+        {
+          "type": "text",
+          "box": "r150",
+          "wait": false,
+          "body": "1.50倍 |漢字<かんじ>と|桃太郎<ももたろう>"
+        },
+        {
+          "type": "text",
+          "box": "r200",
+          "wait": false,
+          "body": "2.00倍 |漢字<かんじ>と|桃太郎<ももたろう>"
+        },
+        {
+          "type": "text",
+          "box": "rnote",
+          "body": "ルビは本文の半分の大きさです。0.75倍だとルビは実質0.375倍になります。読めるかどうか確認してください。"
+        }
+      ],
+      "next": "example"
+    },
+    "example": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "box": "exTitle",
+          "wait": false,
+          "body": "第一章"
+        },
+        {
+          "type": "text",
+          "box": "exName",
+          "wait": false,
+          "body": "あやめ"
+        },
+        {
+          "type": "text",
+          "box": "exBody",
+          "body": "実用的な組み合わせの例です。見出しだけ2.0倍にし、本文と名前欄は等倍にしています。見出しの粗さが許容できるかを見てください。"
+        },
+        {
+          "type": "text",
+          "box": "exBody",
+          "body": "本文を等倍のままにしておけば、読みやすさは損なわれません。大きくしたいのは見出しや強調だけ、という使い方が現実的です。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

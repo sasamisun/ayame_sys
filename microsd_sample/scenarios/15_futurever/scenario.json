@@ -1,0 +1,36 @@
+{
+  "format_version": 99,
+  "meta": {
+    "id": "15_futurever",
+    "title": "未来の書式版の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "format_version が新しくても読めること",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "このシナリオは format_version が 99 です。システムが対応しているのは 1 ですが、警告を出したうえで読み込みます。"
+        },
+        {
+          "type": "text",
+          "body": "起動時のログに newer than supported の警告が出ているはずです。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

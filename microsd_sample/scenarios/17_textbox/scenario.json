@@ -1,0 +1,165 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "17_textbox",
+    "title": "テキストボックスの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "複数ボックス・文字サイズ・背景画像・立ち絵の複数配置",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "stage": "images/bg/stage.png",
+      "frame_main": "images/bg/frame_main.png",
+      "frame_name": "images/bg/frame_name.png"
+    },
+    "characters": {
+      "ayame": {
+        "normal": "images/chara/ayame_normal.png",
+        "smile": "images/chara/ayame_smile.png"
+      },
+      "kaede": {
+        "normal": "images/chara/kaede_normal.png"
+      }
+    }
+  },
+  "textboxes": {
+    "title": {
+      "x": 20,
+      "y": 20,
+      "w": 500,
+      "h": 60,
+      "direction": "HORIZONTAL",
+      "font_size": 2.0,
+      "align": "CENTER",
+      "background_color": "BLACK"
+    },
+    "name": {
+      "x": 20,
+      "y": 640,
+      "w": 300,
+      "h": 46,
+      "direction": "HORIZONTAL",
+      "background": "frame_name"
+    },
+    "main": {
+      "x": 20,
+      "y": 694,
+      "w": 300,
+      "h": 260,
+      "direction": "HORIZONTAL",
+      "line_spacing": 8,
+      "background": "frame_main"
+    },
+    "side": {
+      "x": 400,
+      "y": 100,
+      "w": 120,
+      "h": 500,
+      "direction": "VERTICAL",
+      "background_color": "BLACK"
+    }
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "stage"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "テキストボックスの確認",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "side",
+          "body": "これは縦書きの脇ボックスです。同時に表示されています。",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "name",
+          "body": "あやめ",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "body": "4つのボックスに同時表示しています。上は倍率2.0、右は縦書き、この枠と名前欄には背景画像を敷いています。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "smile",
+          "x": 150,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "body": "立ち絵を1人出しました。"
+        },
+        {
+          "type": "chara",
+          "id": "kaede",
+          "expression": "normal",
+          "x": 330,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "box": "name",
+          "body": "かえで",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "body": "2人目を出しました。**立ち絵は複数配置できます。**後から出した方が手前に来ます。"
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "speed": 120,
+          "body": "文字送りもボックスごとに効きます。"
+        },
+        {
+          "type": "text",
+          "box": "name",
+          "body": "あやめ",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "body": "名前欄だけ書き換えました。他のボックスはそのまま残ります。"
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "body": "最後に、定義していないボックス名を指定してみます。次は既定のボックスに出るはずです。"
+        },
+        {
+          "type": "text",
+          "box": "nonexistent",
+          "body": "未定義のボックスを指定したので、既定の縦書きボックスに出ています。警告がログに出ます。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

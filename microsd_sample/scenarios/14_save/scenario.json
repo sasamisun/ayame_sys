@@ -1,0 +1,287 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "14_save",
+    "title": "セーブ・ロードの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "save / load コマンドの動作確認",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "room": "images/bg/room.png",
+      "night": "images/bg/night.png"
+    },
+    "characters": {
+      "ayame": {
+        "normal": "images/chara/ayame_normal.png",
+        "smile": "images/chara/ayame_smile.png"
+      }
+    }
+  },
+  "variables": {
+    "count": 0,
+    "flag": false,
+    "name": "none"
+  },
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "room"
+        },
+        {
+          "type": "text",
+          "body": "セーブとロードの確認です。まず変数と画面を変化させます。"
+        },
+        {
+          "type": "set",
+          "var": "count",
+          "op": "+=",
+          "value": 7
+        },
+        {
+          "type": "set",
+          "var": "flag",
+          "value": true
+        },
+        {
+          "type": "set",
+          "var": "name",
+          "value": "ayame"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "smile",
+          "x": 170,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "body": "count=7 / flag=true / name=ayame にして、立ち絵を出しました。"
+        }
+      ],
+      "next": "menu"
+    },
+    "menu": {
+      "commands": [
+        {
+          "type": "choice",
+          "prompt": "どうしますか？",
+          "options": [
+            {
+              "label": "スロット1にセーブ",
+              "next": "do_save1"
+            },
+            {
+              "label": "スロット2にセーブ",
+              "next": "do_save2"
+            },
+            {
+              "label": "スロット1からロード",
+              "next": "do_load1"
+            },
+            {
+              "label": "スロット2からロード",
+              "next": "do_load2"
+            },
+            {
+              "label": "変数を変えてから戻る",
+              "next": "mutate"
+            },
+            {
+              "label": "状態を確認する",
+              "next": "inspect"
+            },
+            {
+              "label": "終わる",
+              "next": "finish"
+            }
+          ]
+        }
+      ]
+    },
+    "do_save1": {
+      "commands": [
+        {
+          "type": "save",
+          "slot": 1
+        },
+        {
+          "type": "beep",
+          "freq": 1046,
+          "duration": 100
+        },
+        {
+          "type": "text",
+          "body": "スロット1に保存しました。saves/slot01.json ができています。"
+        }
+      ],
+      "next": "menu"
+    },
+    "do_save2": {
+      "commands": [
+        {
+          "type": "save",
+          "slot": 2
+        },
+        {
+          "type": "beep",
+          "freq": 1046,
+          "duration": 100
+        },
+        {
+          "type": "text",
+          "body": "スロット2に保存しました。"
+        }
+      ],
+      "next": "menu"
+    },
+    "do_load1": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "スロット1から読み込みます。"
+        },
+        {
+          "type": "load",
+          "slot": 1
+        }
+      ]
+    },
+    "do_load2": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "スロット2から読み込みます。"
+        },
+        {
+          "type": "load",
+          "slot": 2
+        }
+      ]
+    },
+    "mutate": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "count",
+          "op": "+=",
+          "value": 100
+        },
+        {
+          "type": "set",
+          "var": "flag",
+          "value": false
+        },
+        {
+          "type": "set",
+          "var": "name",
+          "value": "changed"
+        },
+        {
+          "type": "bg",
+          "image": "night"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "normal",
+          "x": 60,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "body": "count に100足し、flagをfalse、nameをchangedにしました。背景と立ち絵も変えています。ここでロードすると元に戻るはずです。"
+        }
+      ],
+      "next": "menu"
+    },
+    "inspect": {
+      "commands": [
+        {
+          "type": "if",
+          "cond": {
+            "var": "count",
+            "op": "==",
+            "value": 7
+          },
+          "then": [
+            {
+              "type": "text",
+              "body": "count は 7 です（セーブ時の値）。"
+            }
+          ],
+          "else": [
+            {
+              "type": "text",
+              "body": "count は 7 ではありません（変更後の値）。"
+            }
+          ]
+        },
+        {
+          "type": "if",
+          "cond": {
+            "var": "flag",
+            "op": "==",
+            "value": true
+          },
+          "then": [
+            {
+              "type": "text",
+              "body": "flag は true です。"
+            }
+          ],
+          "else": [
+            {
+              "type": "text",
+              "body": "flag は false です。"
+            }
+          ]
+        },
+        {
+          "type": "if",
+          "cond": {
+            "var": "name",
+            "op": "==",
+            "value": "ayame"
+          },
+          "then": [
+            {
+              "type": "text",
+              "body": "name は ayame です。"
+            }
+          ],
+          "else": [
+            {
+              "type": "text",
+              "body": "name は ayame ではありません。"
+            }
+          ]
+        }
+      ],
+      "next": "menu"
+    },
+    "finish": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "おしまい。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

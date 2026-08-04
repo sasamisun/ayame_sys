@@ -137,9 +137,10 @@ void enterMenu()
     systemMenu.enter();
 }
 
-void enterPlaying(const std::string &scenarioId)
+void enterPlaying(const std::string &scenarioId, bool resume = false)
 {
-    ESP_LOGI(TAG, "Loading scenario '%s'", scenarioId.c_str());
+    ESP_LOGI(TAG, "Loading scenario '%s'%s",
+             scenarioId.c_str(), resume ? " (resume)" : "");
 
     systemMenu.leave();
     display.fillScreen(TFT_BLACK);
@@ -175,6 +176,25 @@ void enterPlaying(const std::string &scenarioId)
     scenarioPlayer.begin(&display, &scenarioLoader,
                          textSystem.vertical(), textSystem.horizontal(),
                          simpleTransition);
+
+    if (resume)
+    {
+        // 栞は一度だけ使う。
+        // 残したままだと、いつの状態から始まるのか分からなくなる。
+        // 再開が失敗しても消すのは、壊れた栞が居座らないようにするため。
+        const int slot = settings.resumeSlot();
+        settings.clearResume();
+        settings.save();
+
+        if (scenarioPlayer.resumeFrom(slot))
+        {
+            return;
+        }
+        // 失敗しても resumeFrom() が冒頭から再生を始めている
+        ESP_LOGW(TAG, "Resume failed. Playing from the beginning");
+        return;
+    }
+
     scenarioPlayer.start();
 }
 
@@ -185,6 +205,11 @@ void leavePlaying()
 
     clearChoiceButtons();
     textSystem.setRubyEnabled(false);
+
+    // シナリオが定義したテキストボックスを捨てる。
+    // 残すと次のシナリオに前作のボックスが混ざる。
+    textSystem.clearBoxes();
+
     scenarioLoader.unload();   // PSRAM を返す
     enterMenu();
 }
@@ -307,8 +332,9 @@ void loop()
         if (systemMenu.hasSelection())
         {
             const std::string id = systemMenu.selectedScenarioId();
+            const bool resume = systemMenu.selectionIsResume();
             systemMenu.clearSelection();
-            enterPlaying(id);
+            enterPlaying(id, resume);
         }
         break;
 
@@ -331,7 +357,20 @@ void loop()
         }
         else if (hasTouchEvent && touchHandler.isTouchEvent())
         {
+            // 文字送りの途中なら、onTap() が全文表示へ飛ばす
             scenarioPlayer.onTap();
+        }
+        else if (scenarioPlayer.isWaiting())
+        {
+            // wait の経過を見る。skippable なら上のタップ判定で飛ばされる。
+            scenarioPlayer.tickWait();
+        }
+        else if (scenarioPlayer.isTyping())
+        {
+            // 文字送りを1文字進める。間隔が来ていなければ何もしない。
+            // タップの判定より後に置くのは、送っている最中の
+            // タップを取りこぼさないため。
+            scenarioPlayer.tickTyping();
         }
 
         if (scenarioPlayer.isFinished())

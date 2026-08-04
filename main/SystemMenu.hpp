@@ -57,11 +57,19 @@ public:
     /// シナリオが選ばれたか
     bool hasSelection() const { return !_selectedId.empty(); }
 
+    /**
+     * @brief 選ばれたのが「続きから」か
+     *
+     * true なら、呼び出し側は読み込んだ後に中断位置を復元する。
+     * `selectedScenarioId()` と併せて使う。
+     */
+    bool selectionIsResume() const { return _selectionIsResume; }
+
     /// 選ばれたシナリオのフォルダ名
     const std::string& selectedScenarioId() const { return _selectedId; }
 
     /// 選択を消費したことを伝える
-    void clearSelection() { _selectedId.clear(); }
+    void clearSelection() { _selectedId.clear(); _selectionIsResume = false; }
 
 private:
     /// メニューの中で今どこを見せているか
@@ -102,6 +110,10 @@ private:
     void shutdown();
 
     static void onScenarioTapped(Button* btn);
+    static void onResumeTapped(Button* btn);
+
+    /// 「続きから」を出せる状態か（続きがあり、そのシナリオが実在する）
+    bool canResume() const;
     static void onUsbMscTapped(Button* btn);
     static void onRefreshTapped(Button* btn);
     static void onPowerOffTapped(Button* btn);
@@ -130,6 +142,9 @@ private:
     View _view = View::List;
 
     std::string _selectedId;
+    bool _selectionIsResume = false;
+
+    Button* _resumeButton = nullptr;
 
     // 電源OFFは押し間違いが致命的なので、2回押しで実行する。
     // 1回目で確認状態に入り、放置すると勝手に戻る。

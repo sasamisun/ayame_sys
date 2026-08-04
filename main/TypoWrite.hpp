@@ -180,6 +180,13 @@ public:
     
     // 描画領域の設定
     void setArea(int width, int height);
+
+    // 描画領域を読み出す。
+    // 呼び出し側がボックスの矩形に下地を敷くときに使う。
+    int areaX() const { return _x; }
+    int areaY() const { return _y; }
+    int areaWidth() const { return _width; }
+    int areaHeight() const { return _height; }
     
     // テキスト色の設定
     void setColor(uint16_t color);
@@ -323,6 +330,7 @@ public:
     struct DrawResult {
         size_t nextOffset;  //!< 次ページの開始バイトオフセット。全部描けたなら text.size()
         bool hasMore;       //!< まだ描き切れていない文字が残っているか
+        size_t pageChars;   //!< このページに入る文字数（文字送りの上限に使う）
     };
 
     /**
@@ -342,7 +350,12 @@ public:
      *
      * @param text        本文全体（毎回同じ文字列を渡す。内部で切り出す）
      * @param startOffset 描画を開始するバイトオフセット
-     * @return 次ページの開始位置と、続きがあるかどうか
+     * @param maxChars    このページのうち先頭から何文字を描くか。`0` で全部
+     * @return 次ページの開始位置、続きの有無、このページの文字数
+     *
+     * @note `maxChars` は**描画だけ**を制限する。改行位置も揃えも
+     *       ページの全文で計算するため、文字を増やしても既に出ている文字は動かない。
+     *       文字送り（`text` の `speed`）はこれを使って実現している。
      *
      * @note `startOffset` は**バイト単位**であり文字数ではない。
      *       UTF-8 の途中を指した場合は、直前の文字境界へ切り下げる。
@@ -358,7 +371,8 @@ public:
      *          消去も呼び出し側の責任になる。
      *          単色でよければ `clearArea(color)` が使える。
      */
-    DrawResult drawTextPaged(const std::string &text, size_t startOffset = 0);
+    DrawResult drawTextPaged(const std::string &text, size_t startOffset = 0,
+                             size_t maxChars = 0);
 
     // 中央揃えでテキスト描画
     void drawTextCentered(const std::string &text);
@@ -460,17 +474,22 @@ private:
     // 文字列ではなく変換済みの配列を受け取るのは、
     // ページごとに utf8ToUnicode() をやり直さないため。
     //
-    // @param chars 変換済みの全文字列
-    // @param start 描画を開始する chars 上の添字
+    // @param chars     変換済みの全文字列
+    // @param start     描画を開始する chars 上の添字
+    // @param drawUntil この添字より手前だけを実際に描く（文字送り用）。
+    //                  **測定と位置の計算はこの制限を受けない。**
+    //                  制限しても既に出ている文字が動かないようにするため
     // @return 描画できなかった最初の文字の添字。全部描けたなら chars.size()
 
     // 横書きテキスト描画（固定値調整適用版）
     size_t drawHorizontalTextEnhanced(const std::vector<uint16_t> &chars, size_t start,
-                                      const std::vector<RubyRun> &runs);
+                                      const std::vector<RubyRun> &runs,
+                                      size_t drawUntil);
 
     // 縦書きテキスト描画（固定値調整適用版）
     size_t drawVerticalTextEnhanced(const std::vector<uint16_t> &chars, size_t start,
-                                    const std::vector<RubyRun> &runs);
+                                    const std::vector<RubyRun> &runs,
+                                    size_t drawUntil);
     
     // 枠線描画
     void drawAreaBorder();

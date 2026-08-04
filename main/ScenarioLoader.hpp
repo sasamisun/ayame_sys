@@ -120,6 +120,20 @@ public:
     /// `variables`（変数の初期値）。無ければ nullptr
     const cJSON* variablesNode() const;
 
+    /// `textboxes`（名前付きテキストボックスの定義）。無ければ nullptr
+    const cJSON* textBoxesNode() const;
+
+    /**
+     * @brief テキストボックスの背景画像のパスを組む
+     *
+     * `assets.backgrounds` を引くので、背景画像と同じ場所に置ける。
+     *
+     * @param boxName `textboxes` のキー
+     * @param outPath [out] 組み立てたパス
+     * @return 背景が指定されていて、実在しそうか
+     */
+    bool resolveTextBoxBackground(const char* boxName, std::string& outPath) const;
+
     /**
      * @brief シーンを引く
      * @return 見つからなければ nullptr
@@ -138,6 +152,19 @@ public:
      * @note パスは 255 文字まで（`buildFullPath()` が `char[256]`）。
      */
     bool resolveBackgroundPath(const char* logicalName, std::string& outPath) const;
+
+    /**
+     * @brief 立ち絵のファイルパスを組む
+     *
+     * `assets.characters.<id>.<expression>` を引き、`scenarios/<id>/` を前置きする。
+     *
+     * @param id         `assets.characters` のキー
+     * @param expression 表情差分のキー
+     * @param outPath    [out] 組み立てたパス
+     * @return 定義されていて、パス長にも収まったか
+     */
+    bool resolveCharacterPath(const char* id, const char* expression,
+                              std::string& outPath) const;
 
     /// 直近の検証で見つかった問題の数（0 なら健全）
     int issueCount() const { return _issueCount; }

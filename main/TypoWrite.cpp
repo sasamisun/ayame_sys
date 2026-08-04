@@ -643,7 +643,8 @@ void TypoWrite::drawScaledCharacter(uint16_t unicode_char, int x, int y,
 // ========================================
 size_t TypoWrite::drawHorizontalTextEnhanced(const std::vector<uint16_t> &unicode_chars,
                                              size_t start,
-                                             const std::vector<RubyRun> &rubyRuns)
+                                             const std::vector<RubyRun> &rubyRuns,
+                                             size_t drawUntil)
 {
     // ルビ帯は本文の上に確保する（横組みのルビは本文の上）。
     // ルビの有無にかかわらず全行に同じ帯を取ることで行間が一定に保たれる。
@@ -761,15 +762,24 @@ size_t TypoWrite::drawHorizontalTextEnhanced(const std::vector<uint16_t> &unicod
             const int spacing = _charSpacing + adjustment.spacingOffset;
 
             // 本文はルビ帯のぶん下げて描く（帯は行の上側に確保してある）
-            drawEnhancedCharacter(ch,
-                                  _currentX + adjustment.horizontalOffset,
-                                  _currentY + rubyStrip + adjustment.verticalOffset,
-                                  adjustment.widthScale, adjustment.heightScale);
+            //
+            // 文字送りの上限を超えた文字は「描かない」だけにする。
+            // 送りは進めるので、後から文字が増えても既に出ている文字は動かない。
+            if (k < drawUntil)
+            {
+                drawEnhancedCharacter(ch,
+                                      _currentX + adjustment.horizontalOffset,
+                                      _currentY + rubyStrip + adjustment.verticalOffset,
+                                      adjustment.widthScale, adjustment.heightScale);
+            }
 
             _currentX += advance + spacing;
 
             // ルビ範囲の最後の文字を描き終えた。本文の上にルビを描く。
-            if (activeRun < rubyRuns.size() && (k + 1) == rubyRuns[activeRun].baseEnd)
+            // 本文がまだ出ていない範囲のルビは描かない
+            // （ルビだけ先に現れると読み違いのもとになる）。
+            if (activeRun < rubyRuns.size() && (k + 1) == rubyRuns[activeRun].baseEnd
+                && k < drawUntil)
             {
                 const RubyRun &run = rubyRuns[activeRun];
                 const int runLeft = rubyXStart;
@@ -813,7 +823,8 @@ size_t TypoWrite::drawHorizontalTextEnhanced(const std::vector<uint16_t> &unicod
 // ========================================
 size_t TypoWrite::drawVerticalTextEnhanced(const std::vector<uint16_t> &unicode_chars,
                                            size_t start,
-                                           const std::vector<RubyRun> &rubyRuns)
+                                           const std::vector<RubyRun> &rubyRuns,
+                                           size_t drawUntil)
 {
     // 列幅と列送りはテキスト全体で不変なのでループ外で1回だけ求める。
     // 小文字の変位計算に使う em ボックス寸法（全文字共通）
@@ -1007,14 +1018,21 @@ size_t TypoWrite::drawVerticalTextEnhanced(const std::vector<uint16_t> &unicode_
             const int draw_y = _currentY + r.adjust.verticalOffset +
                                static_cast<int>(emH * r.smallOffsetY);
 
-            drawEnhancedCharacterWithRotation(r.displayChar, draw_x, draw_y,
-                                              r.widthScale, r.heightScale, r.rotation);
+            // 文字送りの上限を超えた文字は「描かない」だけにする。
+            // 送りは進めるので、後から文字が増えても既に出ている文字は動かない。
+            if (k < drawUntil)
+            {
+                drawEnhancedCharacterWithRotation(r.displayChar, draw_x, draw_y,
+                                                  r.widthScale, r.heightScale, r.rotation);
+            }
 
             _currentY += r.advance + r.spacing;
 
             // ルビ範囲の最後の文字を描き終えた。本文の右側にルビを描く。
             // 末尾の字間は範囲の高さに含めない（中央揃えがずれるため）。
-            if (activeRun < rubyRuns.size() && (k + 1) == rubyRuns[activeRun].baseEnd)
+            // 本文がまだ出ていない範囲のルビは描かない。
+            if (activeRun < rubyRuns.size() && (k + 1) == rubyRuns[activeRun].baseEnd
+                && k < drawUntil)
             {
                 const RubyRun &run = rubyRuns[activeRun];
                 const int runTop = rubyYStart;
@@ -1643,7 +1661,8 @@ void TypoWrite::drawText(const std::string &text)
     drawTextPaged(text, 0);
 }
 
-TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t startOffset)
+TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t startOffset,
+                                               size_t maxChars)
 {
     std::vector<size_t> rawByteOffsets;
     const std::vector<uint16_t> raw = utf8ToUnicode(text, rawByteOffsets);
@@ -1679,8 +1698,14 @@ TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t s
     // 画面を消してしまわないようにするため。
     if (startIndex >= unicode_chars.size())
     {
-        return DrawResult{text.size(), false};
+        return DrawResult{text.size(), false, 0};
     }
+
+    // 文字送りの上限。0 は「制限なし」。
+    // 実際に描く範囲だけを絞り、測定や位置の計算は全文で行う。
+    const size_t drawUntil = (maxChars == 0)
+                                 ? unicode_chars.size()
+                                 : std::min(startIndex + maxChars, unicode_chars.size());
 
     // クリッピング領域を設定
     lgfx::LovyanGFX *target = _drawTarget ? static_cast<lgfx::LovyanGFX *>(_drawTarget) : static_cast<lgfx::LovyanGFX *>(_display);
@@ -1707,11 +1732,11 @@ TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t s
     size_t endIndex;
     if (_direction == TextDirection::HORIZONTAL)
     {
-        endIndex = drawHorizontalTextEnhanced(unicode_chars, startIndex, rubyRuns);
+        endIndex = drawHorizontalTextEnhanced(unicode_chars, startIndex, rubyRuns, drawUntil);
     }
     else
     {
-        endIndex = drawVerticalTextEnhanced(unicode_chars, startIndex, rubyRuns);
+        endIndex = drawVerticalTextEnhanced(unicode_chars, startIndex, rubyRuns, drawUntil);
     }
 
     releaseTextStyle(target);
@@ -1725,10 +1750,14 @@ TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t s
     {
         ESP_LOGW(TAG, "drawTextPaged: no progress at offset %u (area %dx%d too small?)",
                  static_cast<unsigned>(startOffset), _width, _height);
-        return DrawResult{text.size(), false};
+        return DrawResult{text.size(), false, 0};
     }
 
-    return DrawResult{byteOffsets[endIndex], endIndex < unicode_chars.size()};
+    // pageChars は「このページに入る文字数」。maxChars で絞った数ではない。
+    // 文字送りの呼び出し側が、どこまで増やせばページが埋まるかを知るために使う。
+    return DrawResult{byteOffsets[endIndex],
+                      endIndex < unicode_chars.size(),
+                      endIndex - startIndex};
 }
 
 // ========================================

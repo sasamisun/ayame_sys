@@ -1,0 +1,66 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "16_typing",
+    "title": "文字送りの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "text の speed の動作確認",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "body": "まず speed を指定しない通常の表示です。一括で出ます。"
+        },
+        {
+          "type": "text",
+          "speed": 150,
+          "body": "ここから文字送りです。"
+        },
+        {
+          "type": "text",
+          "speed": 150,
+          "speaker": "あやめ",
+          "body": "話者名がついた台詞も送れます。"
+        },
+        {
+          "type": "text",
+          "speed": 80,
+          "body": "速度を上げました。80ミリ秒ごとです。"
+        },
+        {
+          "type": "text",
+          "speed": 300,
+          "body": "こちらは遅めの300ミリ秒。**途中でタップすると全文が出ます。**長めの台詞で試してください。電子ペーパーは1文字ごとに全面走査が必要なので、最速モードでも1文字あたり約117ミリ秒かかります。"
+        },
+        {
+          "type": "text",
+          "speed": 100,
+          "body": "ルビも送れます。|漢字<かんじ>と|桃太郎<ももたろう>。本文が出るまでルビは出ません。"
+        },
+        {
+          "type": "text",
+          "body": "最後は通常表示に戻ります。文字送りの後でも濃さが戻っているか見てください。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

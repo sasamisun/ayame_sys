@@ -291,6 +291,35 @@ const cJSON* ScenarioLoader::variablesNode() const
     return cJSON_GetObjectItemCaseSensitive(_root, "variables");
 }
 
+const cJSON* ScenarioLoader::textBoxesNode() const
+{
+    return cJSON_GetObjectItemCaseSensitive(_root, "textboxes");
+}
+
+bool ScenarioLoader::resolveTextBoxBackground(const char* boxName,
+                                              std::string& outPath) const
+{
+    outPath.clear();
+    if (!boxName) {
+        return false;
+    }
+
+    const cJSON* box =
+        cJSON_GetObjectItemCaseSensitive(textBoxesNode(), boxName);
+    if (!cJSON_IsObject(box)) {
+        return false;
+    }
+
+    const std::string bg = getString(box, "background");
+    if (bg.empty()) {
+        return false;   // 背景画像なし。色で塗る
+    }
+
+    // 背景画像と同じ assets.backgrounds を引く。
+    // UI 用に別の入れ物を作らないのは、置き場を1つに保つため。
+    return resolveBackgroundPath(bg.c_str(), outPath);
+}
+
 const cJSON* ScenarioLoader::findScene(const std::string& sceneId) const
 {
     if (!_scenes || sceneId.empty()) {
@@ -338,6 +367,40 @@ bool ScenarioLoader::resolveBackgroundPath(const char* logicalName,
     return true;
 }
 
+bool ScenarioLoader::resolveCharacterPath(const char* id, const char* expression,
+                                          std::string& outPath) const
+{
+    outPath.clear();
+    if (!id) {
+        return false;
+    }
+
+    const cJSON* assets = cJSON_GetObjectItemCaseSensitive(_root, "assets");
+    const cJSON* characters =
+        cJSON_GetObjectItemCaseSensitive(assets, "characters");
+    const cJSON* chara = cJSON_GetObjectItemCaseSensitive(characters, id);
+    if (!cJSON_IsObject(chara)) {
+        return false;
+    }
+
+    // 表情の指定が無ければ "normal" を既定にする（仕様書 4 章）
+    const char* key = (expression && expression[0]) ? expression : "normal";
+    const cJSON* entry = cJSON_GetObjectItemCaseSensitive(chara, key);
+    if (!cJSON_IsString(entry) || !entry->valuestring) {
+        return false;
+    }
+
+    outPath = _basePath + "/" + entry->valuestring;
+
+    if (outPath.size() >= 200) {
+        ESP_LOGW(TAG, "Character path too long (%u chars): %s",
+                 static_cast<unsigned>(outPath.size()), outPath.c_str());
+        outPath.clear();
+        return false;
+    }
+    return true;
+}
+
 void ScenarioLoader::validateCommands(const cJSON* commands,
                                       const char* sceneId, int& issues)
 {
@@ -367,6 +430,39 @@ void ScenarioLoader::validateCommands(const cJSON* commands,
                 ESP_LOGW(TAG, "  scene '%s': background file not found: %s",
                          sceneId, path.c_str());
                 ++issues;
+            }
+        } else if (type == "text") {
+            // 名前付きボックスの指定があれば、定義されているか確かめる。
+            // 未定義でも既定のボックスに落ちて再生は続くが、
+            // 作者の意図とは違う場所に出るので気づけるようにする。
+            const std::string box = getString(cmd, "box");
+            if (!box.empty()) {
+                const cJSON* def =
+                    cJSON_GetObjectItemCaseSensitive(textBoxesNode(), box.c_str());
+                if (!cJSON_IsObject(def)) {
+                    ESP_LOGW(TAG, "  scene '%s': text box '%s' is not defined",
+                             sceneId, box.c_str());
+                    ++issues;
+                }
+            }
+        } else if (type == "chara") {
+            // 消すだけの指定（visible:false）は画像を要らないので確認しない
+            const cJSON* visible = cJSON_GetObjectItemCaseSensitive(cmd, "visible");
+            const bool hiding = cJSON_IsBool(visible) && !cJSON_IsTrue(visible);
+
+            if (!hiding) {
+                const std::string id = getString(cmd, "id");
+                const std::string expr = getString(cmd, "expression", "normal");
+                std::string path;
+                if (!resolveCharacterPath(id.c_str(), expr.c_str(), path)) {
+                    ESP_LOGW(TAG, "  scene '%s': character '%s/%s' is not in assets",
+                             sceneId, id.c_str(), expr.c_str());
+                    ++issues;
+                } else if (!SD.exists(path.c_str())) {
+                    ESP_LOGW(TAG, "  scene '%s': character file not found: %s",
+                             sceneId, path.c_str());
+                    ++issues;
+                }
             }
         } else if (type == "choice") {
             const cJSON* options = cJSON_GetObjectItemCaseSensitive(cmd, "options");

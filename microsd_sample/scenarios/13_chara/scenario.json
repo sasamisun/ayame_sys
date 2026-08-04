@@ -1,0 +1,129 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "13_chara",
+    "title": "立ち絵の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "chara コマンドの動作確認",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "room": "images/bg/room.png",
+      "night": "images/bg/night.png"
+    },
+    "characters": {
+      "ayame": {
+        "normal": "images/chara/ayame_normal.png",
+        "smile": "images/chara/ayame_smile.png",
+        "sad": "images/chara/ayame_sad.png"
+      }
+    }
+  },
+  "variables": {},
+  "start": "main",
+  "scenes": {
+    "main": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "room"
+        },
+        {
+          "type": "text",
+          "body": "背景だけの状態です。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "normal",
+          "x": 170,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "body": "立ち絵を出しました。背景の上に重なっているか見てください。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "smile"
+        },
+        {
+          "type": "text",
+          "body": "表情だけ変えました。位置を書いていないので動かないはずです。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "sad",
+          "x": 60,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "body": "位置も変えました。二重に重なっていないかが要点です。"
+        },
+        {
+          "type": "bg",
+          "image": "night",
+          "transition": "WIPE_HORIZONTAL"
+        },
+        {
+          "type": "text",
+          "body": "背景を切り替えました。立ち絵が消えずに残っているはずです。"
+        },
+        {
+          "type": "jump",
+          "next": "scene2"
+        }
+      ]
+    },
+    "scene2": {
+      "commands": [
+        {
+          "type": "text",
+          "body": "シーンをまたぎました。立ち絵は保持されます。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "visible": false
+        },
+        {
+          "type": "text",
+          "body": "立ち絵を消しました。背景だけが残ります。"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "expression": "normal",
+          "x": 170,
+          "y": 420
+        },
+        {
+          "type": "text",
+          "body": "もう一度出しました。"
+        },
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "body": "clear で全部消えました。背景も立ち絵も残りません。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

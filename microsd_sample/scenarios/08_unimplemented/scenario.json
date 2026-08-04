@@ -2,10 +2,10 @@
   "format_version": 1,
   "meta": {
     "id": "08_unimplemented",
-    "title": "未実装コマンドの確認",
+    "title": "未知のコマンドの確認",
     "author": "ayame_sys",
-    "version": "1.0.0",
-    "description": "chara と save が無視され警告が出ること",
+    "version": "2.0.0",
+    "description": "知らない命令やキーが無視され、再生が止まらないこと",
     "text_direction": "VERTICAL",
     "update_url": null
   },
@@ -20,30 +20,33 @@
       "commands": [
         {
           "type": "text",
-          "body": "未実装のコマンドは無視され、警告がログに出るだけです。再生は止まりません。"
+          "body": "このシナリオには、システムが知らない命令が混ざっています。無視され、警告がログに出るだけで再生は止まりません。"
         },
         {
-          "type": "chara",
-          "id": "ayame",
-          "expression": "normal",
-          "x": 60,
-          "y": 400
+          "type": "hologram",
+          "intensity": 9000
         },
         {
-          "type": "save",
-          "slot": 1
+          "type": "summon_dragon",
+          "name": "ryu"
         },
         {
-          "type": "load",
-          "slot": 1
+          "type": "future_command_v2"
         },
         {
           "type": "text",
-          "body": "ここまで来ていれば正しく読み飛ばされています。"
+          "body": "ここまで来ていれば、知らない命令が正しく読み飛ばされています。",
+          "unknown_key": "この項目もシステムは知りませんが、無視されます",
+          "another_future_option": 123
+        },
+        {
+          "type": "text",
+          "body": "知らないキーが混ざっていても、本文は正しく出ます。これは format_version を上げずに機能を足せるようにするための仕組みです。"
         },
         {
           "type": "end",
-          "ending": "done"
+          "ending": "done",
+          "unknown_ending_option": true
         }
       ]
     }

@@ -47,6 +47,11 @@ bool Settings::load()
         _soundEnabled = cJSON_IsTrue(sound);
     }
 
+    const cJSON* resume = cJSON_GetObjectItemCaseSensitive(root, "resume_slot");
+    if (cJSON_IsNumber(resume)) {
+        _resumeSlot = resume->valueint;
+    }
+
     const cJSON* last = cJSON_GetObjectItemCaseSensitive(root, "last_scenario");
     if (cJSON_IsString(last) && last->valuestring) {
         setLastScenario(last->valuestring);
@@ -54,8 +59,8 @@ bool Settings::load()
 
     cJSON_Delete(root);
 
-    ESP_LOGI(TAG, "Loaded (sound=%s, last='%s')",
-             _soundEnabled ? "on" : "off", _lastScenario);
+    ESP_LOGI(TAG, "Loaded (sound=%s, last='%s', resume_slot=%d)",
+             _soundEnabled ? "on" : "off", _lastScenario, _resumeSlot);
     return true;
 }
 
@@ -70,6 +75,7 @@ bool Settings::save()
     cJSON_AddNumberToObject(root, "format_version", FORMAT_VERSION);
     cJSON_AddBoolToObject(root, "sound_enabled", _soundEnabled);
     cJSON_AddStringToObject(root, "last_scenario", _lastScenario);
+    cJSON_AddNumberToObject(root, "resume_slot", _resumeSlot);
 
     // 人が読んで直せるよう整形して書く。
     // 設定ファイルは USB MSC 経由で PC から覗かれる前提。
