@@ -105,8 +105,21 @@ private:
     // ========== 描画設定 ==========
     TextDirection _direction;            // テキスト方向
     TextAlignment _alignment;            // テキスト揃え
-    int _x, _y;                         // 描画開始位置
-    int _width, _height;                // 描画領域のサイズ
+    // 本文領域。外枠から余白を引いたもの。
+    //
+    // 描画・折り返し・揃えの計算はすべてこの4つだけを見る。
+    // 余白を足してもレイアウトのコードを触らずに済むよう、
+    // 「内部から見える領域＝本文領域」に保ってある。
+    int _x, _y;                         // 本文の開始位置
+    int _width, _height;                // 本文領域のサイズ
+
+    // 外枠。下地（背景色・背景画像）とクリップの範囲。
+    int _boxX, _boxY;
+    int _boxWidth, _boxHeight;
+
+    // 外枠と本文領域のあいだの余白
+    int _padTop, _padRight, _padBottom, _padLeft;
+
     uint16_t _color;                    // テキスト色
     uint16_t _bgColor;                  // 背景色
     bool _transparentBg;                // 背景透明フラグ
@@ -175,18 +188,35 @@ public:
     // テキスト揃えの設定
     void setAlignment(TextAlignment alignment);
     
-    // 描画位置の設定
+    // 描画位置の設定（外枠の左上）
     void setPosition(int x, int y);
-    
-    // 描画領域の設定
+
+    // 描画領域の設定（外枠の大きさ）
     void setArea(int width, int height);
 
-    // 描画領域を読み出す。
+    /**
+     * @brief 本文と外枠のあいだの余白
+     *
+     * 下地（背景色・背景画像）は**外枠いっぱい**に敷かれ、
+     * 本文だけがこの分だけ内側に入る。
+     * 枠付きの背景画像を使うとき、本文が枠に食い込まないようにするためのもの。
+     *
+     * 余白が大きすぎて本文が置けなくなったら警告を出し、1px で止める。
+     */
+    void setPadding(int top, int right, int bottom, int left);
+
+    // 外枠を読み出す。
     // 呼び出し側がボックスの矩形に下地を敷くときに使う。
-    int areaX() const { return _x; }
-    int areaY() const { return _y; }
-    int areaWidth() const { return _width; }
-    int areaHeight() const { return _height; }
+    int areaX() const { return _boxX; }
+    int areaY() const { return _boxY; }
+    int areaWidth() const { return _boxWidth; }
+    int areaHeight() const { return _boxHeight; }
+
+    // 余白を除いた本文領域
+    int textX() const { return _x; }
+    int textY() const { return _y; }
+    int textWidth() const { return _width; }
+    int textHeight() const { return _height; }
     
     // テキスト色の設定
     void setColor(uint16_t color);
@@ -493,6 +523,9 @@ private:
     
     // 枠線描画
     void drawAreaBorder();
+
+    /// 外枠と余白から本文領域（`_x` / `_y` / `_width` / `_height`）を出し直す
+    void applyPadding();
     
     // 文字描画（スケール調整対応）
     void drawEnhancedCharacter(uint16_t unicode_char, int x, int y,

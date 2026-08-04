@@ -244,6 +244,9 @@ TypoWrite::TypoWrite(M5GFX *display)
       _alignment(TextAlignment::LEFT),
       _x(0), _y(0),
       _width(100), _height(100),
+      _boxX(0), _boxY(0),
+      _boxWidth(100), _boxHeight(100),
+      _padTop(0), _padRight(0), _padBottom(0), _padLeft(0),
       _color(TFT_WHITE),
       _bgColor(TFT_BLACK),
       _transparentBg(false),
@@ -1353,17 +1356,52 @@ void TypoWrite::setAlignment(TextAlignment alignment)
 // 描画位置の設定
 void TypoWrite::setPosition(int x, int y)
 {
-    _x = x;
-    _y = y;
+    _boxX = x;
+    _boxY = y;
+    applyPadding();
     ESP_LOGD(TAG, "Position set to (%d, %d)", x, y);
 }
 
 // 描画領域の設定
 void TypoWrite::setArea(int width, int height)
 {
-    _width = width;
-    _height = height;
+    _boxWidth = width;
+    _boxHeight = height;
+    applyPadding();
     ESP_LOGD(TAG, "Area set to %dx%d", width, height);
+}
+
+// 余白の設定
+void TypoWrite::setPadding(int top, int right, int bottom, int left)
+{
+    _padTop = std::max(0, top);
+    _padRight = std::max(0, right);
+    _padBottom = std::max(0, bottom);
+    _padLeft = std::max(0, left);
+    applyPadding();
+}
+
+// 外枠と余白から本文領域を出す
+//
+// 内部の描画・折り返し・揃えは全て _x/_y/_width/_height を見る。
+// そちらを「本文領域」に保っておけば、余白を足しても
+// レイアウトのコードは一切変えずに済む。
+void TypoWrite::applyPadding()
+{
+    _x = _boxX + _padLeft;
+    _y = _boxY + _padTop;
+    _width  = _boxWidth  - _padLeft - _padRight;
+    _height = _boxHeight - _padTop  - _padBottom;
+
+    // 余白が大きすぎて本文が置けなくなった場合。
+    // 0 以下のまま進むと「1文字も進まない」で打ち切られ、
+    // 何も出ない理由が分からなくなるので、ここで気づけるようにする。
+    if (_width <= 0 || _height <= 0) {
+        ESP_LOGW(TAG, "Padding (%d,%d,%d,%d) leaves no room in a %dx%d box",
+                 _padTop, _padRight, _padBottom, _padLeft, _boxWidth, _boxHeight);
+        _width = std::max(1, _width);
+        _height = std::max(1, _height);
+    }
 }
 
 // テキスト色の設定
@@ -1710,12 +1748,14 @@ TypoWrite::DrawResult TypoWrite::drawTextPaged(const std::string &text, size_t s
     // クリッピング領域を設定
     lgfx::LovyanGFX *target = _drawTarget ? static_cast<lgfx::LovyanGFX *>(_drawTarget) : static_cast<lgfx::LovyanGFX *>(_display);
 
-    target->setClipRect(_x, _y, _width, _height);
+    // クリップと下地は**外枠**。本文領域ではない。
+    // 本文領域にすると、余白の帯だけ前のページが消えずに残る。
+    target->setClipRect(_boxX, _boxY, _boxWidth, _boxHeight);
 
     // 背景をクリア（透明でない場合）
     if (!_transparentBg)
     {
-        target->fillRect(_x, _y, _width, _height, _bgColor);
+        target->fillRect(_boxX, _boxY, _boxWidth, _boxHeight, _bgColor);
     }
 
     // 新機能: 枠線描画
@@ -1768,29 +1808,40 @@ void TypoWrite::drawAreaBorder()
     lgfx::LovyanGFX *target = _drawTarget ? static_cast<lgfx::LovyanGFX *>(_drawTarget) : static_cast<lgfx::LovyanGFX *>(_display);
 
     // 外枠を描画
-    target->drawRect(_x, _y, _width, _height, _borderColor);
+    target->drawRect(_boxX, _boxY, _boxWidth, _boxHeight, _borderColor);
+
+    // 余白があるなら本文領域も描く。
+    // 外枠だけだと、余白をいくつにしたのか見て分からない。
+    if (_padTop || _padRight || _padBottom || _padLeft) {
+        target->drawRect(_x, _y, _width, _height, _borderColor);
+    }
 
     // デバッグ用: 角に小さな十字マークを描画
     // 以前は 5 をローカルで再定義しており、
     // TypoWriteConstants::Border::MARK_SIZE（同じく5）が未使用のままだった。
     const int markSize = TypoWriteConstants::Border::MARK_SIZE;
+    const int bx = _boxX;
+    const int by = _boxY;
+    const int bw = _boxWidth;
+    const int bh = _boxHeight;
+
     // 左上
-    target->drawLine(_x - markSize, _y, _x + markSize, _y, _borderColor);
-    target->drawLine(_x, _y - markSize, _x, _y + markSize, _borderColor);
+    target->drawLine(bx - markSize, by, bx + markSize, by, _borderColor);
+    target->drawLine(bx, by - markSize, bx, by + markSize, _borderColor);
 
     // 右上
-    target->drawLine(_x + _width - markSize, _y, _x + _width + markSize, _y, _borderColor);
-    target->drawLine(_x + _width, _y - markSize, _x + _width, _y + markSize, _borderColor);
+    target->drawLine(bx + bw - markSize, by, bx + bw + markSize, by, _borderColor);
+    target->drawLine(bx + bw, by - markSize, bx + bw, by + markSize, _borderColor);
 
     // 左下
-    target->drawLine(_x - markSize, _y + _height, _x + markSize, _y + _height, _borderColor);
-    target->drawLine(_x, _y + _height - markSize, _x, _y + _height + markSize, _borderColor);
+    target->drawLine(bx - markSize, by + bh, bx + markSize, by + bh, _borderColor);
+    target->drawLine(bx, by + bh - markSize, bx, by + bh + markSize, _borderColor);
 
     // 右下
-    target->drawLine(_x + _width - markSize, _y + _height,
-                     _x + _width + markSize, _y + _height, _borderColor);
-    target->drawLine(_x + _width, _y + _height - markSize,
-                     _x + _width, _y + _height + markSize, _borderColor);
+    target->drawLine(bx + bw - markSize, by + bh,
+                     bx + bw + markSize, by + bh, _borderColor);
+    target->drawLine(bx + bw, by + bh - markSize,
+                     bx + bw, by + bh + markSize, _borderColor);
 }
 
 // 中央揃えでテキスト描画
@@ -1950,7 +2001,8 @@ void TypoWrite::clearArea(uint16_t color)
 {
     lgfx::LovyanGFX *target = _drawTarget ? static_cast<lgfx::LovyanGFX *>(_drawTarget) : static_cast<lgfx::LovyanGFX *>(_display);
 
-    target->fillRect(_x, _y, _width, _height, color);
+    // 余白ごと消す。本文領域だけ塗ると余白の帯に前の描画が残る。
+    target->fillRect(_boxX, _boxY, _boxWidth, _boxHeight, color);
 }
 
 // ========== 文字カテゴリ判定 ==========

@@ -52,6 +52,24 @@ enum class AppScreen
 
 AppScreen currentScreen = AppScreen::Menu;
 
+/**
+ * @brief メニューと、向きを指定しないシナリオで使う画面の向き
+ *
+ * パネルの物理的な向きは 960x540（横長）で、M5GFX のパネル定義が
+ * `offset_rotation = 3` を持つため、`setRotation()` の値はこれに加算される。
+ *
+ * | 値 | 画面 |
+ * |---|---|
+ * | 0 | 540x960（縦長） |
+ * | 1 | 960x540（横長） |
+ * | 2 | 540x960（縦長・0 の180度反転） ← これを使う |
+ * | 3 | 960x540（横長・1 の180度反転） |
+ *
+ * シナリオは `meta.rotation` で自分の向きを指定できる。
+ * 指定が無ければこの値のまま再生する。
+ */
+constexpr int MENU_ROTATION = 0;
+
 // ========================================
 // 選択肢の UI
 // ========================================
@@ -130,9 +148,50 @@ void showChoiceButtons()
 // 画面の切り替え
 // ========================================
 
+/**
+ * @brief 画面の向きを変え、向きに依存するものを追従させる
+ *
+ * `setRotation()` だけでは足りない。回転すると 540x960 と 960x540 が
+ * 入れ替わるので、次の2つも作り直す必要がある。
+ *
+ *   ・トランジションのキャンバス（縦横が食い違うと中間フレームが崩れる）
+ *   ・既定のテキストボックス（縦長前提の座標は横長では画面外へ出る）
+ *
+ * シナリオが `textboxes` で定義したボックスはここでは触らない。
+ * それらの座標は作者が向きを決めたうえで書いているため。
+ *
+ * @param rotation 0〜3
+ */
+void applyRotation(int rotation)
+{
+    if (display.getRotation() == rotation)
+    {
+        return;
+    }
+
+    ESP_LOGI(TAG, "Rotation %d -> %d", display.getRotation(), rotation);
+    display.setRotation(rotation);
+
+    if (simpleTransition && !simpleTransition->resizeToDisplay())
+    {
+        // キャンバスを作り直せなかった。演出は使えないが本文は読める。
+        ESP_LOGE(TAG, "Transitions are unavailable at this rotation");
+    }
+    textSystem.layoutDefaultBoxes();
+
+    // 回転すると全画素が別の内容になる。
+    // 部分更新のままだと前の向きの残像が残るので、一度振り切っておく。
+    SimpleTransition::clearGhosting(&display);
+}
+
 void enterMenu()
 {
     ESP_LOGI(TAG, "Screen -> Menu");
+
+    // メニューの配置は縦長 540x960 の決め打ち。
+    // 横向きのシナリオから戻ってきたときのために必ず戻す。
+    applyRotation(MENU_ROTATION);
+
     currentScreen = AppScreen::Menu;
     systemMenu.enter();
 }
@@ -169,6 +228,13 @@ void enterPlaying(const std::string &scenarioId, bool resume = false)
     }
 
     currentScreen = AppScreen::Playing;
+
+    // 画面の向き。
+    //
+    // **テキストボックスを組む前に済ませること。**
+    // ボックスの座標は向きが決まってからでないと意味を持たない。
+    const int rotation = scenarioLoader.rotation();
+    applyRotation(rotation >= 0 ? rotation : MENU_ROTATION);
 
     // シナリオ本文はルビ記法を使う前提
     textSystem.setRubyEnabled(true);
@@ -224,14 +290,8 @@ void setup()
 
     display.begin();
 
-    // 画面の向き。
-    //
-    // パネルの物理的な向きは 960x540（横長）で、M5GFX のパネル定義が
-    // offset_rotation = 3 を持つため、setRotation() の値はこれに加算される。
-    //   r=0 -> 540x960（縦長・既定）
-    //   r=2 -> 540x960（縦長・180度反転）  ← これを使う
-    // 描画より前に設定すること。
-    display.setRotation(2);
+    // 画面の向き。描画より前に設定すること。
+    display.setRotation(MENU_ROTATION);
 
     display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
 

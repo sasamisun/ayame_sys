@@ -57,6 +57,7 @@ float SimpleTransition::calcStepProgress() const
 SimpleTransition::SimpleTransition(M5GFX* display)
     // 初期化順はヘッダの宣言順に合わせること（-Werror=reorder）
     : _display(display), _mainCanvas(nullptr), _initialized(false), _use_psram(true),
+      _canvasWidth(0), _canvasHeight(0),
       _isActive(false), _type(SimpleTransitionType::NONE), _currentStep(0), _totalSteps(0),
       _transitionEpdMode(lgfx::v1::epd_mode_t::epd_fast),
       _savedEpdMode(lgfx::v1::epd_mode_t::epd_quality),
@@ -132,47 +133,86 @@ bool SimpleTransition::init(bool use_psram)
     }
     
     _use_psram = use_psram;
-    ESP_LOGI(TAG, "Initializing E-Paper最適化SimpleTransition with PSRAM: %s", 
+    ESP_LOGI(TAG, "Initializing E-Paper最適化SimpleTransition with PSRAM: %s",
              _use_psram ? "enabled" : "disabled");
-    
+
+    // 大きさは画面から取る。
+    // 決め打ちの 540x960 だと、横向き（960x540）で縦横が入れ替わる。
+    _canvasWidth = _display->width();
+    _canvasHeight = _display->height();
+
     // PSRAMメモリチェック
     if (_use_psram) {
         size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        size_t canvas_size = SIMPLE_TRANSITION_WIDTH * SIMPLE_TRANSITION_HEIGHT * 2;
-        
-        ESP_LOGI(TAG, "PSRAM check - Free: %zu KB, Required: %zu KB", 
+        size_t canvas_size = static_cast<size_t>(_canvasWidth) * _canvasHeight * 2;
+
+        ESP_LOGI(TAG, "PSRAM check - Free: %zu KB, Required: %zu KB",
                  psram_free / 1024, canvas_size / 1024);
-        
+
         if (psram_free < canvas_size) {
             ESP_LOGE(TAG, "Insufficient PSRAM memory. Required: %zu, Available: %zu",
                      canvas_size, psram_free);
             return false;
         }
     }
-    
+
     // メインキャンバス作成
-    ESP_LOGI(TAG, "Creating main canvas...");
+    ESP_LOGI(TAG, "Creating main canvas (%dx%d)...", _canvasWidth, _canvasHeight);
     _mainCanvas = new M5Canvas(_display);
     if (!_mainCanvas) {
         ESP_LOGE(TAG, "Failed to allocate main canvas");
         return false;
     }
-    
+
     if (_use_psram) {
         _mainCanvas->setPsram(true);
     }
-    
-    if (!_mainCanvas->createSprite(SIMPLE_TRANSITION_WIDTH, SIMPLE_TRANSITION_HEIGHT)) {
+
+    if (!_mainCanvas->createSprite(_canvasWidth, _canvasHeight)) {
         ESP_LOGE(TAG, "Failed to create main sprite");
         delete _mainCanvas;
         _mainCanvas = nullptr;
         return false;
     }
-    
+
     _initialized = true;
     _isActive = false;
-    
+
     ESP_LOGI(TAG, "E-Paper最適化SimpleTransition initialized successfully! ⚡");
+    return true;
+}
+
+bool SimpleTransition::resizeToDisplay()
+{
+    if (!_initialized || !_mainCanvas || !_display) {
+        return false;
+    }
+
+    const int w = _display->width();
+    const int h = _display->height();
+
+    if (w == _canvasWidth && h == _canvasHeight) {
+        return true;   // 回転していない。作り直す必要はない
+    }
+
+    ESP_LOGI(TAG, "Screen turned. Rebuilding the canvas: %dx%d -> %dx%d",
+             _canvasWidth, _canvasHeight, w, h);
+
+    // 1MB 級のスプライトを2つ同時に抱えると PSRAM が苦しいので、
+    // 先に捨ててから作り直す。
+    _mainCanvas->deleteSprite();
+
+    if (!_mainCanvas->createSprite(w, h)) {
+        // ここで失敗するとトランジションが使えなくなる。
+        // 呼び出し側は演出を諦めて即時描画へ落とすこと。
+        ESP_LOGE(TAG, "Failed to rebuild the canvas at %dx%d", w, h);
+        _initialized = false;
+        return false;
+    }
+
+    _canvasWidth = w;
+    _canvasHeight = h;
+    _isActive = false;
     return true;
 }
 
@@ -347,10 +387,10 @@ void SimpleTransition::drawFadeInStepOptimized()
     // としていた。8ステップなら前半2ステップが「黒画面を描き直すだけ」で、
     // 電子ペーパーの最も重い操作を2回分空費していた。
     // クリアは startTransition() に移したので、ここは表示を進めることに専念する。
-    const int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
+    const int reveal_height = static_cast<int>(_canvasHeight * progress);
 
     if (reveal_height > 0) {
-        drawOptimizedRegion(0, 0, SIMPLE_TRANSITION_WIDTH, reveal_height);
+        drawOptimizedRegion(0, 0, _canvasWidth, reveal_height);
     }
 }
 
@@ -380,22 +420,22 @@ void SimpleTransition::drawSlideStepOptimized()
     switch (_type) {
         case SimpleTransitionType::SLIDE_LEFT:
             // 左端から入ってきて右へ進む
-            dx = static_cast<int>(SIMPLE_TRANSITION_WIDTH * (progress - 1.0f));
+            dx = static_cast<int>(_canvasWidth * (progress - 1.0f));
             break;
 
         case SimpleTransitionType::SLIDE_RIGHT:
             // 右端から入ってきて左へ進む
-            dx = static_cast<int>(SIMPLE_TRANSITION_WIDTH * (1.0f - progress));
+            dx = static_cast<int>(_canvasWidth * (1.0f - progress));
             break;
 
         case SimpleTransitionType::SLIDE_UP:
             // 上端から入ってきて下へ進む
-            dy = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * (progress - 1.0f));
+            dy = static_cast<int>(_canvasHeight * (progress - 1.0f));
             break;
 
         case SimpleTransitionType::SLIDE_DOWN:
             // 下端から入ってきて上へ進む
-            dy = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * (1.0f - progress));
+            dy = static_cast<int>(_canvasHeight * (1.0f - progress));
             break;
 
         default:
@@ -420,17 +460,17 @@ void SimpleTransition::drawWipeStepOptimized()
     
     if (_type == SimpleTransitionType::WIPE_HORIZONTAL) {
         // 水平ワイプ（ブロック境界に調整）
-        int reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
+        int reveal_width = static_cast<int>(_canvasWidth * progress);
         
         if (reveal_width > 0) {
-            drawOptimizedRegion(0, 0, reveal_width, SIMPLE_TRANSITION_HEIGHT);
+            drawOptimizedRegion(0, 0, reveal_width, _canvasHeight);
         }
     } else {
         // 垂直ワイプ
-        int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
+        int reveal_height = static_cast<int>(_canvasHeight * progress);
         
         if (reveal_height > 0) {
-            drawOptimizedRegion(0, 0, SIMPLE_TRANSITION_WIDTH, reveal_height);
+            drawOptimizedRegion(0, 0, _canvasWidth, reveal_height);
         }
     }
 }
@@ -448,13 +488,13 @@ void SimpleTransition::drawRevealCenterStepOptimized()
     // 画面のクリアは startTransition() で1回だけ行う（累積展開のため再クリア不要）
     
     // 中央から展開する矩形サイズを計算（ブロック境界に調整）
-    int reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
-    int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
+    int reveal_width = static_cast<int>(_canvasWidth * progress);
+    int reveal_height = static_cast<int>(_canvasHeight * progress);
     
     
     if (reveal_width > 0 && reveal_height > 0) {
-        int x = (SIMPLE_TRANSITION_WIDTH - reveal_width) / 2;
-        int y = (SIMPLE_TRANSITION_HEIGHT - reveal_height) / 2;
+        int x = (_canvasWidth - reveal_width) / 2;
+        int y = (_canvasHeight - reveal_height) / 2;
         
         drawOptimizedRegion(x, y, reveal_width, reveal_height);
     }
@@ -473,8 +513,8 @@ void SimpleTransition::drawRevealCornerStepOptimized()
     // 画面のクリアは startTransition() で1回だけ行う（累積展開のため再クリア不要）
     
     // 左上角から展開（ブロック境界に調整）
-    int reveal_width = static_cast<int>(SIMPLE_TRANSITION_WIDTH * progress);
-    int reveal_height = static_cast<int>(SIMPLE_TRANSITION_HEIGHT * progress);
+    int reveal_width = static_cast<int>(_canvasWidth * progress);
+    int reveal_height = static_cast<int>(_canvasHeight * progress);
     
     
     if (reveal_width > 0 && reveal_height > 0) {
@@ -506,10 +546,10 @@ void SimpleTransition::drawOptimizedRegion(int x, int y, int w, int h)
     if (!_mainCanvas || !_display) return;
 
     // 境界チェック
-    x = std::max(0, std::min(x, SIMPLE_TRANSITION_WIDTH));
-    y = std::max(0, std::min(y, SIMPLE_TRANSITION_HEIGHT));
-    w = std::max(0, std::min(w, SIMPLE_TRANSITION_WIDTH - x));
-    h = std::max(0, std::min(h, SIMPLE_TRANSITION_HEIGHT - y));
+    x = std::max(0, std::min(x, _canvasWidth));
+    y = std::max(0, std::min(y, _canvasHeight));
+    w = std::max(0, std::min(w, _canvasWidth - x));
+    h = std::max(0, std::min(h, _canvasHeight - y));
 
     if (w <= 0 || h <= 0) return;
 

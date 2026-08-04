@@ -10,6 +10,7 @@
 
 #include "ScenarioLoader.hpp"
 #include "SimpleTransition.hpp"
+#include "TextSystem.hpp"
 #include "TypoWrite.hpp"
 
 /**
@@ -343,6 +344,14 @@ private:
      * 再生中は作り直さず使い回す。
      */
     void buildTextBoxes();
+
+    /**
+     * @brief `textboxes` の `padding` を読む
+     *
+     * 数値なら四辺まとめて、オブジェクトなら辺ごと（省略した辺は 0）。
+     * 2通り受けるのは、枠のない箱では1つの数値で済ませたいため。
+     */
+    static TextBoxPadding parsePadding(const cJSON* node);
 
     /**
      * @brief テキストボックスの下地を敷く

@@ -972,7 +972,7 @@ void setup()
     // 既存のレイアウト座標はそのまま使える。
     //
     // 注意: 描画より前に設定すること。
-    display.setRotation(2);
+    display.setRotation(0);
 
     display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
     display.setColorDepth(1);

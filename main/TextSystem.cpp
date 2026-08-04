@@ -30,7 +30,8 @@ TypoWrite* TextSystem::createWriter()
 
 bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
                            bool vertical, float fontSize,
-                           int lineSpacing, int charSpacing, TextAlignment align)
+                           int lineSpacing, int charSpacing, TextAlignment align,
+                           const TextBoxPadding& padding)
 {
     if (!_ready) {
         ESP_LOGE(TAG, "Not initialized");
@@ -57,14 +58,17 @@ bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
 
     writer->setPosition(x, y);
     writer->setArea(w, h);
+    writer->setPadding(padding.top, padding.right, padding.bottom, padding.left);
     writer->setDirection(vertical ? TextDirection::VERTICAL : TextDirection::HORIZONTAL);
     writer->setFontSize(fontSize);
     writer->setLineSpacing(lineSpacing);
     writer->setCharSpacing(charSpacing);
     writer->setAlignment(align);
 
-    ESP_LOGI(TAG, "Text box '%s': (%d,%d) %dx%d %s x%.2f",
-             name.c_str(), x, y, w, h, vertical ? "vertical" : "horizontal", fontSize);
+    ESP_LOGI(TAG, "Text box '%s': (%d,%d) %dx%d %s x%.2f padding(%d,%d,%d,%d) -> text %dx%d",
+             name.c_str(), x, y, w, h, vertical ? "vertical" : "horizontal", fontSize,
+             padding.top, padding.right, padding.bottom, padding.left,
+             writer->textWidth(), writer->textHeight());
     return true;
 }
 
@@ -112,8 +116,6 @@ bool TextSystem::begin(M5GFX* display)
     _vertical = new TypoWrite(display);
     _vertical->setVLWParser(&_parser);
     _vertical->loadFontFromArray(shippori);
-    _vertical->setPosition(400, 0);
-    _vertical->setArea(130, 700);
     _vertical->setColor(TFT_WHITE);
     _vertical->setBackgroundColor(TFT_TRANSPARENT);
     _vertical->setDirection(TextDirection::VERTICAL);
@@ -138,8 +140,6 @@ bool TextSystem::begin(M5GFX* display)
     _horizontal = new TypoWrite(display);
     _horizontal->setVLWParser(&_parser);
     _horizontal->loadFontFromArray(shippori);
-    _horizontal->setPosition(10, 420);
-    _horizontal->setArea(380, 180);
     _horizontal->setColor(TFT_WHITE);
     _horizontal->setBackgroundColor(TFT_TRANSPARENT);
     _horizontal->setDirection(TextDirection::HORIZONTAL);
@@ -148,9 +148,48 @@ bool TextSystem::begin(M5GFX* display)
     _horizontal->setCharSpacing(0);
     _horizontal->setAlignment(TextAlignment::LEFT);
 
+    // 位置と大きさは画面の向きで変わるので、まとめて別に置いてある
+    layoutDefaultBoxes();
+
     _ready = true;
-    ESP_LOGI(TAG, "Text renderers ready (vertical: 400,0 130x700 / horizontal: 10,420 380x180)");
     return true;
+}
+
+void TextSystem::layoutDefaultBoxes()
+{
+    if (!_display || !_vertical || !_horizontal) {
+        return;
+    }
+
+    const int sw = _display->width();
+    const int sh = _display->height();
+
+    // 縦長か横長かで置き場所を変える。
+    //
+    // 縦長のときの値（右端の帯 (400,0) 130x700、下寄りの帯 (10,420) 380x180）は
+    // 画面が 540x960 である前提で決め打ちしてあった。
+    // 横向き（960x540）にすると縦書きの帯が高さ 700 で画面からはみ出すため、
+    // 向きごとに持つ必要がある。
+    if (sh >= sw) {
+        // 縦長（540x960）。従来の値をそのまま使う。
+        _vertical->setPosition(400, 0);
+        _vertical->setArea(130, 700);
+        _horizontal->setPosition(10, 420);
+        _horizontal->setArea(380, 180);
+    } else {
+        // 横長（960x540）。同じ考え方で、縦書きは右端の帯、横書きは下側の帯。
+        _vertical->setPosition(sw - 140, 20);
+        _vertical->setArea(130, sh - 40);
+        _horizontal->setPosition(20, sh - 180);
+        _horizontal->setArea(sw - 180, 160);
+    }
+
+    ESP_LOGI(TAG, "Default boxes for %dx%d (vertical: %d,%d %dx%d / horizontal: %d,%d %dx%d)",
+             sw, sh,
+             _vertical->areaX(), _vertical->areaY(),
+             _vertical->areaWidth(), _vertical->areaHeight(),
+             _horizontal->areaX(), _horizontal->areaY(),
+             _horizontal->areaWidth(), _horizontal->areaHeight());
 }
 
 void TextSystem::setRubyEnabled(bool enabled)

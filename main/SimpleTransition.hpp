@@ -6,9 +6,8 @@
 #include <M5GFX.h>
 #include <functional>
 
-// M5PaperS3の画面解像度
-#define SIMPLE_TRANSITION_WIDTH  540
-#define SIMPLE_TRANSITION_HEIGHT 960
+// 画面の大きさは実行時に display から取る（回転で 540x960 と 960x540 が入れ替わるため）。
+// 以前ここに SIMPLE_TRANSITION_WIDTH / _HEIGHT の決め打ちがあった。
 
 /**
  * @brief E-Paper最適化トランジション効果
@@ -49,6 +48,14 @@ private:
     M5Canvas* _mainCanvas;        // メインキャンバス（最終画面状態）
     bool _initialized;            // 初期化フラグ
     bool _use_psram;              // PSRAM使用フラグ
+
+    // キャンバスの大きさ。
+    //
+    // 以前は SIMPLE_TRANSITION_WIDTH / _HEIGHT（540 / 960）の決め打ちだった。
+    // 画面を横向きにすると 960x540 になり、縦横が入れ替わってしまうため、
+    // init() / resizeToDisplay() で画面から取り直す。
+    int _canvasWidth;
+    int _canvasHeight;
     
     // トランジション状態
     bool _isActive;               // トランジション実行中フラグ
@@ -118,7 +125,18 @@ public:
      * @return 成功時true
      */
     bool init(bool use_psram = true);
-    
+
+    /**
+     * @brief 画面の向きが変わったらキャンバスを作り直す
+     *
+     * 大きさが今の画面と同じなら何もしない（回転していないときは無駄がない）。
+     * **`setRotation()` の直後に呼ぶこと。**
+     * 縦横が食い違ったままだと、トランジションの中間フレームが崩れる。
+     *
+     * @return 今の画面に合ったキャンバスがあるか
+     */
+    bool resizeToDisplay();
+
     /**
      * @brief メインキャンバスを取得
      * ここに最終的な画面状態を描画するにゃ！

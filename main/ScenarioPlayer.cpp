@@ -497,8 +497,36 @@ void ScenarioPlayer::buildTextBoxes()
                              fontSize,
                              getInt(box, "line_spacing", 6),
                              getInt(box, "char_spacing", 0),
-                             a);
+                             a,
+                             parsePadding(cJSON_GetObjectItemCaseSensitive(box, "padding")));
     }
+}
+
+TextBoxPadding ScenarioPlayer::parsePadding(const cJSON* node)
+{
+    TextBoxPadding p;
+
+    if (!node) {
+        return p;
+    }
+
+    // 数値なら四辺まとめて。枠のない箱ではこれで足りる。
+    if (cJSON_IsNumber(node)) {
+        p.top = p.right = p.bottom = p.left = node->valueint;
+        return p;
+    }
+
+    // オブジェクトなら辺ごと。省略した辺は 0。
+    if (cJSON_IsObject(node)) {
+        p.top    = getInt(node, "top", 0);
+        p.right  = getInt(node, "right", 0);
+        p.bottom = getInt(node, "bottom", 0);
+        p.left   = getInt(node, "left", 0);
+        return p;
+    }
+
+    ESP_LOGW(TAG, "padding must be a number or an object. Ignored");
+    return p;
 }
 
 void ScenarioPlayer::fillTextBoxBackground(const std::string& boxName, TypoWrite* writer)

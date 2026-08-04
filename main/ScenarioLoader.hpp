@@ -117,6 +117,19 @@ public:
     /// `meta.text_direction`。無ければ `"VERTICAL"`
     std::string defaultTextDirection() const;
 
+    /**
+     * @brief `meta.rotation`（画面の向き）
+     *
+     * | 値 | 画面 |
+     * |---|---|
+     * | 0 / 2 | 540x960（縦長）。2 は 0 の180度反転 |
+     * | 1 / 3 | 960x540（横長） |
+     *
+     * @return 0〜3。**指定が無い、または範囲外なら −1**
+     *         （呼び出し側は本体の既定の向きを使うこと）
+     */
+    int rotation() const;
+
     /// `variables`（変数の初期値）。無ければ nullptr
     const cJSON* variablesNode() const;
 

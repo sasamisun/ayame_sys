@@ -286,6 +286,25 @@ std::string ScenarioLoader::defaultTextDirection() const
                      "text_direction", "VERTICAL");
 }
 
+int ScenarioLoader::rotation() const
+{
+    const cJSON* meta = cJSON_GetObjectItemCaseSensitive(_root, "meta");
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(meta, "rotation");
+
+    if (!cJSON_IsNumber(item)) {
+        return -1;   // 指定なし。本体の既定の向きのまま
+    }
+
+    const int value = item->valueint;
+    if (value < 0 || value > 3) {
+        // 書き間違い。勝手に丸めると意図と違う向きで出てしまうので、
+        // 指定が無かったことにして既定を使う。
+        ESP_LOGW(TAG, "meta.rotation must be 0-3, but is %d. Ignored", value);
+        return -1;
+    }
+    return value;
+}
+
 const cJSON* ScenarioLoader::variablesNode() const
 {
     return cJSON_GetObjectItemCaseSensitive(_root, "variables");

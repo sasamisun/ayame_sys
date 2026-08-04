@@ -1,0 +1,166 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "21_rotation",
+    "title": "画面の向きと余白の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "meta.rotation で横向きにし、padding の有無を並べて比べる",
+    "text_direction": "HORIZONTAL",
+    "rotation": 1,
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "land": "images/bg/land.png",
+      "frame": "images/bg/frame.png"
+    },
+    "characters": {}
+  },
+  "variables": {},
+  "textboxes": {
+    "title": {
+      "x": 40,
+      "y": 170,
+      "w": 880,
+      "h": 60,
+      "direction": "HORIZONTAL",
+      "font_size": 2.0,
+      "align": "CENTER",
+      "background_color": "BLACK"
+    },
+    "nopad": {
+      "x": 60,
+      "y": 300,
+      "w": 400,
+      "h": 190,
+      "direction": "HORIZONTAL",
+      "line_spacing": 8,
+      "background": "frame"
+    },
+    "padded": {
+      "x": 500,
+      "y": 300,
+      "w": 400,
+      "h": 190,
+      "direction": "HORIZONTAL",
+      "line_spacing": 8,
+      "padding": 24,
+      "background": "frame"
+    },
+    "sides": {
+      "x": 60,
+      "y": 300,
+      "w": 840,
+      "h": 190,
+      "direction": "HORIZONTAL",
+      "line_spacing": 8,
+      "padding": {
+        "top": 10,
+        "right": 90,
+        "bottom": 10,
+        "left": 90
+      },
+      "background_color": "BLACK"
+    }
+  },
+  "start": "intro",
+  "scenes": {
+    "intro": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "land",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "横向き 960x540",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "nopad",
+          "body": "画面が横長になっていれば meta.rotation が効いています。タップで余白の比較へ進みます。"
+        }
+      ],
+      "next": "compare"
+    },
+    "compare": {
+      "commands": [
+        {
+          "type": "bg",
+          "image": "land",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "左 padding なし / 右 padding 24",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "nopad",
+          "body": "枠の内側に本文が入っているか、角の飾りに文字がかぶっていないかを見てください。二つの箱は同じ枠の画像を使っています。",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "padded",
+          "body": "枠の内側に本文が入っているか、角の飾りに文字がかぶっていないかを見てください。二つの箱は同じ枠の画像を使っています。"
+        }
+      ],
+      "next": "sides"
+    },
+    "sides": {
+      "commands": [
+        {
+          "type": "bg",
+          "image": "land",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "辺ごとの指定",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "sides",
+          "body": "左右だけ 90px、上下は 10px にしてあります。下地は箱いっぱいに塗られ、本文だけが内側に寄ります。"
+        }
+      ],
+      "next": "outro"
+    },
+    "outro": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "確認おわり",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "nopad",
+          "body": "メニューへ戻ると縦向きに戻ります。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}
