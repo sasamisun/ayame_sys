@@ -39,7 +39,7 @@ TypoWrite* TextSystem::createWriter()
 bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
                            bool vertical, float fontSize,
                            int lineSpacing, int charSpacing, TextAlignment align,
-                           const TextBoxPadding& padding)
+                           const TextBoxPadding& padding, uint16_t textColor)
 {
     if (!_ready) {
         ESP_LOGE(TAG, "Not initialized");
@@ -72,6 +72,7 @@ bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
     writer->setLineSpacing(lineSpacing);
     writer->setCharSpacing(charSpacing);
     writer->setAlignment(align);
+    writer->setColor(textColor);
 
     ESP_LOGI(TAG, "Text box '%s': (%d,%d) %dx%d %s x%.2f padding(%d,%d,%d,%d) -> text %dx%d",
              name.c_str(), x, y, w, h, vertical ? "vertical" : "horizontal", fontSize,

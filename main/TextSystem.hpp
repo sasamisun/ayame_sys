@@ -140,12 +140,14 @@ public:
      * @param align        揃え
      * @param padding      外枠と本文のあいだの余白。枠付きの背景画像を使うとき、
      *                     本文が枠に食い込まないようにするためのもの
+     * @param textColor    本文の色。**下地と同じ色にすると当然読めない**
      * @return 作れたか
      */
     bool defineBox(const std::string& name, int x, int y, int w, int h,
                    bool vertical, float fontSize,
                    int lineSpacing, int charSpacing, TextAlignment align,
-                   const TextBoxPadding& padding = TextBoxPadding{});
+                   const TextBoxPadding& padding = TextBoxPadding{},
+                   uint16_t textColor = TFT_WHITE);
 
     /**
      * @brief 既定の2つの描画器を、今の画面の向きに合わせて置き直す

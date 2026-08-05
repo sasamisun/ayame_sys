@@ -480,6 +480,17 @@ void ScenarioPlayer::buildTextBoxes()
         const std::string align = getString(box, "align", "LEFT");
         const bool vertical = (dir != "HORIZONTAL");
 
+        // 本文の色。
+        //
+        // **既定は下地の反対。** 下地を白にしたのに本文が白のままだと
+        // 何も見えない。これは実際に踏んだ（サンプルが真っ白になった）。
+        // 背景画像を敷く場合など、明るさが分からないときは
+        // `text_color` で明示する。
+        const bool whiteBg = (getString(box, "background_color", "BLACK") == "WHITE");
+        const std::string textColorName =
+            getString(box, "text_color", whiteBg ? "BLACK" : "WHITE");
+        const uint16_t textColor = (textColorName == "BLACK") ? TFT_BLACK : TFT_WHITE;
+
         TextAlignment a = TextAlignment::LEFT;
         if (align == "CENTER") { a = TextAlignment::CENTER; }
         else if (align == "RIGHT") { a = TextAlignment::RIGHT; }
@@ -503,7 +514,8 @@ void ScenarioPlayer::buildTextBoxes()
                              getInt(box, "char_spacing",
                                     vertical ? DEFAULT_VERTICAL_CHAR_SPACING : 0),
                              a,
-                             parsePadding(cJSON_GetObjectItemCaseSensitive(box, "padding")));
+                             parsePadding(cJSON_GetObjectItemCaseSensitive(box, "padding")),
+                             textColor);
     }
 }
 

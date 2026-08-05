@@ -373,6 +373,30 @@ JPEG や BMP を置いても表示されない（M5GFX 自体は対応してい�
 | `align` | string | `"LEFT"` | `"LEFT"` / `"CENTER"` / `"RIGHT"` |
 | `background` | string | なし | `assets.backgrounds` の論理名。枠に敷く画像 |
 | `background_color` | string | `"BLACK"` | 画像が無いときの塗り色。`"BLACK"` / `"WHITE"` |
+| `text_color` | string | 下地の反対 | 本文の色。`"BLACK"` / `"WHITE"` |
+
+#### `text_color`（本文の色）の既定は下地の反対
+
+| `background_color` | `text_color` の既定 |
+|---|---|
+| `"BLACK"`（既定） | `"WHITE"` |
+| `"WHITE"` | `"BLACK"` |
+
+**下地を白にしたのに本文が白のままだと何も見えない。**
+そうならないよう、書かなければ自動で反対の色になる。
+
+`background`（画像）を敷く場合は明るさが分からないので、
+`background_color` は塗り色として使われないまま**本文の色を決める基準になる**。
+暗い絵に白文字を乗せるなら、そのまま（既定）でよい。
+明るい絵に黒文字を乗せるなら明示する。
+
+```json
+"main": {
+  "x": 20, "y": 694, "w": 300, "h": 260,
+  "background": "frame_light",
+  "text_color": "BLACK"
+}
+```
 
 #### `char_spacing`（字間）の既定値は向きで変わる
 
