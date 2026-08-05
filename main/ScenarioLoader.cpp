@@ -286,6 +286,16 @@ std::string ScenarioLoader::defaultTextDirection() const
                      "text_direction", "VERTICAL");
 }
 
+std::string ScenarioLoader::fontPath() const
+{
+    const cJSON* meta = cJSON_GetObjectItemCaseSensitive(_root, "meta");
+    const std::string rel = getString(meta, "font");
+    if (rel.empty()) {
+        return "";
+    }
+    return _basePath + "/" + rel;
+}
+
 int ScenarioLoader::rotation() const
 {
     const cJSON* meta = cJSON_GetObjectItemCaseSensitive(_root, "meta");

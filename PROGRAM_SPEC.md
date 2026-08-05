@@ -3,10 +3,15 @@
 M5Paper S3（ESP32-S3 + 電子ペーパー）向け、**日本語縦書き表示を備えたアドベンチャーゲーム基盤**。
 
 - 対象: `main/` コンポーネント
-- 最終更新: 2026-07-31
+- 最終更新: 2026-08-04
 
-> 本書はプログラムの**現在の仕様**を説明する。
-> 過去の不具合とその修正経緯は [REFACTORING_LOG.md](REFACTORING_LOG.md) を参照。
+**この文書の位置づけ**
+
+| 文書 | 内容 |
+|---|---|
+| **`PROGRAM_SPEC.md`（本書）** | **プログラムの構成。実装する人が読む** |
+| `SCENARIO_SPEC.md` | シナリオデータの書き方。作品を作る人が読む |
+| `REFACTORING_LOG.md` | 改修の作業記録。過去の不具合とその経緯 |
 
 ---
 
@@ -24,18 +29,25 @@ M5Paper S3（ESP32-S3 + 電子ペーパー）向け、**日本語縦書き表示
 
 ## 1. システム概要
 
-### 1.1 目的と現在地
+### 1.1 これは何か
 
-電子ペーパー端末上で、日本語（縦書き対応）テキストと画面遷移演出を用いた
-アドベンチャーゲームを動かすための**基盤**。
+**SD カードに置いた JSON のシナリオを読んで再生する、電子ペーパー用のアドベンチャーゲーム基盤。**
 
-現状は**各サブシステムの動作検証段階**であり、次のものはまだ存在しない。
+起動するとシステムメニューが出て、`scenarios/` にあるシナリオを選ぶと再生が始まる。
+シナリオの書き方は [`SCENARIO_SPEC.md`](SCENARIO_SPEC.md) にある。
 
-- ゲームシナリオのデータ構造とローダ（テキストはソースにハードコード）
-- シーン遷移のステートマシン（タッチで 1→2→3 を循環するだけ）
-- セーブ／ロード
+動くもの:
 
-`main/hello_world_main.cpp` はアプリ本体というより**各機能のデモ兼テストハーネス**である。
+- シナリオの読み込み・検証・実行（20 コマンド）
+- 分岐、変数、条件式、シーンの呼び出し
+- 縦書き / 横書き、ルビ、ページ送り、文字送り、名前付きテキストボックス
+- 背景・立ち絵・一枚絵、画面遷移 10 種
+- セーブ / ロード、中断と再開（電源を切って栞を残す）
+- ブザー、電池残量、電源 OFF、USB MSC での SD 公開
+
+> `main/hello_world_main.cpp` は各機能の動作確認を1ファイルに詰めた旧デモで、
+> **ビルド対象から外してある**（`main/CMakeLists.txt` でコメントアウト）。
+> 現在の入口は `main/main.cpp`。
 
 ### 1.2 ハードウェア構成
 
@@ -43,11 +55,14 @@ M5Paper S3（ESP32-S3 + 電子ペーパー）向け、**日本語縦書き表示
 |---|---|---|
 | SoC | ESP32-S3（rev v0.2） | 240MHz / デュアルコア |
 | PSRAM | 8MB / Octal / 80MHz | `CONFIG_SPIRAM_MODE_OCT=y`（M5PaperS3 の必須条件） |
-| Flash | 16MB / QIO / 80MHz | |
-| ディスプレイ | 電子ペーパー 540 × 960 | パネル native は 960×540、`offset_rotation=3` で縦向き |
-| 色深度 | **8bit グレースケール** | 後述（1.4）の注意を参照 |
+| Flash | 16MB / QIO / 80MHz | アプリ領域 10.5MB |
+| ディスプレイ | 電子ペーパー 540 × 960 | パネル native は 960×540、`offset_rotation=3` |
+| 階調 | **16 階調（4bpp）** | 後述（1.4） |
 | タッチ | GT911（I2C, SDA=41 / SCL=42 / INT=48） | ボード自動検出に使われる |
 | SDカード | SPI（SPI2_HOST） | MISO=40 / MOSI=38 / SCK=39 / CS=47、マウント先 `/sdcard` |
+| ブザー | GPIO21 | LEDC PWM |
+| 電源制御 | GPIO44 → PMS150G | パルス列で電源を切る |
+| 電池電圧 | ADC1 ch2（GPIO3） | 分圧比 2.0 |
 | USB | TinyUSB（MSCデバイス） | SDカードをPCへ公開 |
 
 ボードは `display.begin()` 内の自動検出で判定される。起動ログに次が出れば成功。
@@ -56,25 +71,30 @@ M5Paper S3（ESP32-S3 + 電子ペーパー）向け、**日本語縦書き表示
 I (xxx) M5GFX: [Autodetect] board_M5PaperS3
 ```
 
-### 1.3 主要機能
+### 1.3 モジュール一覧
 
-| 機能 | 担当モジュール |
-|---|---|
-| SDカードのマウント・ファイル一覧・PNG表示 | `SDCardWrapper` |
-| USB MSC によるSDカードのPC公開 | `SDCardWrapper` |
-| タッチ／リリース／スワイプ検出 | `TouchHandler` |
-| ボタンUI（矩形・角丸、Display/Canvas両対応） | `Button` / `ButtonManager` |
-| VLWフォントのメトリクス解析 | `VLWFontParser` |
-| 日本語の縦書き・横書き描画 | `TypoWrite` |
-| 画面遷移エフェクト（10種） | `SimpleTransition` |
-| PSRAMダブルバッファの性能検証 | `CanvasTest` |
+| 層 | ファイル | 責務 |
+|---|---|---|
+| 入口・統括 | `main.cpp` | 初期化、画面の切り替え、メインループ |
+| 画面 | `SystemMenu.*` | シナリオ一覧、USB / サウンド / 情報 / 電源、「続きから」 |
+| シナリオ | `ScenarioLoader.*` | JSON の読み込み・検証・アセットのパス解決 |
+| | `ScenarioPlayer.*` | シーンとコマンドの実行、変数、セーブ |
+| テキスト | `TextSystem.*` | フォントと描画器の生成・保持、名前付きボックス |
+| | `TypoWrite.*` | 日本語組版（縦書き・横書き・ルビ・ページ送り） |
+| | `VLWFontParser.*` | VLW フォントのメトリクス解析 |
+| 入出力 | `SDcard.*` | FATFS マウント、ファイル I/O、USB MSC |
+| | `TouchHandler.*` | 生タッチ座標のイベント化 |
+| | `Button.*` | ボタン描画と入力ディスパッチ |
+| 演出・周辺 | `SimpleTransition.*` | 画面遷移、フルリフレッシュ、残像消去 |
+| | `Buzzer.*` | ブザー（LEDC PWM、非同期の音列） |
+| | `Power.*` | 電源を切る、電池残量 |
+| | `Settings.*` | 本体設定（`system/settings.json`） |
 
-### 1.4 色深度についての重要な注意
+### 1.4 階調についての重要な注意
 
-`main` は `display.setColorDepth(1)` を呼んでいるが、**この呼び出しは効果がない**。
+**この機種は白黒2値ではない。常に 16 階調（4bpp）である。**
 
-`Panel_EPD::setColorDepth()` が要求値を無視して内部を常に `grayscale_8bit` に固定するためで、
-実際の描画は8bitグレースケールで行われる。
+`Panel_EPD::setColorDepth()` は**引数を無視して**内部を常に `grayscale_8bit` に固定する。
 
 ```cpp
 color_depth_t Panel_EPD::setColorDepth(color_depth_t depth)
@@ -84,6 +104,18 @@ color_depth_t Panel_EPD::setColorDepth(color_depth_t depth)
     return depth;
 }
 ```
+
+パネルのバッファも `(幅 × 高さ) / 2` の 4bpp で確保される。
+そのため `setColorDepth()` を呼ぶ意味は無く、`main.cpp` では呼んでいない
+（以前は `setColorDepth(1)` と書いてあったが、効果が無いうえに
+「白黒2値の機種」という誤解を生むので削除した）。
+
+階調が実際に見えるかは **EPD モード**で決まる。
+
+| モード | 階調 |
+|---|---|
+| `epd_quality` / `epd_text` | 16 階調そのまま |
+| `epd_fast` / `epd_fastest` | ベイヤーディザで2階調 |
 
 一方 **`M5Canvas` は親の色深度を継承しない**。`LGFX_Sprite` のコンストラクタが
 自身の既定値を使うため、`rgb565_2Byte`（16bpp）で作られる。
@@ -122,21 +154,35 @@ VSCode の `ESP-IDF: Build your project`、または IDF ターミナルで:
 
 ```
 idf.py build
-idf.py -p COM7 flash monitor
+idf.py -p COM5 flash monitor
 ```
 
 生の `ninja` タスクを直接叩かないこと（前項のフォールバックを踏む）。
 
 ### 2.3 コンポーネント構成
 
-`main/CMakeLists.txt`:
+`main/CMakeLists.txt` の `SRCS`（`hello_world_main.cpp` はコメントアウト）:
+
+```
+main.cpp  SystemMenu.cpp  ScenarioLoader.cpp  ScenarioPlayer.cpp
+TextSystem.cpp  TypoWrite.cpp  VLWFontParser.cpp
+SDcard.cpp  TouchHandler.cpp  Button.cpp
+SimpleTransition.cpp  Buzzer.cpp  Power.cpp  Settings.cpp
+```
 
 | 区分 | 内容 |
 |---|---|
-| SRCS | `hello_world_main.cpp`, `SDcard.cpp`, `TouchHandler.cpp`, `Button.cpp`, `TypoWrite.cpp`, `VLWFontParser.cpp`, `SimpleTransition.cpp`, `CanvasTest.cpp` |
 | PRIV_REQUIRES | `M5GFX` |
-| REQUIRES | `fatfs`, `esp_lcd`, `driver`, `esp_timer`, `tinyusb`, `esp_tinyusb`, `esp_psram` |
+| REQUIRES | `fatfs`, `esp_lcd`, `driver`, `esp_timer`, `tinyusb`, `esp_tinyusb`, `esp_psram`, `json`, `esp_adc`, `app_update` |
 | INCLUDE_DIRS | `.`, `fonts` |
+
+後から足した `REQUIRES` の理由:
+
+| 名前 | 用途 |
+|---|---|
+| `json` | cJSON（ESP-IDF 同梱）。シナリオと設定の解析 |
+| `esp_adc` | 電池電圧の測定 |
+| `app_update` | `esp_app_get_description()`。メニューの情報画面 |
 
 外部コンポーネント:
 
@@ -146,7 +192,27 @@ idf.py -p COM7 flash monitor
 | espressif/tinyusb | `managed_components/`（コンポーネントマネージャ） | 0.18.0~2 |
 | espressif/esp_tinyusb | `managed_components/` | 1.7.2 |
 
-### 2.4 フォントリソース
+### 2.4 sdkconfig.defaults
+
+長いファイル名（LFN）の有効化が**必須**。
+
+```
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=255
+```
+
+ESP-IDF の FATFS は既定で 8.3 形式しか扱えない（`CONFIG_FATFS_LFN_NONE`）。
+`scenarios`（9文字）・`scenario.json`（拡張子4文字）はどちらも 8.3 に収まらず、
+LFN が無いと `stat()` も `fopen()` も失敗する。
+
+`STACK` ではなく `HEAP` を選ぶのは、LFN の作業バッファ（最大 255×2 バイト）が
+タスクスタックに載るとスタック不足を招きやすいため。
+
+> **`sdkconfig.defaults` は ASCII のみで書くこと。**
+> `kconfgen` がこのファイルをシステムのコードページ（日本語 Windows なら cp932）で
+> 読むため、日本語コメントを入れると `UnicodeDecodeError` でビルドが落ちる。
+
+### 2.5 フォントリソース
 
 `main/fonts/` には現在 **`shippori_16.h` のみ**が置かれている。
 
@@ -155,16 +221,62 @@ idf.py -p COM7 flash monitor
 | シンボル | `const uint8_t shippori[]`（`.rodata.font` セクション） |
 | 生成元 | `ShipporiMincho-Regular-16.vlw` |
 | 形式 | VLW version 11 |
-| フォントサイズ | 16pt |
+| フォントサイズ | 16pt（**ただし全角の送りは 17px**。下記） |
 | グリフ数 | 4414（U+0021〜U+FF9F、**unicode昇順・重複なし**） |
 | ascent / descent | 19 / −5（fontHeight = 24） |
 | 最大グリフ | 18 × 17 |
+| ファイルサイズ | 約 1.12 MB |
 
-未使用のフォントは `append/font/` に退避してある（生成スクリプトとTTFも同ディレクトリ）。
+> **このフォントは宣言サイズと実際の送り幅が食い違っている。**
+> ヘッダは 16pt と名乗るが、全角の送りは 17px（半角 `A` も 12px のところ 14px）。
+> 生成に使った `append/font/ttf2vlw.py` が送り幅を
+> 「レイアウト矩形の幅 + サイズ×0.1」で出していたため。
+>
+> 縦書き字形のうち 3 つ（U+FE30 / FE32 / FE33）は
+> **フォントに無いのに豆腐が入っている**。
+> 半角スペース（U+0020）と全角スペース（U+3000）は逆に**欠落している**。
+>
+> 作り直すなら [`tools/make_font.py`](tools/README.md#make_fontpy) を使う。
+> 同じ文字集合で 1.00MB、全角の送りはちょうど 16px になる。
+> **ただし送りが変わると1行に入る字数が変わる**ので、
+> 差し替えたら `textboxes` の寸法を実機で見直すこと。
+
+素材の TTF と過去の生成物は `append/font/` にある。
+中身の棚卸しは [`append/font/README.md`](append/font/README.md)。
 
 > **注意**: フォントヘッダはファイル名にサイズが入るが**シンボル名には入らない**。
 > 例えば `shippori.h` と `shippori_16.h` はどちらも `shippori[]` を定義するため、
 > 2つ同時に `#include` すると重複定義になる。
+>
+> `append/font/` の生成物は**ファイル名・宣言サイズ・実際の送り幅が
+> ばらばら**なので、名前を当てにしないこと
+> （`mplus2_16.h` は名前が 16、宣言が 32、送りが 17px）。
+
+### フォントを作る
+
+```
+python tools/make_font.py append/font/ShipporiMincho-Regular.ttf \
+    --size 16 --header main/fonts/shippori_16.h --symbol shippori
+```
+
+使い方は [`tools/README.md`](tools/README.md#make_fontpy)。
+
+**サイズを増やすときの目安。** VLW のサイズは pt の約 1.56 乗で増える
+（pt² ではない。グリフの多くが小さく、ビットマップが正方形にならないため）。
+
+| サイズ | ファイル |
+|---|---|
+| 16pt | 1.00 MB |
+| 20pt | 1.46 MB |
+| 24pt | 2.05 MB |
+
+アプリ領域は 10.5MB あり現在の使用は約 2MB なので、数種類は追加できる。
+
+### 2.6 SD カードの中身
+
+`microsd_sample/` の**中身**（`scenarios/` と `system/`）を
+SD のルート直下へコピーする。21 本のサンプルが入っている。
+詳細は `microsd_sample/README.md`。
 
 ---
 
@@ -178,243 +290,319 @@ graph TD
     B --> C["setup()"]
     B --> D["loop()"]
 
-    C --> E[SDCardWrapper]
-    C --> F[CanvasTest]
-    C --> G[SimpleTransition]
-    C --> H[TouchHandler]
-    C --> I[ButtonManager + Button x5]
-    C --> J["textDisplayDemo()"]
+    D --> E{currentScreen}
+    E -->|Menu| F[SystemMenu]
+    E -->|Playing| G[ScenarioPlayer]
 
-    J --> K[VLWFontParser]
-    J --> L[TypoWrite]
-    L --> K
+    F --> H["ButtonManager<br/>(メニュー所有)"]
+    G --> I[ScenarioLoader]
+    G --> J["ButtonManager<br/>(選択肢用)"]
+    G --> K[TextSystem]
+    G --> L[SimpleTransition]
 
-    D --> G
-    D --> I
-    I --> H
-    E --> M[USB MSC / TinyUSB]
+    K --> M[TypoWrite]
+    M --> N[VLWFontParser]
 
-    subgraph 描画層
-        G --> N["M5Canvas 540x960<br/>(PSRAM, rgb565)"]
-        F --> O["M5Canvas x2"]
-        L --> P["LGFX_Sprite<br/>(文字単位)"]
-    end
-    N --> Q[M5GFX display]
-    O --> Q
-    P --> Q
-    I --> Q
+    H --> O[TouchHandler]
+    J --> O
+    F --> P[SDCardWrapper]
+    I --> P
+    G --> Q[Buzzer]
+    F --> R[Power]
+    F --> S[Settings]
+    G --> S
+
+    L --> T["M5Canvas<br/>(PSRAM, rgb565)"]
+    T --> U[M5GFX display]
+    M --> U
+    H --> U
 ```
 
-| レイヤ | クラス | 責務 |
-|---|---|---|
-| アプリ | `hello_world_main.cpp` | 初期化、シーン描画、イベント配線、メインループ |
-| UI | `Button`, `ButtonManager` | ボタン描画と入力ディスパッチ |
-| 入力 | `TouchHandler` | 生タッチ座標のイベント化 |
-| テキスト | `TypoWrite`, `VLWFontParser` | 日本語組版とフォントメトリクス |
-| 演出 | `SimpleTransition` | Canvas → 画面の段階的転送 |
-| 検証 | `CanvasTest` | PSRAM・描画性能の測定 |
-| ストレージ | `SDCardWrapper` | FATFSマウント、ファイルI/O、USB MSC |
+**依存の向きは一方向。** `ScenarioPlayer` は UI を持たず、
+`SystemMenu` はシナリオの中身を知らない。両者をつなぐのは `main.cpp` だけ。
 
 ### 3.2 起動シーケンス
 
 ```
 app_main()                     ← core0（IDF既定）
-  └ initializeTask()
-      └ xTaskCreatePinnedToCore("task1-main", stack 8192, prio 1, core 1)
-          └ runMainLoop()
-              ├ setup()        ← 1回だけ
-              └ for(;;) { loop(); vTaskDelay(1); }
+  └ xTaskCreatePinnedToCore("task1-main", stack 8192, prio 1, core 1)
+      └ runMainLoop()
+          ├ setup()            ← 1回だけ
+          └ for(;;) { loop(); vTaskDelay(1); }
 ```
 
-`setup()` の処理順:
+`setup()` の処理順。**順序に意味があるものには理由を書いてある。**
 
-1. `display.begin()` → `setEpdMode(epd_quality)` → `setColorDepth(1)` → `fillScreen(TFT_BLACK)`
-2. `SD.init()` → `tes.png` があれば表示 → ファイル一覧表示
-3. `CanvasTest` 生成 + `init()`（Canvas 2枚 ≒ 2MB）
-4. `SimpleTransition` 生成 + `init(true)`（Canvas 1枚 ≒ 1MB）
-5. `TouchHandler::init()` → 成功時のみ `ButtonManager` とボタン5個を生成
-6. `textDisplayDemo()`（VLW初期化 + 縦書きサンプル描画）
+| # | 処理 | 順序の理由 |
+|---|---|---|
+| 1 | `display.begin()` | |
+| 2 | `setRotation(MENU_ROTATION)` | **描画より前**。以後の座標がこの向きで決まる |
+| 3 | `setEpdMode(epd_quality)` | |
+| 4 | `SimpleTransition::clearGhosting()` | 起動時の残像対策（[4.8](#48-simpletransition--画面遷移)） |
+| 5 | `buzzer.begin()` / `power.begin()` | 失敗しても起動は続ける |
+| 6 | `ScenarioLoader::initAllocator()` | **最初の解析より前**。cJSON の確保先を PSRAM へ向ける |
+| 7 | `textSystem.begin()` | VLW 解析（約138KB）+ 描画器2つの生成 |
+| 8 | `SD.init()` | |
+| 9 | `settings.load()` → `buzzer.setMuted()` | **SD の後**。設定を使う前 |
+| 10 | `simpleTransition->init()` | 画面の大きさからキャンバスを確保（約1MB） |
+| 11 | `touchHandler.init()` | |
+| 12 | `choiceButtonManager` 生成 | |
+| 13 | `systemMenu.begin()` → `enterMenu()` | |
 
-生成されるボタン（すべて y=350）:
-
-| 変数 | x, w | ラベル | 役割 |
-|---|---|---|---|
-| `btnTest` | 10, 100 | テストボタン | 動作確認・スワイプ検証 |
-| `btnUSBMSC` | 120, 100 | USB MSC | USB MSC の有効/無効トグル |
-| `btnCanvasTest` | 230, 100 | Canvas Test | Canvas 3種テストの連続実行 |
-| `btnTransitionTest` | 340, 100 | Simple Trans | トランジションデモ開始 |
-| `btnCanvasStop` | 450, 80 | Stop Test | 中断（初期状態は非表示） |
+**どれが失敗しても `setup()` は最後まで進む。** SD が無い、タッチが壊れている、
+といった状態でも起動して原因がログと画面に出る方が、無言で止まるより扱いやすい。
 
 ### 3.3 メインループ
 
 `loop()` は約10ms周期（`vTaskDelay(1)` × `CONFIG_FREERTOS_HZ=100`）で回る。
-処理は優先順に次のとおり。
 
-1. **トランジション実行中**なら `simpleTransition->update()` だけ実行して `return`
-2. **トランジションデモ中**（`TestMode::SIMPLE_TRANSITION`）ならタッチで次シーンへ進めて `return`
-3. 5秒間隔で USB MSC の接続状態を表示
-4. `buttonManager->update()`（内部で `TouchHandler::update()` を呼ぶ）
+```
+1. トランジション実行中なら update() だけして return
+2. touchHandler.update()          ← ここで1回だけ（7.1）
+3. currentScreen で分岐
+     Menu    : systemMenu.update() → 選択があれば enterPlaying()
+     Playing : 下の優先順で1つだけ処理
+```
 
-`TestMode` はテスト実行状態を表す列挙で、`NORMAL` 以外のときは
-各コールバックが早期 return して通常表示を汚さないようにしている。
+`Playing` の分岐順は次のとおり。**順序に意味がある。**
 
-### 3.4 グローバルオブジェクト
+| 順 | 条件 | 処理 |
+|---|---|---|
+| 1 | `isWaitingTransition()` | ここへ来た時点で遷移は終わっている（上で return 済み） |
+| 2 | `isWaitingChoice()` | 未表示なら選択肢を並べ、`choiceButtonManager->update()` |
+| 3 | タッチあり | `onTap()`。文字送り中なら全文表示へ飛ぶ |
+| 4 | `isWaiting()` | `tickWait()`。`skippable` は 3 で先に飛ばされる |
+| 5 | `isTyping()` | `tickTyping()` |
+
+**タップの判定を文字送りより前に置く**のは、送っている最中のタップを
+取りこぼさないため。
+
+最後に `isFinished()` なら `leavePlaying()` でメニューへ戻る。
+
+### 3.4 画面の切り替え
+
+```cpp
+enum class AppScreen { Menu, Playing };
+```
+
+| 関数 | 処理 |
+|---|---|
+| `enterMenu()` | 向きを `MENU_ROTATION` へ戻す → `systemMenu.enter()` |
+| `enterPlaying(id, resume)` | メニューを片付ける → JSON 読み込み → **向きを適用** → 再生開始 |
+| `leavePlaying()` | 選択肢とテキストボックスを捨て、JSON を解放 → `enterMenu()` |
+| `applyRotation(r)` | `setRotation()` + キャンバス作り直し + 既定ボックス配置 + 残像消去 |
+
+**ボタンの集合は画面ごとに別。** `SystemMenu` は自分の `ButtonManager` を
+`enter()` で作って `leave()` で捨てる。1つを共有すると画面を移るたびに
+隠す・戻すの操作が要り、隠し忘れが事故になる
+（再生中にメニューのボタンが押せる、など）。
+
+**`applyRotation()` は `setRotation()` だけでは足りない。**
+回転すると 540×960 と 960×540 が入れ替わるので、
+トランジションのキャンバスと既定のテキストボックスも追従させる必要がある（[5.2](#52-画面の向き)）。
+
+### 3.5 グローバルオブジェクト
 
 | 名前 | 型 | 定義場所 |
 |---|---|---|
-| `display` | `M5GFX` | `hello_world_main.cpp` |
-| `SD` | `SDCardWrapper` | `SDcard.cpp`（`extern` は `SDcard.hpp`） |
-| `touchHandler` | `TouchHandler` | `hello_world_main.cpp` |
-| `vlwParser` | `VLWFontParser` | `hello_world_main.cpp` |
-| `buttonManager` / `btn*` / `canvasTest` / `simpleTransition` | ポインタ | `setup()` 内で `new`（解放されない） |
+| `display` | `M5GFX` | `main.cpp` |
+| `touchHandler` | `TouchHandler` | `main.cpp` |
+| `systemMenu` / `scenarioLoader` / `scenarioPlayer` | 各クラス | `main.cpp` |
+| `simpleTransition` / `choiceButtonManager` | ポインタ | `setup()` 内で `new`（解放されない） |
+| `SD` | `SDCardWrapper` | `SDcard.cpp` |
+| `textSystem` | `TextSystem` | `TextSystem.cpp` |
+| `buzzer` | `Buzzer` | `Buzzer.cpp` |
+| `power` | `Power` | `Power.cpp` |
+| `settings` | `Settings` | `Settings.cpp` |
+
+各モジュールが1つずつグローバル実体を持つのは `SD` に合わせた流儀。
+複数持つ意味が無く、引き回しのコストだけが増えるため。
 
 ---
 
 ## 4. モジュール仕様
 
-### 4.1 `SDCardWrapper` — SDカード / USB MSC
+### 4.1 `main.cpp` — 入口と画面の統括
 
-`lgfx::v1::DataWrapper` を継承しているため、
-`display.drawPngFile(&SD, path, x, y)` のように M5GFX の画像デコーダへ直接渡せる。
-グローバルインスタンス `SD` が1つ存在する。
+3章のとおり。ここが持つのは次の3つだけ。
 
-**主なAPI**
+- 初期化の順序（[3.2](#32-起動シーケンス)）
+- 画面の切り替え（[3.4](#34-画面の切り替え)）
+- **選択肢の UI**
+
+**選択肢の描画と入力は `ScenarioPlayer` の外にある。**
+プレイヤーは `choiceLabels()` / `choiceEnabled()` / `choicePrompt()` を公開するだけで、
+ボタンを持たない。プレイヤーが `ButtonManager` を握ると、
+メニュー側とレイアウトの持ち方が二重になるため。
+
+`choiceEnabled()` が false の選択肢は灰色で描かれ、押しても何も起きない
+（`hide_if_false: false` を指定した選択肢がこれになる）。
+
+### 4.2 `SystemMenu` — システムメニュー
+
+`SD` の `scenarios/` を列挙してシナリオを選ばせる。
+
+| 表示 | 内容 |
+|---|---|
+| 一覧 | 1ページ8件。上下スワイプでページ送り |
+| 「続きから」 | 栞があるときだけ最上段に出る |
+| 下段のボタン5個 | USB / 再読込 / サウンド / 情報 / 電源（各 108×80 の画像アイコン） |
+
+**タイトルは JSON を全部読まずに取る。**
+`ScenarioLoader::peekTitle()` が**先頭 4KB だけ**を読み、文字列走査で
+`meta.title` を拾う。全フォルダの JSON を解析すると、
+シナリオが増えるほどメニューの表示が待たされるため。
+4KB より後ろに `meta` があるとフォルダ名が出る（動作は壊れない）。
+
+**アイコンは firmware に埋め込んである。** SD から読むと、
+USB MSC が有効な間（＝ファイル操作が全て失敗する間）にメニューが描けなくなる。
+生成は `tools/make_icons.py`。
+
+| 操作 | 挙動 |
+|---|---|
+| USB | MSC の有効／無効を切り替える。無効化時に一覧を読み直す |
+| 電源 | **2回タップで実行**。5秒で自動キャンセル |
+
+電源を切る前に `clearGhosting()` → ロゴ描画 → `waitDisplay()` →
+**3秒待つ**（`SHUTDOWN_SETTLE_MS`）。
+待ちが短いと走査が終わりきる前に電源が落ち、画面上部に横線が残る。
+
+### 4.3 `ScenarioLoader` — シナリオ JSON
+
+`scenarios/<id>/scenario.json` を読んで cJSON のツリーにし、保持する。
 
 | メソッド | 説明 |
 |---|---|
-| `init()` / `init(miso,mosi,sck,cs,...)` | SPIバス初期化 + FATFSマウント。**失敗時はSPIバスを解放**するので挿抜リトライが可能 |
-| `open/close/read/seek/skip/tell` | `DataWrapper` の実装。M5GFX から呼ばれる |
-| `exists/mkdir/remove/size` | ファイル操作 |
-| `listDir(path)` / `freeDirInfo()` | ディレクトリ一覧。`DirInfo` は `malloc` で確保されるので**呼び出し側が `freeDirInfo()` する** |
-| `enableUSBMSC()` / `disableUSBMSC()` | USB MSC の有効／無効 |
-| `isUSBMSCEnabled()` / `isUSBMSCConnected()` | 状態取得 |
+| `initAllocator()` | **static。最初の解析より前に1回だけ**。cJSON の確保先を PSRAM へ向ける |
+| `load(id)` / `unload()` | 読み込みと解放 |
+| `peekTitle(id)` | 先頭 4KB だけ読んでタイトルを推定（一覧用） |
+| `rotation()` / `defaultTextDirection()` / `version()` / `title()` | `meta` の値 |
+| `variablesNode()` / `textBoxesNode()` / `findScene(id)` | ツリーの部分木 |
+| `resolveBackgroundPath()` / `resolveCharaPath()` / `resolveTextBoxBackground()` | 論理名 → フルパス |
 
-**内部の仕組み**
+**`initAllocator()` を忘れると内部 RAM が枯れる。**
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` により 16KB 以下の確保は
+内部 RAM から行われる。cJSON のノードは1個 40 バイトなので、
+既定のままでは数万ノードが全て内部 RAM に載ってしまう。
 
-- パス構築は private の `buildFullPath()` に集約。`/sdcard` プレフィックスが無ければ付加し、
-  切り詰めが起きたら失敗を返す（`snprintf` なので出力は常にNUL終端）。
-- USB MSC 有効中はファイルアクセスAPIがすべてエラーを返す。
-  SDカードの所有権が USBホスト側へ移るため。
-- USB MSC の有効化／無効化はセットアップの逆順で対称に行う。
-
-```
-enableUSBMSC : tinyusb_driver_install → tinyusb_msc_storage_init_sdmmc → storage_unmount
-disableUSBMSC: storage_mount → tinyusb_msc_storage_deinit → tinyusb_driver_uninstall
+```cpp
+cJSON_InitHooks(&hooks);   // malloc -> heap_caps_malloc(MALLOC_CAP_SPIRAM)
 ```
 
-`tinyusb_msc_storage_deinit()` はハンドルを解放するだけで FATFS をアンマウントしないため、
-先に `storage_mount()` しておけば無効化後もアプリから `/sdcard` を読める。
+効いているかは読み込みログで分かる。
 
-### 4.2 `TouchHandler` — タッチ入力
+```
+I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source), internal delta: 0 bytes
+```
 
-**型**
+`internal delta` が大きければ呼び忘れ。
 
-| 型 | 値 |
+**読み込み時に検証する。** 未定義シーンへの `jump`、`assets` に無い画像名、
+`start` の妥当性などを調べ、**問題があっても読み込みは続ける**。
+SD 上の手書き JSON は必ず壊れるので、1箇所の誤りで全体が動かない方が困る。
+
+```
+W (xxx) SCENARIO:   scene 'main': jump to undefined scene 'no_such_scene'
+W (xxx) SCENARIO: Validation found 3 issue(s). Loading anyway
+```
+
+### 4.4 `ScenarioPlayer` — コマンドの実行
+
+**20 コマンドを1つずつ実行する。** 仕様は [`SCENARIO_SPEC.md`](SCENARIO_SPEC.md) の4章。
+
+**実行位置はフレームのスタック**
+
+```cpp
+struct Frame { const cJSON* commands; int index; };
+std::vector<Frame> _frames;
+```
+
+`if` の `then` / `else` は入れ子の配列なので、
+「今どの配列のどこを見ているか」を積み重ねて持つ必要がある。
+添字1個では入れ子から戻れない。
+
+`call` は**シーンごと**移るので、シーン ID とフレーム一式を別のスタック
+（`_callStack`、深さ上限 16）へ退避する。
+
+**待ちの種類はコマンドの戻り値が持つ**
+
+```cpp
+enum class CmdResult {
+    Next, StayAndWaitTap, NextAndWaitTap, NextAndWaitTransition,
+    NextAndWaitChoice, StayAndType, NextAndWaitTime,
+    Pushed, Jumped, Finished,
+};
+```
+
+`_state` を設定するのは `run()` の1箇所だけ。
+各コマンドが直接触ると、状態と実行位置の整合を保つ場所が散らばる。
+
+`run()` は「コマンドを実行 → 添字を進める」の順で回る。
+**この順序が `suspend` の落とし穴になっていた**（4.4 の末尾を参照）。
+
+無限ループ対策として、待ちが入らないまま 1000 コマンド進んだら打ち切る
+（手書きの JSON は `jump` が輪になっていることがある）。
+
+**画面は `renderStage()` に集約**
+
+背景・立ち絵・前面絵は重なるので、片方だけ描くと破綻する。
+
+- 立ち絵だけ描く → 前の立ち絵が消えずに重なる
+- 背景だけ描く → 立ち絵が消える
+
+`bg` も `chara` も `image` も、必ずこの1つを通して**背景から描き直す**。
+
+**セーブは1箇所で組む**
+
+| メソッド | 役割 |
 |---|---|
-| `ExtendedTouchPoint` | `x`, `y`, `timestamp`（ms） |
-| `SwipeDirection` | `None` / `Up` / `Down` / `Left` / `Right` |
-| `TouchEvent` | `None` / `Touch` / `Release` |
+| `buildStateObject()` | 状態を cJSON にまとめる（`slot` は含めない） |
+| `writeStateObject(root, slot)` | `slot` を足して書き、`root` を解放 |
+| `saveToSlot(slot)` | 控えがあれば複製、無ければ組む → 書き出す |
+| `loadFromSlot(slot)` | 読んで状態を差し替え、`renderStage()` で描き直す |
 
-**イベントモデル**
+`checkpoint` が控えた状態（`_checkpoint`）も `buildStateObject()` で作る。
+別々に組むと、保存項目を足したときに片方だけ直す事故が起きる。
 
-`update()` を呼ぶたびにハードウェアを読み、状態遷移からイベントを1回だけ生成する。
-**破壊的メソッドなので、1ループにつき1回だけ呼ぶこと**（後述 7章）。
+**`suspend` の再開位置**
 
-- タッチ開始 → `TouchEvent::Touch` + `onTouchStart` コールバック
-- タッチ終了 → `TouchEvent::Release` + `onTouchEnd` コールバック
-- 終了時に移動量が閾値（`setMinSwipeDistance()`、既定30・`main` は50）を超えていれば
-  `_lastSwipe` に方向を設定し `onSwipe` コールバック
+`run()` は「実行 → 添字を進める」の順なので、
+`suspend` の中で保存した位置は **`suspend` コマンド自身**を指す。
+そのまま保存すると、再開のたびに `suspend` を踏んで電源が落ち、操作できなくなる。
 
-**スワイプは Release と排他ではない。** `isReleaseEvent()` と `isSwipeEvent()` は
-同時に true になりうる。スワイプは「方向を伴うタッチ終了」として扱う。
+対策は2つ。
 
-`_lastEvent` と `_lastSwipe` は `update()` の先頭で毎回クリアされるため、
-`getLastSwipe()` などは**同じ更新サイクル内で参照する**必要がある。
+1. `checkpoint` があればそれを書く（作者が戻り先を決める）
+2. 無ければ**保存の直前に添字を1つ進める**
 
-スワイプ方向は移動量の大きい軸で決まる。採用される軸は必ず `max(|dx|, |dy|)` なので、
-閾値判定は「主軸の移動量が閾値以上か」と等価。
+電源を切る直前なので、実行位置を書き換えて構わない。
 
-### 4.3 `Button` / `ButtonManager` — ボタンUI
+### 4.5 `TextSystem` — フォントと描画器の保持
 
-**`Button`**
+フォント解析と描画器の生成は重いので、**起動時に1回だけ**行って使い回す。
 
-| 項目 | 内容 |
+- `VLWFontParser::init()` … 約138KB の確保 + 4414グリフの解析
+- `TypoWrite` の構築 … マッピングテーブル構築 + スプライト確保
+
+| 種類 | 生存期間 |
 |---|---|
-| 状態 | `Normal` / `Pressed` / `Disabled` |
-| スタイル | `ButtonStyle`（状態別の背景・文字・枠線色、枠線幅、角丸半径） |
-| 描画先 | `setDrawTarget(canvas)` で Canvas、`nullptr` なら Display |
-| コールバック | 押下 / 離上 / スワイプ4方向 |
+| 既定の2つ（`vertical()` / `horizontal()`） | 起動から終了まで |
+| 名前付きボックス（`textboxes`） | シナリオを開いている間だけ |
 
-描画は `drawTo(lgfx::LovyanGFX*)` の1本で行う。
-`LGFX_Sprite` と `M5GFX` はどちらも `lgfx::LovyanGFX` 派生なので、
-Canvas と Display を同じコードで扱える。
+`defineBox()` は同じ名前が来たら**作り直さず設定だけ入れ替える**。
 
-**`ButtonManager`**
+**既定ボックスの位置は画面の向きで変わる**（`layoutDefaultBoxes()`）。
 
-最大32個の `Button*` を保持し、`update()` で入力を配送する。
-
-> **所有権**: `ButtonManager` はボタンを**所有しない**。
-> 生成と破棄は呼び出し側の責任で、デストラクタ・`clearButtons()`・`removeButton()`
-> のいずれも `delete` しない。所有させたい場合は `unique_ptr` を受け取るAPIに変更すること。
-
-`update()` の処理:
-
-| イベント | 動作 |
-|---|---|
-| Touch | 座標を含むボタンを `Pressed` にして再描画、`onPressed` を発火 |
-| Release | 押下中のボタンを `Normal` に戻して再描画。**スワイプが成立していなければ**、離した位置がボタン内のとき `onReleased` を発火。スワイプ成立時はタッチ開始位置のボタンへスワイプを配送 |
-
-### 4.4 `VLWFontParser` — VLWフォント解析
-
-VLW（Processing の Vector Letterform Workshop 形式）バイナリを解析し、
-メトリクスを提供する。**ビットマップの描画は行わない**（描画は M5GFX が担当）。
-
-**フォーマット**
-
-| 領域 | サイズ | 内容 |
+| 描画器 | 縦長 540×960 | 横長 960×540 |
 |---|---|---|
-| ファイルヘッダ | 24B（6 × uint32 BE） | glyphCount, version(=11), fontSize, padding, ascent, descent |
-| グリフヘッダ × N | 28B（7 × uint32 BE） | unicode, height, width, setWidth, topExtent, leftExtent, padding |
-| ビットマップ | width × height B | 8bitグレースケール、グリフ順に連続 |
+| `vertical()` | (400, 0) 130 × 700 | (820, 20) 130 × 500 |
+| `horizontal()` | (10, 420) 380 × 180 | (20, 360) 780 × 160 |
 
-すべてビッグエンディアン。
+縦長前提の座標（縦書きの帯は高さ 700）は横長では画面に収まらない。
+**`setRotation()` の直後に必ず呼ぶこと。**
+`textboxes` で定義したボックスは対象外（座標は作者が向きを決めて書くもの）。
 
-**主なAPI**
-
-| メソッド | 説明 |
-|---|---|
-| `init(data, size)` | ヘッダ解析 → グリフテーブル構築 → 全体メトリクス算出 |
-| `getCharMetrics(unicode)` | width / height / setWidth / topExtent / leftExtent / exists をまとめて取得 |
-| `getCharWidth/Height/SetWidth(unicode)` | 個別取得（内部では都度グリフ検索） |
-| `hasChar(unicode)` | 収録有無 |
-| `getFontHeight/Width/Size()`, `getAscent/Descent()` | フォント全体の値 |
-| `debugPrintFontInfo()` | ログ出力（**呼び出し側が明示的に呼ぶ**） |
-
-**グリフ検索**
-
-`buildGlyphTable()` の末尾で unicode 昇順かどうかを判定し、`_glyphTableSorted` に保持する。
-
-- 昇順なら **二分探索**（O(log N)、4414グリフで最大13回）
-- 昇順でなければ線形探索へフォールバックし、初期化時に `ESP_LOGW` を出す
-
-どちらを使うかは初期化ログに出る。
-
-```
-I (xxx) VLWParser: Glyph table built successfully with 4414 entries (lookup: binary search)
-```
-
-**「高さ」の定義**
-
-`getCharHeight()` と `getCharMetrics().height` はどちらも**ビットマップ高**（`glyph->height`）を返す。
-収録がない場合はどちらも `fontHeight` にフォールバックする。
-
-**代表文字**
-
-`calculateFontMetrics()` は U+3000（全角スペース）→ U+0020（半角）の順に代表幅を探すが、
-**`shippori_16` はどちらも収録していない**。その結果 `fontWidth` は初期値の
-`fontSize`（= 16）がそのまま使われる。em幅と一致するため結果的に妥当な値になっている。
-
-### 4.5 `TypoWrite` — 日本語組版
+### 4.6 `TypoWrite` — 日本語組版
 
 VLWフォントを使って横書き・縦書きのテキストを描画する。
 
@@ -423,12 +611,58 @@ VLWフォントを使って横書き・縦書きのテキストを描画する�
 | 分類 | メソッド |
 |---|---|
 | 描画先 | `setDrawTarget(sprite)` / `setVLWParser(parser)` |
-| レイアウト | `setDirection()` / `setAlignment()` / `setPosition()` / `setArea()` / `setWrap()` |
+| レイアウト | `setDirection()` / `setAlignment()` / `setPosition()` / `setArea()` / `setPadding()` / `setWrap()` |
 | 色 | `setColor()` / `setBackgroundColor()` / `setTransparentBackground()` |
 | フォント | `setFont()` / `loadFontFromArray()` / `setFontSize()` |
 | 間隔 | `setLineSpacing()` / `setCharSpacing()` |
-| 描画 | `drawText()` / `drawTextCentered()` / `clearArea()` |
+| 描画 | `drawText()` / `drawTextPaged()` / `drawTextCentered()` / `clearArea()` |
+| ルビ | `setRubyEnabled()` |
 | 寸法 | `getTextWidth()` / `getTextHeight()` |
+
+**外枠と本文領域（`setPadding()`）**
+
+`setPosition()` / `setArea()` が受け取るのは**外枠**で、
+本文はそこから余白のぶん内側に置かれる。
+
+| members | 意味 | 使う場所 |
+|---|---|---|
+| `_boxX/_boxY/_boxWidth/_boxHeight` | 外枠 | 下地の塗り、クリップ、枠線、`clearArea()` |
+| `_x/_y/_width/_height` | **本文領域** | 描画・折り返し・揃えの計算すべて |
+
+内部の計算は後者しか見ない。
+そのため**余白を足してもレイアウトのコードは変わらない**。
+外枠を見るのは下地・クリップ・枠線の3箇所だけ。
+
+下地とクリップを外枠にするのは、本文領域だけを塗ると
+**余白の帯に前のページが残る**ため。
+
+余白が大きすぎて本文の置き場が無くなった場合は警告を出し、1px で止める
+（無言で「何も出ない」になると原因が分からないため）。
+
+**ページ送り（`drawTextPaged()`）**
+
+```cpp
+struct DrawResult { size_t nextOffset; bool hasMore; size_t pageChars; };
+DrawResult drawTextPaged(const std::string& text,
+                         size_t startOffset = 0, size_t maxChars = 0);
+```
+
+領域に入りきらなかった位置（`nextOffset`）を返すので、
+呼び出し側はそこを次の `startOffset` にして続きを描く。
+`ScenarioPlayer` はこれで **1つの `text` コマンドを複数ページに分ける**。
+
+`maxChars` は**描く文字数だけ**を絞る。
+測定・折り返し・揃えは常に全文で行うため、
+文字送りの途中でも文字の位置が動かない。
+
+**ルビ**
+
+`|漢字<かんじ>`（半角）と `｜漢字《かんじ》`（全角）の両方を解釈する。
+ルビ付きの範囲（`RubyRun`）は**改行・改ページで分断しない**。
+ルビだけが次の行へ取り残されるのを防ぐため、範囲ごと次へ送る。
+
+有効にすると、ルビの有無にかかわらず**全行にルビ帯を確保する**。
+行ごとに高さが変わると行間が不揃いになるため。
 
 **背景の透過**
 
@@ -547,10 +781,67 @@ VLWパーサの実測最大グリフサイズでも押し広げる
 上限に達したら全消去して入れ直す（世代的な追い出し）。
 フォントやサイズを変更したときもクリアされる。
 
-### 4.6 `SimpleTransition` — 画面遷移
+### 4.7 `VLWFontParser` — VLWフォント解析
 
-PSRAM上の `M5Canvas`（540×960）に完成画面を描いておき、
+VLW（Processing の Vector Letterform Workshop 形式）バイナリを解析し、
+メトリクスを提供する。**ビットマップの描画は行わない**（描画は M5GFX が担当）。
+
+**フォーマット**
+
+| 領域 | サイズ | 内容 |
+|---|---|---|
+| ファイルヘッダ | 24B（6 × uint32 BE） | glyphCount, version(=11), fontSize, padding, ascent, descent |
+| グリフヘッダ × N | 28B（7 × uint32 BE） | unicode, height, width, setWidth, topExtent, leftExtent, padding |
+| ビットマップ | width × height B | 8bitグレースケール、グリフ順に連続 |
+
+すべてビッグエンディアン。
+
+**主なAPI**
+
+| メソッド | 説明 |
+|---|---|
+| `init(data, size)` | ヘッダ解析 → グリフテーブル構築 → 全体メトリクス算出 |
+| `getCharMetrics(unicode)` | width / height / setWidth / topExtent / leftExtent / exists をまとめて取得 |
+| `getCharWidth/Height/SetWidth(unicode)` | 個別取得（内部では都度グリフ検索） |
+| `hasChar(unicode)` | 収録有無 |
+| `getFontHeight/Width/Size()`, `getAscent/Descent()` | フォント全体の値 |
+| `debugPrintFontInfo()` | ログ出力（**呼び出し側が明示的に呼ぶ**） |
+
+**グリフ検索**
+
+`buildGlyphTable()` の末尾で unicode 昇順かどうかを判定し、`_glyphTableSorted` に保持する。
+
+- 昇順なら **二分探索**（O(log N)、4414グリフで最大13回）
+- 昇順でなければ線形探索へフォールバックし、初期化時に `ESP_LOGW` を出す
+
+どちらを使うかは初期化ログに出る。
+
+```
+I (xxx) VLWParser: Glyph table built successfully with 4414 entries (lookup: binary search)
+```
+
+**「高さ」の定義**
+
+`getCharHeight()` と `getCharMetrics().height` はどちらも**ビットマップ高**（`glyph->height`）を返す。
+収録がない場合はどちらも `fontHeight` にフォールバックする。
+
+**代表文字**
+
+`calculateFontMetrics()` は U+3000（全角スペース）→ U+0020（半角）の順に代表幅を探すが、
+**`shippori_16` はどちらも収録していない**。その結果 `fontWidth` は初期値の
+`fontSize`（= 16）がそのまま使われる。em幅と一致するため結果的に妥当な値になっている。
+
+### 4.8 `SimpleTransition` — 画面遷移
+
+PSRAM上の `M5Canvas` に完成画面を描いておき、
 段階的に電子ペーパーへ転送して遷移を演出する。
+
+**キャンバスの大きさは `init()` で `display->width()/height()` から取る。**
+以前は `SIMPLE_TRANSITION_WIDTH/HEIGHT`（540/960）の決め打ちだったが、
+画面を横向きにすると 960×540 になり縦横が入れ替わるため実行時に決めるようにした。
+向きが変わったら `resizeToDisplay()` でスプライトを作り直す
+（大きさが同じなら何もしない）。1MB 級のスプライトを2つ同時に抱えないよう、
+先に `deleteSprite()` してから確保する。
 
 **使い方**
 
@@ -719,25 +1010,14 @@ upd.x = xs; upd.w = xe - xs + 2;                   // その矩形だけをキ�
 
 ```cpp
 display.begin();
+display.setRotation(MENU_ROTATION);
 display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
-display.setColorDepth(1);
 
 SimpleTransition::clearGhosting(&display);   // 起動時の状態同期
 ```
 
 テキストやタッチ結果を描くたびにリフレッシュする必要はない。
 数回に一度、あるいは操作待ちに入る直前などで十分である。
-
-`clearGhosting()` は **static メソッド**なので `SimpleTransition` の
-インスタンスが無くても呼べる。起動直後（インスタンス生成前）に使うためである。
-
-```cpp
-display.begin();
-display.setEpdMode(lgfx::v1::epd_mode::epd_mode_t::epd_quality);
-display.setColorDepth(1);
-
-SimpleTransition::clearGhosting(&display);   // インスタンス生成前でも呼べる
-```
 
 各段階の前後で `waitDisplay()` を挟み、部分更新に落ちないようにしている。
 片方向の塗りつぶし1回では粒子が完全にリセットされないため反転を挟む。
@@ -760,19 +1040,153 @@ _display->clearClipRect();
 `writeImage()` を呼ぶため、実際に転送されるのは指定領域だけになる。
 ただし前述のとおり、これはCPU側の転送量を減らすだけでパネル走査時間は変わらない。
 
-### 4.7 `CanvasTest` — PSRAM検証（テスト専用）
+### 4.9 `SDCardWrapper` — SDカード / USB MSC
 
-PSRAM上に 540×960 の `M5Canvas` を2枚確保し、
-メモリ使用量・描画性能・ダブルバッファ切替を測定する**検証用クラス**。
+`lgfx::v1::DataWrapper` を継承しているため、
+`display.drawPngFile(&SD, path, x, y)` のように M5GFX の画像デコーダへ直接渡せる。
+グローバルインスタンス `SD` が1つ存在する。
 
-| メソッド | 内容 |
+**主なAPI**
+
+| メソッド | 説明 |
 |---|---|
-| `testMemoryUsage()` | PSRAM / 内部RAM の使用量をログと画面に表示 |
-| `testDrawingPerformance()` | 塗りつぶし・線1000本・円100個・矩形100個の所要時間を測定 |
-| `runDoubleBufferTest()` | 100フレームのバッファ切替 |
+| `init()` / `init(miso,mosi,sck,cs,...)` | SPIバス初期化 + FATFSマウント。**失敗時はSPIバスを解放**するので挿抜リトライが可能 |
+| `open/close/read/seek/skip/tell` | `DataWrapper` の実装。M5GFX から呼ばれる |
+| `exists/mkdir/remove/size` | ファイル操作 |
+| `listDir(path)` / `freeDirInfo()` | ディレクトリ一覧。`DirInfo` は `malloc` で確保されるので**呼び出し側が `freeDirInfo()` する** |
+| `enableUSBMSC()` / `disableUSBMSC()` | USB MSC の有効／無効 |
+| `isUSBMSCEnabled()` / `isUSBMSCConnected()` | 状態取得 |
 
-> 本番機能ではない。現状は `setup()` で常駐生成されており Canvas 2枚（約2MB）を
-> 占有し続けるため、不要なら生成を外してよい。
+**内部の仕組み**
+
+- パス構築は private の `buildFullPath()` に集約。`/sdcard` プレフィックスが無ければ付加し、
+  切り詰めが起きたら失敗を返す（`snprintf` なので出力は常にNUL終端）。
+- USB MSC 有効中はファイルアクセスAPIがすべてエラーを返す。
+  SDカードの所有権が USBホスト側へ移るため。
+- USB MSC の有効化／無効化はセットアップの逆順で対称に行う。
+
+```
+enableUSBMSC : tinyusb_driver_install → tinyusb_msc_storage_init_sdmmc → storage_unmount
+disableUSBMSC: storage_mount → tinyusb_msc_storage_deinit → tinyusb_driver_uninstall
+```
+
+`tinyusb_msc_storage_deinit()` はハンドルを解放するだけで FATFS をアンマウントしないため、
+先に `storage_mount()` しておけば無効化後もアプリから `/sdcard` を読める。
+
+### 4.10 `TouchHandler` — タッチ入力
+
+**型**
+
+| 型 | 値 |
+|---|---|
+| `ExtendedTouchPoint` | `x`, `y`, `timestamp`（ms） |
+| `SwipeDirection` | `None` / `Up` / `Down` / `Left` / `Right` |
+| `TouchEvent` | `None` / `Touch` / `Release` |
+
+**イベントモデル**
+
+`update()` を呼ぶたびにハードウェアを読み、状態遷移からイベントを1回だけ生成する。
+**破壊的メソッドなので、1ループにつき1回だけ呼ぶこと**（後述 7章）。
+
+- タッチ開始 → `TouchEvent::Touch` + `onTouchStart` コールバック
+- タッチ終了 → `TouchEvent::Release` + `onTouchEnd` コールバック
+- 終了時に移動量が閾値（`setMinSwipeDistance()`、既定30・`main` は50）を超えていれば
+  `_lastSwipe` に方向を設定し `onSwipe` コールバック
+
+**スワイプは Release と排他ではない。** `isReleaseEvent()` と `isSwipeEvent()` は
+同時に true になりうる。スワイプは「方向を伴うタッチ終了」として扱う。
+
+`_lastEvent` と `_lastSwipe` は `update()` の先頭で毎回クリアされるため、
+`getLastSwipe()` などは**同じ更新サイクル内で参照する**必要がある。
+
+スワイプ方向は移動量の大きい軸で決まる。採用される軸は必ず `max(|dx|, |dy|)` なので、
+閾値判定は「主軸の移動量が閾値以上か」と等価。
+
+### 4.11 `Button` / `ButtonManager` — ボタンUI
+
+**`Button`**
+
+| 項目 | 内容 |
+|---|---|
+| 状態 | `Normal` / `Pressed` / `Disabled` |
+| スタイル | `ButtonStyle`（状態別の背景・文字・枠線色、枠線幅、角丸半径） |
+| 描画先 | `setDrawTarget(canvas)` で Canvas、`nullptr` なら Display |
+| コールバック | 押下 / 離上 / スワイプ4方向 |
+
+描画は `drawTo(lgfx::LovyanGFX*)` の1本で行う。
+`LGFX_Sprite` と `M5GFX` はどちらも `lgfx::LovyanGFX` 派生なので、
+Canvas と Display を同じコードで扱える。
+
+**`ButtonManager`**
+
+最大32個の `Button*` を保持し、`update()` で入力を配送する。
+
+> **所有権**: `ButtonManager` はボタンを**所有しない**。
+> 生成と破棄は呼び出し側の責任で、デストラクタ・`clearButtons()`・`removeButton()`
+> のいずれも `delete` しない。所有させたい場合は `unique_ptr` を受け取るAPIに変更すること。
+
+`update()` の処理:
+
+| イベント | 動作 |
+|---|---|
+| Touch | 座標を含むボタンを `Pressed` にして再描画、`onPressed` を発火 |
+| Release | 押下中のボタンを `Normal` に戻して再描画。**スワイプが成立していなければ**、離した位置がボタン内のとき `onReleased` を発火。スワイプ成立時はタッチ開始位置のボタンへスワイプを配送 |
+
+### 4.12 `Settings` — 本体設定
+
+`system/settings.json` の読み書き。中身は
+[`SCENARIO_SPEC.md` の7章](SCENARIO_SPEC.md#7-システム設定)。
+
+| キー | 用途 |
+|---|---|
+| `sound_enabled` | ブザーの消音。メニューのサウンドボタンが切り替える |
+| `last_scenario` | 最後に `suspend` したシナリオ ID |
+| `resume_slot` | 栞のスロット。**`-1` なら続きが無い** |
+
+`hasResume()` は `resume_slot >= 0` **かつ** `last_scenario` が空でないこと。
+片方だけでは「どのシナリオの続きか」が決まらない。
+
+読み込みに失敗しても既定値で動く。初回起動時はファイルが無いのが正常。
+
+### 4.13 `Buzzer` — ブザー
+
+GPIO21 を LEDC PWM（10bit、デューティ 50%）で鳴らす。
+
+**音列は `esp_timer` で非同期に進める。** `vTaskDelay()` で待つと
+その間タッチを拾えず、本文も進まない。
+
+```cpp
+buzzer.playTone(880, 120);
+buzzer.playMelody(notes, count);   // 鳴らし始めてすぐ返る
+```
+
+**消音は `playMelody()` の中で判定する。** 呼び出し側で
+`if (soundEnabled)` を書くと、**書き忘れた経路だけ鳴る**。
+入口を1つに絞ってそこで止める。
+
+### 4.14 `Power` — 電源と電池
+
+**電源を切る**（`powerOff()`）
+
+GPIO44 につながった PMS150G へパルス列を送る。
+
+```
+LOW 50ms → HIGH 50ms   を5回
+```
+
+M5Unified の実装に合わせてある。USB 給電中は電源が落ちないので、
+呼び出し側は「戻ってきた場合」の処理を書いておくこと。
+
+**電池残量**（`batteryVoltage()` / `batteryLevel()`）
+
+ADC1 チャンネル2（GPIO3）、分圧比 2.0、曲線近似のキャリブレーション。
+
+```
+level = (mv - 3300) * 100 / (4150 - 3350)
+```
+
+M5Unified と同じ式にしてある。
+初期化に失敗しても電源を切る機能自体は使えるので、起動は止めない。
 
 ---
 
@@ -839,20 +1253,38 @@ PSRAM上に 540×960 の `M5Canvas` を2枚確保し、
 上記の自動判定があるため通常は変更不要。
 
 縦書き字形への差し替えは、フォントに収録がなければ元の文字に戻す。
-`shippori_16` は28件すべてを収録しているためフォールバックは発動しない。
+`shippori_16` は 28 件中 25 件を収録している。
+残る 3 件（U+FE30 `︰` / U+FE32 `︲` / U+FE33 `︳`）は
+Shippori Mincho に無く、**豆腐が入っている**（旧ツールが収録判定を誤ったため）。
+元の文字へ戻すフォールバックは、その 3 件では働かない。
 
-### 5.2 描画先の切り替え
+### 5.2 画面の向き
 
-`Button` と `TypoWrite` は描画先を切り替えられる。
+`meta.rotation`（0〜3）でシナリオごとに指定でき、メニューへ戻ると既定へ戻る。
 
-```cpp
-button->setDrawTarget(canvas);    // nullptr で Display 直描画
-typo->setDrawTarget(canvas);
-```
+| 値 | 画面 |
+|---|---|
+| 0 / 2 | 540 × 960（縦長）。2 は 0 の 180 度反転 |
+| 1 / 3 | 960 × 540（横長） |
 
-いずれも内部では `lgfx::LovyanGFX*` に束ねて扱う。
-ただし現状 `setup()` ではすべて Display 直描画になっており、
-Canvas 経由のちらつき抑制は使われていない。
+パネルの物理的な向きは 960×540 で、M5GFX のパネル定義が
+`offset_rotation = 3` を持つため、`setRotation()` の値はこれに加算される。
+
+**`setRotation()` だけでは足りない。** 向きに依存するものが2つある。
+
+| 対象 | 必要な追従 | 理由 |
+|---|---|---|
+| `SimpleTransition` のキャンバス | `resizeToDisplay()` | 縦横が食い違うと中間フレームが崩れる |
+| 既定のテキストボックス | `layoutDefaultBoxes()` | 縦長前提の座標は横長では画面外へ出る |
+
+加えて、回転すると全画素の内容が変わるので `clearGhosting()` で振り切る。
+部分更新のままだと前の向きの残像が残る。
+
+この3つをまとめたのが `main.cpp` の `applyRotation()`。
+**向きを変えるときは必ずこれを通すこと。**
+
+`textboxes` で定義したボックスは追従させない。
+座標は作者が向きを決めたうえで書くものなので、勝手に動かすと意図が壊れる。
 
 ### 5.3 メモリ配分（実測）
 
@@ -860,12 +1292,23 @@ Canvas 経由のちらつき抑制は使われていない。
 |---|---|---|
 | EPDフレームバッファ（`_step_framebuf`） | 518,400 B | PSRAM |
 | EPD作業バッファ（`_buf`） | 259,200 B | PSRAM |
-| `CanvasTest` の Canvas × 2 | 約 2.07 MB | PSRAM |
 | `SimpleTransition` の Canvas × 1 | 約 1.04 MB | PSRAM |
 | VLWグリフテーブル | 約 138 KB | PSRAM（16KB超のためPSRAMへ回る） |
+| シナリオのツリー | 本文次第 | PSRAM（`initAllocator()` 経由） |
+
+PSRAM プールは 6784KB。上記を引いた**約 4762KB がシナリオの取り分**。
+本文の総文字数 C、コマンド数 N として、解析中のピークは
+
+```
+ピーク ≒ 222N + 6C バイト
+```
+
+**実用上の天井は約 35 万文字**（詳細は
+[`SCENARIO_SPEC.md` の 9.7](SCENARIO_SPEC.md#97-メモリ上限)）。
 
 `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384` により、**16KBを超える確保は
-自動的にPSRAMから行われる**。明示的な `heap_caps_malloc(MALLOC_CAP_SPIRAM)` は不要。
+自動的にPSRAMから行われる**。逆に言えば **16KB 以下は内部 RAM へ行く**ので、
+小さな確保を大量に行う cJSON には明示的なフックが要る（[4.3](#43-scenarioloader--シナリオ-json)）。
 
 なお `CONFIG_COMPILER_CXX_EXCEPTIONS` は未設定（例外無効）なので、
 `new` は確保失敗時に nullptr を返さず `abort()` する。
@@ -877,30 +1320,37 @@ Canvas 経由のちらつき抑制は使われていない。
 
 ### 6.1 表示
 
-- **ESP-IDF 5.4.3 でビルドすると画面が縞模様になる**（原因未特定、2.1参照）
-- カラー指定はグレースケールに変換されるため意図した色にならない（1.4参照）
-- ボタンのラベルとシーンのテキストは日本語フォントが設定されておらず豆腐になる
-  （`Button::setFont()` / `canvas->setFont()` の指定が必要）
+- **ESP-IDF 5.4.3 でビルドすると画面が縞模様になる**（原因未特定、[2.1](#21-esp-idf-は-v532-を使うこと重要)）
+- カラー指定はグレースケールに変換されるため意図した色にならない（[1.4](#14-階調についての重要な注意)）
+- **フォントは 16pt の1種類だけ。** `font_size` はビットマップの倍率拡大なので、
+  2.0 倍は輪郭が粗く、1.0 未満は読めない
+- 禁則処理は無い（行頭の `、。」`、行末の `「`）
+- ルビが本文より長い場合、はみ出して隣に重なる
 
 ### 6.2 未実装の機能
 
-- ゲームシナリオのデータ構造とローダ
-- シーン遷移のステートマシン、セーブ／ロード
-- 禁則処理など日本語組版の詳細ルール
-- タッチキャリブレーション値の永続化（`calibrate()` は呼ばれていない）
-- 省電力（ディープスリープ、タッチ割り込み起床）
+**シナリオから書ける機能はすべて実装済み。** 以下はシステム側。
+
+| 機能 | 状況 |
+|---|---|
+| バックログ・既読スキップ | 既読シーンの記録から必要 |
+| 設定画面（文字サイズ・EPD品質） | `system/settings.json` の器はある |
+| フォントの追加 / シナリオ内フォント | 2.5 の見積もりを参照 |
+| エンディング一覧 | `end` の `ending` は記録していない |
+| 電池切れ前の自動保存 | 電池残量は取得済み |
+| タッチキャリブレーション値の永続化 | `calibrate()` は呼ばれていない |
+| 省電力（ディープスリープ、タッチ割り込み起床） | |
+| Wi-Fi 配信 | `REQUIRES` にも入っていない |
 
 ### 6.3 構造上の課題
 
 | 項目 | 内容 |
 |---|---|
-| タッチの多重ポーリング | `loop()` と `ButtonManager::update()` が別々に `TouchHandler::update()` を呼びうる（7.1参照） |
-| Canvasテストの同期実行 | ボタンコールバック内で完結するため実行中UIが固まり、Stopボタンを押せない |
-| `textDisplayDemo()` の再初期化 | 呼ぶたびにVLW再解析（約138KB再確保）と `TypoWrite` 再構築を行う |
-| Canvas常駐 | 検証用の `CanvasTest` が常時2MBを占有 |
+| `hello_world_main.cpp` が残っている | ビルド対象外だが 1000 行近くある。消すか `append/` へ退避したい |
 | `calculateTextSize()` | 折り返し（`_wrap`）を考慮しない。返すのは改行だけで区切った自然な寸法 |
-| 画面サイズマクロの重複 | `SIMPLE_TRANSITION_WIDTH/HEIGHT` と `CANVAS_WIDTH/HEIGHT` が同値で別定義 |
-| 描画先指定の分散 | 各モジュールが個別に描画先を持ち、共通の「現在のフレームバッファ」概念がない |
+| `ButtonManager` の所有権 | ボタンを `delete` しない。生成と破棄は呼び出し側の責任 |
+| `SimpleTransition` のキャンバス常駐 | 遷移を使わない間も約1MB を占有する。足りなくなったら最初に削る候補 |
+| `SDCardWrapper` の `FILE*` が1本 | 同時に2つのファイルを開けない（[9.1](SCENARIO_SPEC.md#91-同時に開けるファイルは-1-つだけ)） |
 
 ---
 
@@ -940,3 +1390,50 @@ untracked かつ `.gitignore` にも入っていないため、
 
 `fillScreen()` は最も重い操作。ループ内や毎ステップで呼ばない。
 描画はまとめて行い、更新回数を減らす設計にする。
+
+### 7.7 `loadFont()` と `unloadFont()` は必ず対にする
+
+`display.loadFont()` した VLW は、明示的に `unloadFont()` するまで載ったままになる。
+
+`setTextSize()` は「**今読み込まれているフォント**への倍率」なので、
+VLW を載せたまま `setTextSize(3)` を呼ぶと 16pt × 3 = 48px になる。
+既定フォント（8px）を想定して 24px のつもりで書いていると、
+**初回起動時だけ文字が巨大になる**という形で現れる。
+
+実際にこの不具合が出た。`TypoWrite::loadFontFromArray()` が
+検証のために `loadFont()` したまま解放していなかったのが原因。
+
+### 7.8 電源を切る前は走査の完了を待つ
+
+`waitDisplay()` の後、**さらに3秒待ってから**電源を落とす
+（`SystemMenu::SHUTDOWN_SETTLE_MS` / `ScenarioPlayer::SUSPEND_SETTLE_MS`）。
+
+短いと走査が終わりきる前に電源が落ち、**画面上部に横線が残る**。
+300ms では足りなかった。
+
+なお `display.sleep()` を挟むと画面が真っ黒になるので**呼ばないこと**。
+`Bus_EPD::powerControl(false)` は sph/ckv/cl/le を触らないまま電源を落とす。
+
+### 7.9 電子ペーパーは電源を切っても像が残る
+
+これは不具合ではなく仕様で、`suspend` の「栞」はこの性質を使っている。
+最後に描いた画面が次に電源を入れるまで見え続ける。
+
+裏を返すと、**電源を切る直前に描いたものが残り続ける**。
+中途半端な画面のまま落とすとそれが残る。
+
+### 7.10 `LGFXBase::display()` の座標は回転を通らない
+
+`display(x, y, w, h)` は引数を**論理座標でクリップ**してから、
+**回転を適用せずに**パネルへ渡す。パネル側はそれを物理座標として扱う。
+
+`offset_rotation = 3` の本機では物理 x ↔ 論理 y なので、
+全画面リフレッシュのつもりで論理サイズを渡すと**範囲がずれる**。
+
+全面を更新したいときはパネルへ直接渡すこと。
+
+```cpp
+display->panel()->display(0, 0, panel_width, panel_height);
+```
+
+`SimpleTransition::refreshScreen()` はこれを使っている。

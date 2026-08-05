@@ -400,6 +400,7 @@ CharMetrics TypoWrite::getCharMetrics(uint16_t unicode_char)
         ESP_LOGD(TAG, "Metrics cache full (%u entries), clearing",
                  static_cast<unsigned>(_metricsCache.size()));
         _metricsCache.clear();
+    _rotatedBandOffsetValid = false;   // フォントが変われば帯も変わる
     }
     _metricsCache[unicode_char] = metrics;
 
@@ -502,6 +503,66 @@ void TypoWrite::drawEnhancedCharacterWithRotation(uint16_t unicode_char, int x, 
 
     // スケールまたは回転が必要な場合はスプライト描画
     drawScaledCharacterWithRotation(unicode_char, x, y, widthScale, heightScale, rotation);
+}
+
+float TypoWrite::rotatedBandOffset()
+{
+    if (_rotatedBandOffsetValid)
+    {
+        return _rotatedBandOffset;
+    }
+
+    _rotatedBandOffset = 0.0f;
+    _rotatedBandOffsetValid = true;
+
+    if (!_useVLWParser || !_vlwParser || !_vlwParser->isInitialized())
+    {
+        return _rotatedBandOffset;
+    }
+
+    // 縦書きで回るのは半角の英数記号。その字面が縦にどこからどこまで乗るかを見る。
+    // スプライト内の字面の縦位置は M5GFX と同じ `maxAscent - topExtent` で決まる。
+    const int32_t maxAscent = _vlwParser->getMaxAscent();
+
+    // **スケールを掛けてから比べること。**
+    //
+    // パーサが返すのは素の（_fontSize を掛けていない）値だが、
+    // スプライトには setTextSize(_fontSize) を通して描かれるので、
+    // 字面が乗る位置は _fontSize 倍になっている。
+    // 一方 getEmBoxSize() は既にスケール済みの値を返す。
+    // 片方だけ素のまま比べると、ずれ量が (倍率 - 1) に比例して狂い、
+    // **1.0倍では合うのに 1.5倍・2.0倍で左へ、0.5倍で右へ寄る**。
+    int top = INT32_MAX;
+    int bottom = INT32_MIN;
+    for (uint16_t cp = 0x21; cp < 0x7F; ++cp)
+    {
+        const VLWCharMetrics m = _vlwParser->getCharMetrics(cp);
+        if (!m.exists || m.height == 0)
+        {
+            continue;
+        }
+        const int y0 = static_cast<int>(
+            (maxAscent - static_cast<int>(m.topExtent)) * _fontSize);
+        const int y1 = y0 + static_cast<int>(m.height * _fontSize);
+        if (y0 < top)    { top = y0; }
+        if (y1 > bottom) { bottom = y1; }
+    }
+
+    if (top > bottom)
+    {
+        return _rotatedBandOffset;   // 半角が1文字も無いフォント
+    }
+
+    // 帯の中心を em ボックスの中心へ寄せる差分。
+    // これがそのまま「回転後に横へずらす量」になる。
+    int emW = 0;
+    int emH = 0;
+    getEmBoxSize(emW, emH);
+    _rotatedBandOffset = (top + bottom) / 2.0f - emH / 2.0f;
+
+    ESP_LOGD(TAG, "Rotated band: y=%d..%d, emH=%d -> offset %.1f",
+             top, bottom, emH, _rotatedBandOffset);
+    return _rotatedBandOffset;
 }
 
 void TypoWrite::getEmBoxSize(int &emW, int &emH)
@@ -608,10 +669,31 @@ void TypoWrite::drawScaledCharacterWithRotation(uint16_t unicode_char, int x, in
     // pushRotateZoom はスプライトの中心を指定位置に置く。
     // 拡大後の em ボックス左上が (_x + x, _y + y) に来るよう中心を求めることで、
     // 直接描画と同じ左上基準になる。
-    // 回転する場合も em ボックスの中心を軸に回るため、
-    // 縦書き中の半角英数が列の中央に収まる。
-    const int center_x = _x + x + static_cast<int>(emW * widthScale / 2.0f);
+    int center_x = _x + x + static_cast<int>(emW * widthScale / 2.0f);
     const int center_y = _y + y + static_cast<int>(emH * heightScale / 2.0f);
+
+    // 90度回すときは横位置を補正する。
+    //
+    // **em ボックスは正方形ではない。** 縦書きの列幅は emW（全角の送り、16px 前後）
+    // だが、スプライトの高さ emH は行の高さ（24px 前後）ある。
+    // これを 90度 回すと、**スプライトの縦の広がりがそのまま横の広がりになる**ので、
+    // 中心をそろえただけでは列からはみ出す。
+    //
+    // さらに悪いことに、字面がスプライトのどこに乗るかは文字ごとに違う
+    // （M5GFX は `maxAscent - topExtent` の位置に置く）。
+    // ベースラインより下へ伸びる g / j / q は字面が下寄りになり、
+    // 回すと**その分だけ左へ振れて左端が欠ける**。
+    //
+    // 実測（源ノ角ゴシック 16px, emW=16 / emH=24）:
+    //   補正なし  -> 最大 4.0px はみ出す
+    //   本補正あり -> 最大 1.5px
+    //
+    // 補正量は**フォントごとに1つの定数**にする。文字ごとに中央へ寄せると
+    // はみ出しはさらに減るが、g と T でベースラインが揃わなくなり不自然になる。
+    if (rotation != 0.0f)
+    {
+        center_x += static_cast<int>(rotatedBandOffset() * heightScale);
+    }
 
     _charSprite->pushRotateZoom(target, center_x, center_y,
                                 rotation, widthScale, heightScale,
@@ -835,7 +917,16 @@ size_t TypoWrite::drawVerticalTextEnhanced(const std::vector<uint16_t> &unicode_
     int emH = 0;
     getEmBoxSize(emW, emH);
 
-    const int baseColumnWidth = getMaxCharWidth();
+    // 列幅は em ボックスの幅。**送り幅そのものではない。**
+    //
+    // 送り幅（全角なら 16px）で列を取ると、それより字面が広いグリフ
+    // （shippori_16 は最大 18px）が列からはみ出す。
+    // 1列目は右端に置かれるので、はみ出した分がボックスの外へ出て欠ける。
+    //
+    // getEmBoxSize() は「全グリフが収まる箱」を返すので、これを使えば
+    // どの文字も欠けない。小文字の変位計算も同じ emW を基準にしており、
+    // 揃えておくと列の中で寄せ具合がずれない。
+    const int baseColumnWidth = emW;
 
     // ルビ帯は本文の右側に確保する（縦組みのルビは本文の右）。
     // ルビの有無にかかわらず全列に同じ帯を取ることで列の間隔が一定に保たれる。
@@ -1298,15 +1389,46 @@ CharTypeAdjustment TypoWrite::getCharAdjustment(uint16_t unicode_char)
 // 行の高さを取得
 int TypoWrite::getLineHeight()
 {
-    CharMetrics metrics = getCharMetrics(0x3000); // 全角スペースで代表
-    return metrics.height;
+    // 行の高さは「アセント + |ディセント|」。**全角スペースの字面の高さではない。**
+    //
+    // 以前は getCharMetrics(0x3000).height を返していた。
+    // 全角スペースには字面が無いので、フォントに正しく収録されていれば
+    // この値は 0 になり、横書きの行送りが行間だけになって行が重なる。
+    // 空白を収録していない古いフォントでは「見つからない → fontHeight」の
+    // フォールバックが効いてしまい、**たまたま**正しく動いていた。
+    if (_useVLWParser && _vlwParser && _vlwParser->isInitialized())
+    {
+        return static_cast<int>(_vlwParser->getFontHeight() * _fontSize);
+    }
+
+    // M5GFX フォールバック。全角スペースの高さで代用する。
+    return getCharMetrics(0x3000).height;
 }
 
 // 最大文字幅を取得（縦書き用）
 int TypoWrite::getMaxCharWidth()
 {
-    CharMetrics metrics = getCharMetrics(0x3000); // 全角スペースで代表
-    return metrics.width;
+    // 全角の「送り幅」を代表値にする。**ビットマップ幅ではない。**
+    //
+    // 以前は全角スペース U+3000 の width（＝字面の幅）を返していた。
+    // 全角スペースには字面が無いので、フォントに正しく収録されていれば
+    // この値は **0** になる。その結果
+    //
+    //   columnWidth = 0  →  _currentX = _width - 0 = 右端
+    //
+    // となり、縦書きの1列目がボックスの外へはみ出して欠けていた。
+    //
+    // 旧フォント（tools/make_font.py 以前）は U+3000 を収録していなかったため、
+    // 「見つからない」→ fontWidth のフォールバックで 16 が返り、
+    // **たまたま**正しく動いていた。空白を正しく収録した途端に壊れる作りだった。
+    const CharMetrics metrics = getCharMetrics(0x3000);
+
+    if (metrics.setWidth > 0) { return metrics.setWidth; }
+    if (metrics.width > 0)    { return metrics.width; }
+
+    // U+3000 が無く、フォールバックも効かないフォント向けの最後の手段。
+    // 全角は概ね正方形なので行の高さで代用する。
+    return static_cast<int>(getLineHeight());
 }
 
 // ========================================
@@ -1608,6 +1730,7 @@ void TypoWrite::setFontSize(float size)
     _fontSize = size;
     // メトリクスキャッシュをクリア（サイズが変わったため）
     _metricsCache.clear();
+    _rotatedBandOffsetValid = false;   // フォントが変われば帯も変わる
     ESP_LOGD(TAG, "Font size set to %.2f", size);
 }
 
@@ -1619,6 +1742,7 @@ void TypoWrite::setFont(const lgfx::IFont *font)
     _vlwFont = nullptr;
     // メトリクスキャッシュをクリア（フォントが変わったため）
     _metricsCache.clear();
+    _rotatedBandOffsetValid = false;   // フォントが変われば帯も変わる
     ESP_LOGD(TAG, "Font changed to built-in font");
 }
 
@@ -1660,6 +1784,7 @@ bool TypoWrite::loadFontFromArray(const uint8_t *fontArray)
         _vlwFont = fontArray;
         // メトリクスキャッシュをクリア
         _metricsCache.clear();
+    _rotatedBandOffsetValid = false;   // フォントが変われば帯も変わる
         ESP_LOGI(TAG, "Font loaded successfully from array");
     }
     else
@@ -1988,9 +2113,13 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
 
         height = std::max(height, current_column_height);
 
-        // 列幅は描画側の columnWidth（= getMaxCharWidth()）に合わせる。
-        // 従来は走査中の最大文字幅を使っており、描画側と基準が異なっていた。
-        width = column_count * (getMaxCharWidth() + _lineSpacing) - _lineSpacing;
+        // 列幅は描画側の columnWidth に合わせる（描画は em ボックスで列を取る）。
+        // ここが食い違うと getTextWidth() と実際の描画がずれ、
+        // drawTextCentered() の中央位置も外れる。
+        int emW = 0;
+        int emH = 0;
+        getEmBoxSize(emW, emH);
+        width = column_count * (emW + _lineSpacing) - _lineSpacing;
     }
 }
 

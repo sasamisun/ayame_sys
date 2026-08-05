@@ -118,6 +118,16 @@ public:
     std::string defaultTextDirection() const;
 
     /**
+     * @brief `meta.font` のフルパス
+     *
+     * シナリオフォルダからの相対パスに `scenarios/<id>/` を前置きして返す。
+     * 指定が無ければ空（内蔵フォントを使う）。
+     *
+     * 中身が VLW かどうかはここでは見ない。読み込む側が判定する。
+     */
+    std::string fontPath() const;
+
+    /**
      * @brief `meta.rotation`（画面の向き）
      *
      * | 値 | 画面 |

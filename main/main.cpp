@@ -62,7 +62,7 @@ AppScreen currentScreen = AppScreen::Menu;
  * |---|---|
  * | 0 | 540x960（縦長） |
  * | 1 | 960x540（横長） |
- * | 2 | 540x960（縦長・0 の180度反転） ← これを使う |
+ * | 2 | 540x960（縦長・0 の180度反転） |
  * | 3 | 960x540（横長・1 の180度反転） |
  *
  * シナリオは `meta.rotation` で自分の向きを指定できる。
@@ -236,6 +236,22 @@ void enterPlaying(const std::string &scenarioId, bool resume = false)
     const int rotation = scenarioLoader.rotation();
     applyRotation(rotation >= 0 ? rotation : MENU_ROTATION);
 
+    // シナリオ独自のフォント。
+    //
+    // **テキストボックスを組む前に済ませること。**
+    // ボックスは作られた時点のフォントでメトリクスを持つので、
+    // 後から差し替えると寸法の計算が合わなくなる。
+    //
+    // 読めなくても内蔵フォントで再生できるので、失敗しても続行する。
+    const std::string fontPath = scenarioLoader.fontPath();
+    if (!fontPath.empty())
+    {
+        if (!textSystem.loadScenarioFont(fontPath))
+        {
+            ESP_LOGW(TAG, "Falling back to the built-in font");
+        }
+    }
+
     // シナリオ本文はルビ記法を使う前提
     textSystem.setRubyEnabled(true);
 
@@ -275,6 +291,11 @@ void leavePlaying()
     // シナリオが定義したテキストボックスを捨てる。
     // 残すと次のシナリオに前作のボックスが混ざる。
     textSystem.clearBoxes();
+
+    // シナリオ独自のフォントを解放して内蔵へ戻す。
+    // 忘れると PSRAM を 1MB 前後抱えたままになり、
+    // 次のシナリオの本文が載らなくなる。
+    textSystem.useBuiltinFont();
 
     scenarioLoader.unload();   // PSRAM を返す
     enterMenu();

@@ -16,7 +16,7 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 `ScenarioPlayer` が1コマンドずつ実行する。
 
 まず試すなら、`microsd_sample/` の中身を SD カードのルートへコピーする。
-20 本のサンプルが入っており、各機能の書き方と動作を確かめられる
+21 本のサンプルが入っており、各機能の書き方と動作を確かめられる
 （`microsd_sample/README.md` を参照）。
 
 ---
@@ -47,7 +47,7 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | **1 シナリオ 1 JSON** | 構成が単純。**約 35 万文字までメモリに載る**ので分割は当面不要（[9.7](#97-メモリ上限)） |
 | **シーン = コマンドの並び** | フラグ・分岐・立ち絵・音を扱うため。「1 シーン = 1 画面」の単純形では表現しきれない |
 | **列挙値は C++ の enum 名をそのまま使う** | 変換表を作らない。仕様書とコードがずれる余地を消す |
-| **未実装機能も v1 に予約** | ルビや文字送りが後から実装されても、既存シナリオを書き直さずに済む |
+| **未実装機能も v1 に予約** | 後から実装されても、既存シナリオを書き直さずに済む |
 | **ローダは未対応キーを無視する** | 前方互換。新しいキーを含む JSON を古いファームで開いても落ちない |
 
 ### 1.2 バージョニング
@@ -71,6 +71,8 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 │   │   ├── images/
 │   │   │   ├── bg/               # 背景
 │   │   │   └── chara/            # 立ち絵
+│   │   ├── fonts/                # シナリオ独自のフォント（任意）
+│   │   │   └── myfont.vlw
 │   │   └── saves/                # セーブデータ
 │   │       ├── slot01.json
 │   │       ├── slot02.json
@@ -89,10 +91,11 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | `scenarios/` | 固定名。システムメニューはここを `listDir()` で列挙する |
 | `scenarios/<id>/` | **シナリオ ID = フォルダ名**。ASCII の英数字と `_` のみ、32 文字以内 |
 | `scenario.json` | **固定名**。ローダは検索せずこの名前を直接開く |
-| `thumbnail.png` | **固定名**。推奨 180×240px。無い場合は既定アイコンを表示 |
-| `images/bg/` | 背景画像。全画面想定なら 540×960px |
+| `thumbnail.png` | **固定名**。一覧では 56×56 に収めて表示する。無ければ枠だけ出る |
+| `images/bg/` | 背景画像。全画面想定なら 540×960px（横向きなら 960×540） |
 | `images/chara/` | 立ち絵。透過 PNG 推奨 |
-| `saves/` | セーブ。`slotNN.json`（NN は 01〜99）と `auto.json` |
+| `fonts/` | シナリオ独自のフォント（VLW）。`meta.font` で指す。**任意** |
+| `saves/` | セーブ。`slotNN.json`（NN は 01〜99）と `auto.json`。**本体が自動で作る** |
 | `system/settings.json` | 本体設定。シナリオに属さない |
 
 ### 2.2 なぜこの階層なのか
@@ -175,10 +178,69 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | `description` | string | | 一覧に出す説明文 |
 | `text_direction` | string | | 既定の文字方向。`"VERTICAL"` / `"HORIZONTAL"`。省略時 `"VERTICAL"` |
 | `rotation` | int | | 画面の向き（0〜3）。省略時は本体の既定（`2`） |
+| `font` | string | | シナリオ独自のフォント（VLW）。省略時は内蔵フォント |
 | `update_url` | string\|null | | 将来の Wi-Fi 配信用に予約。現在は未使用 |
 
 `version` は**セーブデータとの照合に使う**。シナリオを更新するとシーン ID や
 コマンド位置がずれ、古いセーブから再開すると破綻する。不一致時はローダが警告を出す。
+
+#### `font`（シナリオ独自のフォント）
+
+**作品ごとに書体を変えられる。** シナリオフォルダからの相対パスで、
+`tools/make_font.py` が作った VLW ファイルを指す。
+
+```json
+"meta": { "font": "fonts/maruminya_18.vlw" }
+```
+
+```
+scenarios/22_font/
+├── scenario.json
+└── fonts/
+    └── maruminya_18.vlw
+```
+
+**シナリオ全体で1つ。** 途中で切り替えることはできない。
+読み込んだ直後に一度だけ適用し、メニューへ戻ると内蔵フォントに戻る。
+
+| 項目 | 内容 |
+|---|---|
+| 適用範囲 | 本文・名前付きボックス・選択肢のボタン |
+| 切り替え | シナリオの開始時に1回だけ |
+| 解放 | メニューへ戻るとき |
+
+##### メモリを 1MB 前後使う
+
+**フォントは丸ごとメモリへ読み込む。**
+SD から流し読みにすると 1 文字描くたびに SD を占有し、
+画像が描けなくなるため（同時に開けるファイルは1つだけ。[9.1](#91-同時に開けるファイルは-1-つだけ)）。
+
+そのぶん**本文に使えるメモリが減る**。
+フォントが 1.2MB なら、シナリオの取り分は約 4.7MB → 約 3.5MB になる
+（[9.7](#97-メモリ上限)）。長編で使うときは注意。
+
+字数を絞れば軽くできる。本文を1つのテキストにまとめて渡すと、
+出てくる文字だけのフォントが作れる。
+
+```bash
+python tools/make_font.py font.ttf --size 18 --charset 本文.txt \
+    -o scenarios/my_story/fonts/story.vlw
+```
+
+##### 読めなかったとき
+
+**内蔵フォントのまま再生を続ける。** 次のいずれでも止まらない。
+
+| 状況 | 動作 |
+|---|---|
+| ファイルが無い | 警告を出して内蔵フォント |
+| VLW ではない | 警告を出して内蔵フォント |
+| メモリが足りない | 警告を出して内蔵フォント |
+| USB MSC が有効 | 読めないので内蔵フォント |
+
+> **フォントを差し替えると1行に入る字数が変わる。**
+> 送り幅も行の高さも書体ごとに違うので、
+> `textboxes` の寸法は実機で見て決めること。
 
 #### `rotation`（画面の向き）
 
@@ -228,7 +290,11 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 論理名を挟む理由は、画像を差し替えたときに `scenario.json` の
 `assets` 1 箇所だけ直せば済むようにするため。
 
-対応形式は **PNG / JPEG / BMP / QOI**（M5GFX が対応）。透過が要る立ち絵は PNG。
+**画像は PNG のみ。** 描画は `drawPngFile()` を通す1経路しかないため、
+JPEG や BMP を置いても表示されない（M5GFX 自体は対応しているが、呼んでいない）。
+
+拡張子の判定はしていないので、`.jpg` という名前の PNG でも読める。
+逆に中身が JPEG なら `.png` という名前でも表示されない。
 
 ### 3.4 variables
 
@@ -303,10 +369,20 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | `direction` | string | `"VERTICAL"` | `"VERTICAL"` / `"HORIZONTAL"` |
 | `font_size` | float | `1.0` | 本文の倍率 |
 | `line_spacing` | int | `6` | 行間（縦書きでは列の間隔） |
-| `char_spacing` | int | `0` | 字間 |
+| `char_spacing` | int | 下記 | 字間。**負値は文字を重ねる方向** |
 | `align` | string | `"LEFT"` | `"LEFT"` / `"CENTER"` / `"RIGHT"` |
 | `background` | string | なし | `assets.backgrounds` の論理名。枠に敷く画像 |
 | `background_color` | string | `"BLACK"` | 画像が無いときの塗り色。`"BLACK"` / `"WHITE"` |
+
+#### `char_spacing`（字間）の既定値は向きで変わる
+
+| 向き | 既定 | 理由 |
+|---|---|---|
+| `VERTICAL` | `2` | 縦書きの送りは全角ちょうど 1em。0 だと字面の隙間が 1px しか空かず詰まって見える |
+| `HORIZONTAL` | `0` | 送りがプロポーショナルで、元から隙間がある |
+
+既定のテキストボックスも同じ値を使っている。
+詰めたい場合でも `-4` 程度までにとどめること。それ以上は文字が重なる。
 
 #### `padding`（余白）
 
@@ -361,10 +437,11 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 > 収録しているのは 16pt の1種類だけなので、
 > **2.0 倍は輪郭が粗くなり、1.0 未満は読めなくなる**。
 > きれいに大きくしたい場合は、別サイズの VLW を作って増やす必要がある
-> （フォントは 1.12MB/個で、アプリ領域に 7 個ほど追加できる）。
+> （`tools/make_font.py` で作れる。20pt で約 1.5MB、
+> アプリ領域には数種類ぶんの余裕がある）。
 
 > **背景画像はボックスの寸法に合わせて用意すること。**
-> 拡大縮小はしない。1bpp なので拡大すると輪郭がギザつくため。
+> 拡大縮小はしない。拡大すると輪郭がギザつくため。
 
 ---
 
@@ -374,42 +451,45 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 ### 4.1 一覧
 
-| `type` | 内容 | 状態 |
+**20 個。すべて実装済み。** 並びは以下の節の順。
+
+| 分類 | `type` | 内容 |
 |---|---|---|
-| [`text`](#text) | 本文表示（ページ送り・ルビ対応） | ✅ |
-| [`bg`](#bg) | 背景切替（画面遷移つき） | ✅ |
-| [`choice`](#choice) | 選択肢と分岐 | ✅ |
-| [`set`](#set) | 変数代入・演算 | ✅ |
-| [`if`](#if) | 条件分岐（入れ子可） | ✅ |
-| [`jump`](#jump) | シーン遷移 | ✅ |
-| [`wait`](#wait) | 待機 | ✅ |
-| [`beep`](#beep) | ブザー音（単音・音列） | ✅ |
-| [`refresh`](#refresh) | 手動フルリフレッシュ | ✅ |
-| [`clear`](#clear) | 画面クリア | ✅ |
-| [`end`](#end) | シナリオ終了 | ✅ |
-| [`chara`](#chara) | 立ち絵の表示・非表示 | ✅ |
-| [`save`](#save--load) / [`load`](#save--load) | セーブ・ロード | ✅ |
-| [`checkpoint`](#checkpoint) | 保存する状態を控える | ✅ |
-| [`image`](#image) | 前面の一枚絵（イベントCG） | ✅ |
-| [`random`](#random) | 変数に乱数を入れる | ✅ |
-| [`call`](#call--return) / [`return`](#call--return) | シーンの再利用 | ✅ |
-| [`suspend`](#suspend) | しおりを残して電源を切る | ✅ |
+| 表示 | [`text`](#text) | 本文表示（ページ送り・ルビ・文字送り） |
+| | [`bg`](#bg) | 背景切替（画面遷移つき） |
+| | [`chara`](#chara) | 立ち絵の表示・非表示 |
+| | [`image`](#image) | 前面の一枚絵（イベントCG） |
+| | [`clear`](#clear) | 画面クリア |
+| | [`refresh`](#refresh) | 手動フルリフレッシュ |
+| 流れ | [`choice`](#choice) | 選択肢と分岐 |
+| | [`if`](#if) | 条件分岐（入れ子可） |
+| | [`jump`](#jump) | シーン遷移 |
+| | [`call`](#call--return) / [`return`](#call--return) | シーンの再利用 |
+| | [`end`](#end) | シナリオ終了 |
+| 変数 | [`set`](#set) | 変数代入・演算 |
+| | [`random`](#random) | 変数に乱数を入れる |
+| 保存 | [`save`](#save--load) / [`load`](#save--load) | セーブ・ロード |
+| | [`checkpoint`](#checkpoint) | 保存する状態を控える |
+| | [`suspend`](#suspend) | しおりを残して電源を切る |
+| その他 | [`wait`](#wait) | 待機 |
+| | [`beep`](#beep) | ブザー音（単音・音列） |
 
-凡例: **✅ 実装済み（動く） / ❌ 未実装（記法のみ予約）**
+**未知の `type` は無視され、警告がログに出るだけ**で再生は止まらない。
+新しいコマンドが増えても古い本体でそのまま読める（[1.2](#12-バージョニング)）。
 
-未実装のコマンドは**書いても無視され、警告がログに出る**だけで、
-シナリオの再生は止まらない。実装された時点でそのまま動き出す。
+### 4.2 コマンド以外の機能
 
-### 4.2 コマンド以外の未実装項目
-
-| 項目 | 状態 |
+| 項目 | 内容 |
 |---|---|
-| **本文への変数の埋め込み** | ✅ `{変数名}`（[4.3](#43-本文への変数の埋め込み)） |
-| `text` の `speed`（文字送り） | ✅ 実装済み。ただし電子ペーパーでは遅い（上記） |
-| ルビ | ✅ 実装済み |
-| 本文のページ送り | ✅ 実装済み。1つの `text` が複数ページに分かれる |
+| 本文への変数の埋め込み | `{変数名}`（[4.3](#43-本文への変数の埋め込み)） |
+| ルビ | 半角 `\|漢字<かんじ>` / 全角 `｜漢字《かんじ》`（[`text`](#text)） |
+| 本文のページ送り | 1つの `text` が複数ページに分かれる |
+| 文字送り | `text` の `speed`。ただし電子ペーパーでは遅い |
+| 名前付きテキストボックス | `textboxes`（[3.6](#36-textboxes)） |
+| 画面の向き | `meta.rotation`（[3.2](#32-meta)） |
 
-**JSON で書ける命令はすべて実装済み。**
+**`scenario.json` に書けて動かないキーは無い。**
+システム側の未実装項目は [8.2](#82-未実装) にまとめてある。
 
 ---
 
@@ -425,11 +505,14 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 |---|---|---|---|
 | `body` | string | 必須 | 本文。`\n` で改行 |
 | `box` | string | なし | 出力先のボックス名（[3.6](#36-textboxes)）。省略時は既定 |
-| `speaker` | string | なし | 話者名。省略時は地の文 |
+| `speaker` | string | なし | 話者名。省略時は地の文。`{変数}` が使える |
 | `wait` | bool | `true` | 表示後にタップを待つ |
-| `direction` | string | `meta` の値 | `"VERTICAL"` / `"HORIZONTAL"` |
-| `align` | string | `"LEFT"` | `"LEFT"` / `"CENTER"` / `"RIGHT"` |
+| `direction` | string | `meta` の値 | `"VERTICAL"` / `"HORIZONTAL"`。**`box` を指定したときは無視される** |
 | `speed` | int | `0` | 文字送り速度（ms/字）。`0` で一括表示 |
+
+> **揃え（`align`）は `text` では指定できない。**
+> ボックスの性質なので [`textboxes`](#36-textboxes) 側で決める。
+> 既定のボックスは左揃え（縦書きなら上揃え）で固定。
 
 #### 文字送り（`speed`）は遅い
 
@@ -448,11 +531,37 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 **途中でタップすると全文が出る。** これが無いと遅さが致命的になるため。
 
+#### 話者名は本文の先頭に入る
+
+**専用の名前欄はまだ無い。** `speaker` を書くと本文の先頭へこう足される。
+
+```
+【あやめ】
+こんにちは。
+```
+
+名前を別枠に出したい場合は、[`textboxes`](#36-textboxes) で名前用のボックスを
+定義し、`wait: false` の `text` でそこへ書くこと（サンプル `17_textbox`）。
+
+```json
+{ "type": "text", "box": "name", "body": "あやめ", "wait": false },
+{ "type": "text", "box": "main", "body": "こんにちは。" }
+```
+
+#### ページ送り
+
 `body` が本文ボックスに収まらない場合、**1つの `text` コマンドが複数ページに分かれる**。
 続きはタップで送る（`TypoWrite::drawTextPaged()` が描き切れなかった位置を返す）。
 
-`direction` / `align` の値は `TypoWrite` の `TextDirection` / `TextAlignment`
-のメンバー名と一致する（`main/TypoWrite.hpp:17-27`）。
+**`wait: false` にしても、続きがあればタップを待つ。**
+待たずに進むと読めないまま次の描画で消えるため。
+`wait` が効くのは最後のページを出し終えた後だけ。
+
+ページを送るたびにボックスの下地を敷き直す（背景画像があればそれ、無ければ色）。
+本文の背景は透過なので、敷き直さないと前のページに重なる。
+
+`direction` の値は `TypoWrite` の `TextDirection` のメンバー名と一致する
+（`main/TypoWrite.hpp`）。
 
 **ルビ**
 
@@ -526,12 +635,28 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | キー | 型 | 既定 | 内容 |
 |---|---|---|---|
 | `id` | string | 必須 | `assets.characters` のキー |
-| `expression` | string | `"normal"` | 表情差分のキー |
-| `x` / `y` | int | 前回値 | 表示位置 |
-| `scale` | float | `1.0` | 拡大率 |
+| `expression` | string | 下記 | 表情差分のキー |
+| `x` / `y` | int | 下記 | 表示位置 |
+| `scale` | float | 下記 | 拡大率 |
 | `visible` | bool | `true` | `false` で非表示 |
 
-同じ `id` を再指定すると表情・位置が更新される。
+**省略した項目の既定値は、その立ち絵が出ているかどうかで変わる。**
+
+| | 初めて出すとき | 既に出ているとき |
+|---|---|---|
+| `expression` | `"normal"` | **今の表情のまま** |
+| `x` / `y` | `0` | **今の位置のまま** |
+| `scale` | `1.0` | **今の倍率のまま** |
+
+表情だけ変えたいときに位置を書かなくて済むようにしてある。
+
+```json
+{ "type": "chara", "id": "ayame", "expression": "smile" }
+```
+
+同じ `id` を再指定しても**新しく積まれない**。差し替えになる。
+`visible: false` は状態を残したまま隠すだけなので、
+もう一度 `visible` を省いて指定すれば同じ位置に戻る。
 
 ---
 
@@ -554,8 +679,8 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 | キー | 型 | 必須 | 内容 |
 |---|---|---|---|
-| `prompt` | string | | 選択肢の上に出す問いかけ |
-| `options` | array | ✓ | 選択肢の配列（1〜6 個） |
+| `prompt` | string | | 選択肢の上に出す問いかけ。`{変数}` が使える |
+| `options` | array | ✓ | 選択肢の配列 |
 
 `options[]` の要素:
 
@@ -566,8 +691,14 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | `cond` | object | | 条件。偽なら**この選択肢を出さない** |
 | `hide_if_false` | bool | | `false` にすると条件が偽でも灰色表示で出す。既定 `true` |
 
-条件付き選択肢が全て偽で `options` が空になった場合、
-ローダは警告を出してシーンの `next` へ進む。
+`label` と `prompt` は `{変数}` が置き換わる。
+
+条件付き選択肢が全て偽になって1つも出せなくなった場合、
+**警告を出してシーンの `next` へ進む**（そこで止まると先へ進めなくなるため）。
+
+> **個数に上限のチェックは無いが、6 個程度までにすること。**
+> ボタンは画面下から上へ 56px + 間隔 8px で積むので、
+> 増やしすぎると画面の外へ出て押せなくなる。
 
 ---
 
@@ -610,8 +741,14 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | キー | 型 | 必須 | 内容 |
 |---|---|---|---|
 | `cond` | object | ✓ | 条件式（[5 章](#5-条件式)） |
-| `then` | array | ✓ | 真のとき実行するコマンド列 |
+| `then` | array | | 真のとき実行するコマンド列 |
 | `else` | array | | 偽のとき実行するコマンド列 |
+
+**選んだ側が無い・空なら、この `if` は素通りする。**
+`else` を書かない使い方が普通なので、`then` も同じ扱いにしてある。
+
+入れ子から戻れるよう、実行位置はスタックで持っている。
+`then` / `else` を使い切ると `if` の次のコマンドへ戻る。
 
 ---
 
@@ -627,6 +764,9 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 |---|---|---|---|
 | `next` | string | ✓ | 遷移先シーン ID |
 
+**遷移先が無いとシナリオが終わる**（エラーログを出してメニューへ戻る）。
+読み込み時の検証で警告が出ているので、そちらで先に気づけるようにしてある。
+
 ---
 
 ### `wait`
@@ -639,14 +779,17 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 | キー | 型 | 既定 | 内容 |
 |---|---|---|---|
-| `ms` | int | 必須 | 待機時間（ミリ秒） |
+| `ms` | int | `0` | 待機時間（ミリ秒）。**0 以下なら待たない** |
 | `skippable` | bool | `true` | タップで飛ばせるか |
+
+待っている間もタップは拾い続ける（`vTaskDelay()` で止めていない）。
+そうしないと `skippable` が成立しないため。
 
 ---
 
 ### `beep`
 
-ブザーを鳴らす。**❌ 未実装**（音声出力の実装が無い。[8 章](#8-実装状況)参照）。
+ブザーを鳴らす。GPIO21 の圧電ブザーを LEDC の PWM で駆動する。
 
 単音:
 
@@ -670,12 +813,27 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 | キー | 型 | 既定 | 内容 |
 |---|---|---|---|
-| `freq` | int | | 周波数（Hz）。`0` で休符 |
-| `duration` | int | | 長さ（ミリ秒） |
-| `melody` | array | | 音列。`freq`/`duration` の配列 |
-| `wait` | bool | `false` | 鳴り終わるまで待つか |
+| `freq` | int | `0` | 周波数（Hz）。`0` で休符 |
+| `duration` | int | `100` | 長さ（ミリ秒） |
+| `melody` | array | なし | 音列。`freq` / `duration` を持つ要素の配列 |
+| `wait` | bool | `false` | 鳴り終わるまで待つか。**`melody` のときだけ効く** |
 
-`freq` と `melody` は排他。両方あれば `melody` を優先する。
+`freq` と `melody` は排他。**`melody` が配列なら `freq` は見ない。**
+
+**既定では鳴らし始めてすぐ次のコマンドへ進む。**
+`vTaskDelay()` で待つとその間タッチを拾えず、本文も止まるため。
+効果音は本文と並行して鳴らすのが普通の使い方になる。
+
+`"wait": true` を書くと鳴り終わるまで待つが、**その間は操作を受け付けない。**
+場面転換のジングルなど、待たせたいときだけ使うこと。
+
+| 制限 | 値 | 超えたとき |
+|---|---|---|
+| 音数 | 64 | 切り詰めて警告 |
+| 周波数 | 30〜10000 Hz | 範囲へ丸める |
+
+**メニューのサウンドを切ると鳴らない。** 判定は `Buzzer::playMelody()` の
+入口1箇所で行うので、`beep` の書き方によらず必ず止まる。
 
 ---
 
@@ -718,6 +876,13 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | キー | 型 | 既定 | 内容 |
 |---|---|---|---|
 | `color` | string | `"BLACK"` | `"BLACK"` / `"WHITE"` |
+
+**背景・立ち絵・前面絵の保持状態もここで捨てる。**
+画面を塗った時点で見た目からは消えているので、状態だけ残すと
+次に立ち絵を動かしたときに**消したはずの背景が復活する**
+（`chara` は背景から描き直すため）。
+
+塗り直したいときは `clear` の後にもう一度 `bg` と `chara` を置くこと。
 
 ---
 
@@ -869,7 +1034,7 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 4. 走査の完了を待ち、さらに 3 秒置いてから電源を切る
    （待ちが短いと画面上部に横線が残る）
 
-### どこから再開するかを決める
+#### どこから再開するかを決める
 
 **`suspend` を置いた場所と、読者が戻りたい場所は普通ちがう。**
 
@@ -886,7 +1051,7 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 戻したい場所に [`checkpoint`](#checkpoint) を置くこと。
 `suspend` 側には何も書かなくてよい。
 
-### 再開のしかた
+#### 再開のしかた
 
 次に電源を入れると、**メニューの最上段に「続きから」**が出る。
 押すと保存された位置・変数・画面（背景と立ち絵）から再開する。
@@ -911,28 +1076,12 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 | キー | 型 | 必須 | 内容 |
 |---|---|---|---|
-| `ending` | string | | エンディング識別子。回収率の集計に使う |
-| `message` | string | | 終了時に出すメッセージ |
+| `ending` | string | | エンディング識別子。**現在は記録していない**（[8.2](#82-未実装)） |
+| `message` | string | | 終了時に出す文言。`{変数}` が使える |
 
----
-
-### 4.3 本文への変数の埋め込み
-
-`body` / `speaker` / `message` と、選択肢の `label` / `prompt` の中で
-`{変数名}` が現在の値に置き換わる。
-
-```json
-{ "type": "set",  "var": "name", "value": "あやめ" },
-{ "type": "text", "speaker": "{name}", "body": "わたしは {name} です。好感度は {affection}。" }
-```
-
-| 書き方 | 結果 |
-|---|---|
-| `{name}` | 変数 `name` の値 |
-| `{{` / `}}` | `{` / `}` そのもの（記号を出したいとき） |
-| 未定義の変数 | **置き換えず記法のまま残る**。警告がログに出る |
-
-未定義を空文字にしないのは、**書き間違いに気づけなくなる**ため。
+**`message` を書くと、表示してタップを待ってから終わる。**
+すぐ終わるとメニューへ戻ってしまい、読む間が無いため。
+省略した場合はその場で終わる。
 
 ---
 
@@ -949,7 +1098,7 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 |---|---|---|---|
 | `image` | string | 必須 | `assets.backgrounds` の論理名。CGも同じ入れ物に置く |
 | `x` / `y` | int | `0` | 表示位置 |
-| `scale` | float | `1.0` | 拡大率。**1bpp では粗くなる**ので原寸推奨 |
+| `scale` | float | `1.0` | 拡大率。**拡大すると粗くなる**ので原寸推奨 |
 | `clear` | bool | `false` | `true` で消す |
 
 立ち絵と違い差分を持たない。`clear` で消えるほか、`clear` コマンドでも消える。
@@ -971,7 +1120,13 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 | `var` | string | 必須 | 書き込む先。**数値型で宣言済みであること** |
 | `min` / `max` | int | `0` / `100` | 範囲（両端を含む） |
 
-ハードウェア乱数を使うので種を蒔く必要はない。**毎回異なる**。
+ハードウェア乱数（`esp_random()`）を使うので種を蒔く必要はない。**毎回異なる**。
+
+次の場合はエラーログを出して**何もせず次のコマンドへ進む**。
+
+- `var` が `variables` で宣言されていない
+- `var` が数値型でない
+- `max` が `min` より小さい
 
 ---
 
@@ -1005,6 +1160,26 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 ---
 
+### 4.3 本文への変数の埋め込み
+
+`body` / `speaker` / `message` と、選択肢の `label` / `prompt` の中で
+`{変数名}` が現在の値に置き換わる。
+
+```json
+{ "type": "set",  "var": "name", "value": "あやめ" },
+{ "type": "text", "speaker": "{name}", "body": "わたしは {name} です。好感度は {affection}。" }
+```
+
+| 書き方 | 結果 |
+|---|---|
+| `{name}` | 変数 `name` の値 |
+| `{{` / `}}` | `{` / `}` そのもの（記号を出したいとき） |
+| 未定義の変数 | **置き換えず記法のまま残る**。警告がログに出る |
+
+未定義を空文字にしないのは、**書き間違いに気づけなくなる**ため。
+
+---
+
 ## 5. 条件式
 
 `if` と `choice.options[].cond` で使う。
@@ -1017,13 +1192,23 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 | キー | 型 | 必須 | 内容 |
 |---|---|---|---|
-| `var` | string | ✓ | 変数名 |
-| `op` | string | ✓ | 比較演算子 |
+| `var` | string | ✓ | 変数名。**`variables` で宣言済みであること** |
+| `op` | string | `"=="` | 比較演算子 |
 | `value` | any | ✓ | 比較対象 |
 
 演算子: `==` / `!=` / `<` / `<=` / `>` / `>=`
 
 `<` `<=` `>` `>=` は数値変数のみ。bool と文字列は `==` `!=` のみ。
+
+**判定できないときは必ず偽になる。** 条件式が真になって物語が進んでしまうより、
+偽で止まる方が誤りに気づきやすいため。
+
+| 状況 | 結果 |
+|---|---|
+| `var` が宣言されていない | **偽**。エラーログ（書き間違いの可能性が高い） |
+| 数値以外に `<` `<=` `>` `>=` を使った | **偽**。エラーログ |
+| 型が食い違う（数値と文字列を比較など） | **等しくない**として扱い、警告ログ |
+| `cond` そのものを省略 | **真**（条件なし＝常に成立） |
 
 ### 5.2 複合条件
 
@@ -1036,9 +1221,14 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 |---|---|
 | `all` | 全て真なら真（AND） |
 | `any` | いずれか真なら真（OR） |
-| `not` | 単一条件を否定 |
+| `not` | 中の条件を否定 |
 
-入れ子にできる。
+**3つとも中身に複合条件を書ける**（再帰的に評価する）。
+`not` の中に `any` を入れる、といった書き方ができる。
+
+判定の順は `all` → `any` → `not` → 単一条件。
+**1つのオブジェクトに複数書いても最初の1つしか見ない**ので、
+組み合わせるときは入れ子にすること。
 
 ```json
 { "all": [
@@ -1052,8 +1242,6 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 
 ## 6. セーブデータ
 
-> **❌ 未実装。** 形式のみ確定。
-
 **セーブはシステムの機能ではない。** メインメニューにセーブ／ロードの項目は置かず、
 **シナリオ作者が [`save` / `load`](#save--load) コマンドで組む**。
 スロット選択の画面も `choice` で自作する。
@@ -1061,91 +1249,124 @@ SD カードに置いた `scenario.json` が `ScenarioLoader` に読まれ、
 これにより、作者が「セーブできる場所」を物語の都合で決められる
 （宿屋でだけ保存できる、章の切れ目で自動保存する、など）。
 
-`scenarios/<id>/saves/slotNN.json`（NN は 01〜99）と `auto.json`。
+置き場は `scenarios/<id>/saves/`。**本体が自動で作る。**
+
+| スロット | ファイル名 |
+|---|---|
+| `0` | `auto.json`（[`suspend`](#suspend) の栞もここが既定） |
+| `1`〜`99` | `slot01.json` 〜 `slot99.json` |
 
 ```json
 {
   "format_version": 1,
   "scenario_id": "ayame_001",
   "scenario_version": "1.0.0",
-  "saved_at": "2026-08-02T14:30:00",
-  "slot": 1,
-  "label": "第2章 街へ",
   "scene": "chapter2",
   "command_index": 5,
+  "uptime_ms": 128400,
   "variables": {
     "met_ayame": true,
     "affection": 3,
     "route": "a"
   },
-  "read_scenes": [ "opening", "chapter1", "talk" ],
-  "endings": [ "good_end" ]
+  "stage": {
+    "background": "town",
+    "background_x": 0,
+    "background_y": 0,
+    "background_scale": 1,
+    "foreground": {
+      "image": "", "x": 0, "y": 0, "scale": 1, "visible": false
+    },
+    "charas": [
+      { "id": "ayame", "expression": "smile",
+        "x": 120, "y": 300, "scale": 1, "visible": true }
+    ]
+  },
+  "slot": 1
 }
 ```
 
 | キー | 型 | 内容 |
 |---|---|---|
 | `format_version` | int | スキーマ版 |
-| `scenario_id` | string | シナリオ ID。フォルダとの整合確認用 |
-| `scenario_version` | string | **`meta.version` と照合**。不一致なら警告 |
-| `saved_at` | string | 保存日時（ISO 8601） |
-| `slot` | int | スロット番号。`auto.json` は `0` |
-| `label` | string | 一覧に出す見出し。省略時はシーン ID |
+| `scenario_id` | string | シナリオ ID。**別シナリオのセーブを弾く**のに使う |
+| `scenario_version` | string | `meta.version` と照合。不一致なら警告 |
 | `scene` | string | 再開するシーン ID |
 | `command_index` | int | シーン内の再開位置（`commands` の添字） |
+| `uptime_ms` | int | 保存時の起動からの経過時間 |
 | `variables` | object | 変数の全スナップショット |
-| `read_scenes` | array | 既読シーン ID。既読スキップに使う |
-| `endings` | array | 到達済みエンディング識別子 |
+| `stage` | object | 画面の状態。背景・前面絵・立ち絵 |
+| `slot` | int | 書き込み先のスロット番号 |
 
-### 6.1 バージョン不一致時の扱い
+**人が読んで直せるよう整形して書く。** USB MSC で PC から覗く前提。
 
-`scenario_version` が `meta.version` と異なる場合、シーン ID やコマンド位置が
-ずれている可能性がある。ローダは次のように振る舞う。
+> **時刻は記録されない。** 時計を合わせる仕組みがまだ無いので、
+> `saved_at` の代わりに `uptime_ms`（起動からの経過時間）を入れてある。
+> RTC を使うようになったら実時刻へ差し替える。
 
-1. 警告を表示し、続行するかユーザーに確認する
-2. `scene` が存在しなければ `start` から開始する
-3. `command_index` が範囲外なら `0` に丸める
-4. `variables` のうち `variables` 宣言に無いキーは捨てる
+`stage` を保存するのは、**再開したときに背景も立ち絵も消えた画面にならない**ようにするため。
+読み込むと `renderStage()` が背景 → 立ち絵 → 前面絵の順で描き直す。
 
-### 6.2 実装上の前提
+> **既読シーンとエンディングの記録はまだ無い。**
+> バックログや既読スキップを作るときに `read_scenes` / `endings` を足す。
 
-**SD の書き込み API は実装済み**（本体設定の保存を作る際に先取りした）。
+### 6.1 読み込みが安全側に倒れる場面
 
-```
-bool SDCardWrapper::writeFileFromBuffer(const char* path, const void* data, size_t len);
-```
+`load` も「続きから」も、**次のいずれでも再生は止まらない。**
 
-残っているのは**状態のシリアライズと `save`/`load` コマンドの処理**だけ。
+| 状況 | 動作 |
+|---|---|
+| セーブが無い | 何もせず次のコマンドへ |
+| ファイルが壊れている | エラーを出して次のコマンドへ |
+| **別シナリオのセーブ** | 拒否して次のコマンドへ |
+| `scenario_version` が違う | 警告を出したうえで読み込む |
+| 保存されたシーンが消えている | `start` から開始 |
+| `command_index` が範囲外 | そのシーンの先頭から |
+| 宣言に無い変数が入っている | その変数だけ捨てる |
+
+**確認のダイアログは出さない。** 電子ペーパーでは問い合わせ1回に
+数百 ms のリフレッシュがかかるうえ、読者に判断材料が無いため。
+
+> **`call` の途中で保存すると、戻り先は失われる。**
+> 呼び出し元のスタックは保存していないので、読み込み後に `return` しても戻れない。
+> `if` の入れ子の中も同様（警告がログに出る）。
+
+### 6.2 保存できない場面
 
 **USB MSC が有効な間は保存できない**（PC 側と同時に書くとファイルシステムが壊れるため）。
-`save` はその場合に失敗するが、**再生は止めない**。
+SD が無いときも同じ。いずれも警告を出すだけで、**物語は続けられる**。
+
+`suspend` は保存に失敗しても画面を出して電源を切る。
+その場合は次回「続きから」が出ない。
 
 ---
 
 ## 7. システム設定
 
 `system/settings.json`。シナリオに属さない本体設定。
+**初回起動時に本体が作る。**
 
 ```json
 {
   "format_version": 1,
+  "sound_enabled": true,
   "last_scenario": "ayame_001",
-  "text_direction": "VERTICAL",
-  "font_size": 16,
-  "text_speed": 0,
-  "auto_refresh_scenes": 10,
-  "epd_mode": "epd_text"
+  "resume_slot": -1
 }
 ```
 
 | キー | 型 | 内容 |
 |---|---|---|
-| `last_scenario` | string | 最後に遊んだシナリオ ID |
-| `text_direction` | string | 既定の文字方向。シナリオの `meta` より優先度は低い |
-| `font_size` | int | 文字サイズ |
-| `text_speed` | int | 文字送り速度（ms/字）。**❌ 未実装** |
-| `auto_refresh_scenes` | int | この数のシーンを進むごとに自動フルリフレッシュ。`0` で無効 |
-| `epd_mode` | string | 通常時の走査品質 |
+| `format_version` | int | スキーマ版 |
+| `sound_enabled` | bool | ブザーを鳴らすか。メニューのサウンドボタンで切り替わる |
+| `last_scenario` | string | 最後に [`suspend`](#suspend) したシナリオ ID |
+| `resume_slot` | int | 栞のスロット。**`-1` なら続きが無い** |
+
+`last_scenario` と `resume_slot` の2つで「続きから」を出すかどうかを決める。
+どちらか欠けていれば出さない。
+
+> **文字サイズ・EPD 品質・文字送り速度の設定はまだ無い。**
+> 設定画面を作るときにここへ足す。
 
 ---
 
@@ -1159,13 +1380,18 @@ bool SDCardWrapper::writeFileFromBuffer(const char* path, const void* data, size
 | **本文のページ送り** | `TypoWrite::drawTextPaged()`。描き切れなかった位置を返す |
 | **ルビ** | `TypoWrite::setRubyEnabled(true)`。半角 `\|漢字<かんじ>` / 全角 `｜漢字《かんじ》` |
 | 画面遷移 10 種 | `SimpleTransition`（`SimpleTransitionType`） |
-| 画像表示 PNG/JPEG/BMP/QOI | `display.drawPngFile(&SD, path, x, y, ...)` |
+| 画像表示（**PNG のみ**） | `display.drawPngFile(&SD, path, x, y, ...)` |
 | フルリフレッシュ / 残像消去 | `SimpleTransition::refreshScreen()` / `clearGhosting()` |
 | **JSON の読み込みと検証** | `ScenarioLoader`。cJSON を PSRAM へ向けて解析 |
 | **シーンとコマンドの実行** | `ScenarioPlayer` |
 | **変数・条件式・分岐** | `set` / `if` / `choice`。`if` は入れ子可 |
 | **立ち絵** | `chara`。背景と重ねて描き直す（`renderStage()`） |
 | **セーブ・ロード** | `save` / `load`。変数と画面の状態を保存する |
+| **保存する状態の指定** | `checkpoint`。作者が「どこの状態を残すか」を決める |
+| **中断と再開** | `suspend` と、メニューの「続きから」 |
+| **名前付きテキストボックス** | `textboxes`。位置・文字サイズ・枠画像・**余白**（`padding`） |
+| **画面の向き** | `meta.rotation`。縦長 540×960 / 横長 960×540 |
+| **シナリオ独自のフォント** | `meta.font`。SD の VLW を PSRAM へ読んで差し替える |
 | **ブザー音** | `Buzzer`（GPIO21 / LEDC）。単音・音列・消音 |
 | **電池残量** | `Power`（ADC1 ch2 / 分圧比 2.0） |
 | **電源 OFF** | `Power::powerOff()`（GPIO44 のパルス列） |
@@ -1175,13 +1401,20 @@ bool SDCardWrapper::writeFileFromBuffer(const char* path, const void* data, size
 
 ### 8.2 未実装
 
-**シナリオから書ける機能はすべて実装済み。** 以下はシステム側の未実装項目。
+**シナリオから書ける機能はすべて実装済み。**
+`scenario.json` に書けて動かないキーは無い。
+
+以下はシステム側の未実装項目。
 
 | 機能 | 状況 |
 |---|---|
-| バックログ・既読スキップ | 既読の記録から必要 |
+| バックログ・既読スキップ | 既読シーンの記録から必要（[6章](#6-セーブデータ)） |
 | 設定画面（文字サイズ・EPD品質） | `system/settings.json` の器はある |
-| Wi-Fi 配信 | `REQUIRES` にも入っていない |
+| **本体フォントの切り替え画面** | 今はビルド時に選ぶ（`main/fonts/active_font.h`） |
+| 禁則処理 | 行頭・行末の禁則、ぶら下げ |
+| エンディング一覧 | `end` の `ending` は記録していない |
+| 電池切れ前の自動保存 | 電池残量は取れている |
+| Wi-Fi 配信（`meta.update_url`） | `REQUIRES` にも入っていない |
 
 未実装のものも `format_version` 1 に**記法だけ予約**してある。
 書いても無視され警告が出るだけで再生は止まらず、実装された時点でそのまま動く。
@@ -1190,7 +1423,7 @@ bool SDCardWrapper::writeFileFromBuffer(const char* path, const void* data, size
 
 ## 9. 設計を縛る制約
 
-ローダを実装する際に必ず踏む制約。**シナリオ設計にも影響する。**
+ローダの実装が踏んでいる制約。**シナリオの作り方にも影響する。**
 
 ### 9.1 同時に開けるファイルは 1 つだけ
 
@@ -1206,8 +1439,13 @@ bool SDCardWrapper::writeFileFromBuffer(const char* path, const void* data, size
 **即座に false / 0 / nullptr を返す**。
 
 - システムメニューは MSC 状態を確認してからシナリオ一覧を出す
+  （有効中は一覧が空になる。故障ではない）
 - MSC を無効化したらシナリオ一覧を再読み込みする（PC 側で追加された可能性がある）
-- ゲーム進行中に MSC へ入る場合、先にオートセーブする
+- メニューのアイコンは**ファームウェアに埋め込んである**。
+  SD から読む作りだと、MSC 有効中にメニュー自体が描けなくなる
+
+**再生中に MSC へ入ることはできない。** USB ボタンはメニューにしか無い。
+そのため「進行中に MSC へ入られてセーブできない」という事故は起きない。
 
 ### 9.3 パス長 255 文字
 
@@ -1323,7 +1561,7 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
 
 ## 10. 完全なサンプル
 
-全コマンドを 1 回以上使い、`start` から `end` まで辿れる最小の例。
+**20 コマンドすべてを 1 回以上使い**、`start` から `end` まで辿れる例。
 
 ```json
 {
@@ -1342,7 +1580,9 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
   "assets": {
     "backgrounds": {
       "room":   "images/bg/room.png",
-      "street": "images/bg/street.png"
+      "street": "images/bg/street.png",
+      "cg_01":  "images/bg/cg_01.png",
+      "frame":  "images/bg/frame.png"
     },
     "characters": {
       "ayame": {
@@ -1352,9 +1592,19 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
     }
   },
 
+  "textboxes": {
+    "main": {
+      "x": 20, "y": 694, "w": 500, "h": 240,
+      "direction": "HORIZONTAL",
+      "padding": { "top": 16, "right": 24, "bottom": 16, "left": 24 },
+      "background": "frame"
+    }
+  },
+
   "variables": {
     "met_ayame": false,
     "affection": 0,
+    "luck": 0,
     "route": "none"
   },
 
@@ -1366,28 +1616,47 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
       "commands": [
         { "type": "clear", "color": "BLACK" },
         { "type": "bg", "image": "room", "transition": "FADE_IN" },
-        { "type": "text", "body": "静かな部屋だ。" },
+        { "type": "text", "box": "main", "body": "静かな部屋だ。" },
         { "type": "beep", "freq": 880, "duration": 120 },
         { "type": "wait", "ms": 500 },
         { "type": "chara", "id": "ayame", "expression": "normal", "x": 60, "y": 400 },
         { "type": "text", "speaker": "あやめ", "body": "|今日<きょう>はいい天気ね。" },
-        { "type": "set", "var": "met_ayame", "value": true }
+        { "type": "set", "var": "met_ayame", "value": true },
+        { "type": "random", "var": "luck", "min": 1, "max": 6 },
+        { "type": "call", "scene": "show_status" }
       ],
       "next": "choice_scene"
     },
 
+    "show_status": {
+      "commands": [
+        { "type": "text", "box": "main",
+          "body": "今日の運勢は {luck} でした。" },
+        { "type": "return" }
+      ]
+    },
+
     "choice_scene": {
       "commands": [
+        { "type": "checkpoint" },
         {
           "type": "choice",
           "prompt": "どうする？",
           "options": [
             { "label": "話しかける", "next": "talk" },
             { "label": "黙っている", "next": "silent" },
-            { "label": "名前を呼ぶ", "next": "call",
-              "cond": { "var": "met_ayame", "op": "==", "value": true } }
+            { "label": "名前を呼ぶ", "next": "call_name",
+              "cond": { "var": "met_ayame", "op": "==", "value": true } },
+            { "label": "今日はここまで", "next": "bookmark" }
           ]
         }
+      ]
+    },
+
+    "bookmark": {
+      "commands": [
+        { "type": "text", "box": "main", "body": "また明日。" },
+        { "type": "suspend", "message": "栞をはさみました。", "image": "cg_01" }
       ]
     },
 
@@ -1409,11 +1678,14 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
       "next": "ending_check"
     },
 
-    "call": {
+    "call_name": {
       "commands": [
         { "type": "text", "speaker": "あやめ", "body": "名前、覚えていてくれたんだ。" },
+        { "type": "image", "image": "cg_01", "x": 70, "y": 200 },
         { "type": "set", "var": "affection", "op": "+=", "value": 3 },
-        { "type": "set", "var": "route", "value": "a" }
+        { "type": "set", "var": "route", "value": "a" },
+        { "type": "save", "slot": 1 },
+        { "type": "image", "clear": true }
       ],
       "next": "ending_check"
     },
@@ -1460,6 +1732,25 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
 
     "normal_end": {
       "commands": [
+        {
+          "type": "choice",
+          "prompt": "やり直す？",
+          "options": [
+            { "label": "選択の前へ戻る", "next": "reload" },
+            { "label": "終わる", "next": "finish" }
+          ]
+        }
+      ]
+    },
+
+    "reload": {
+      "commands": [
+        { "type": "load", "slot": 1 }
+      ]
+    },
+
+    "finish": {
+      "commands": [
         { "type": "end", "ending": "normal_end", "message": "NORMAL END" }
       ]
     }
@@ -1467,43 +1758,48 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
 }
 ```
 
+> **`meta.rotation` はこの例では使っていない。**
+> 座標がすべて縦長 540×960 前提で書いてあるため。
+> 横向きにする場合は `textboxes` と背景画像を 960×540 で作り直すこと（[3.2](#32-meta)）。
+
 ---
 
 ## 11. 拡張提案
 
-本仕様の範囲外だが、実装する価値がある機能。優先度順。
+**まだ無い機能**のうち、実装する価値があるもの。優先度順。
+既に動くものは [8.1](#81-実装済み) にある。
 
-### 11.1 電子ペーパー特有（この機種ならではの価値）
+### 11.1 読む体験
 
-| # | 機能 | 内容 |
-|---|---|---|
-| 1 | **`refresh` コマンド**（本仕様に採用済み） | 残像対策をシナリオ作者が制御。場面転換の区切りに置く |
-| 2 | **`epd_mode` の使い分け** | 会話は `epd_fast`、一枚絵は `epd_quality`。テンポと画質を両立 |
-| 3 | **自動リフレッシュ間隔** | N シーンごとに自動でフルリフレッシュ（`settings.json` の `auto_refresh_scenes`） |
+| # | 機能 | 内容 | 前提 |
+|---|---|---|---|
+| 1 | **バックログ** | 直近 N 件の本文を遡る。電子ペーパーは残像が残るため、紙のように読み返せると相性が良い | 本文の履歴を持つ |
+| 2 | **既読スキップ** | 既読シーンを高速送り。周回プレイに必須 | セーブに既読シーンの記録を足す（[6章](#6-セーブデータ)） |
+| 3 | **セーブ時サムネイル** | その時点の画面を縮小して保存し、ロード画面に出す | PNG の書き出し |
+| 4 | **エンディング一覧・回収率** | `end` の `ending` を集計して達成度を表示 | 到達記録を足す |
 
-### 11.2 アドベンチャーゲームとして
+### 11.2 文字まわり
 
-| # | 機能 | 内容 |
-|---|---|---|
-| 4 | **バックログ** | 直近 N 件のテキストを遡る。電子ペーパーは残像が残るため紙のように読み返せると相性が良い |
-| 5 | **既読スキップ** | `read_scenes` を使い既読シーンを高速送り。周回プレイに必須 |
-| 6 | **セーブ時サムネイル** | その時点の画面を縮小して保存。要 SD 書き込み API |
-| 7 | **エンディング一覧・回収率** | `endings` を集計して達成度を表示 |
+| # | 機能 | 内容 | 前提 |
+|---|---|---|---|
+| 5 | **フォントサイズの追加** | 収録は 16pt の1種類だけで、`font_size` は倍率で粗く拡大している。20pt の VLW を足せばきれいに大きくできる | 1サイズあたり約 1.5MB。アプリ領域と相談 |
+| 7 | **禁則処理** | 行頭の `、。」`、行末の `「` を送る。ぶら下げ | `TypoWrite` の折り返し判定 |
 
 ### 11.3 運用・堅牢性
 
-| # | 機能 | 内容 |
-|---|---|---|
-| 8 | **起動時の整合性チェック** | 参照画像の存在、未定義シーンへの `jump`、`start` の妥当性、未宣言変数の使用を検証してログに出す。**SD 上の手書き JSON は必ず壊れる**ので優先度は高い |
-| 9 | **低電池時のオートセーブ** | 電池残量の実装後。電子ペーパーは電源断でも表示が残るため、状態との乖離が起きやすい |
-| 10 | **デバッグモード** | シーン直接ジャンプ、変数ダンプ、条件式の評価結果表示。シナリオ制作の効率に直結する |
+| # | 機能 | 内容 | 前提 |
+|---|---|---|---|
+| 8 | **低電池時のオートセーブ** | 電子ペーパーは電源断でも表示が残るため、状態との乖離が起きやすい | 電池残量は取得済み（`Power`） |
+| 9 | **デバッグモード** | シーン直接ジャンプ、変数ダンプ、条件式の評価結果表示。シナリオ制作の効率に直結する | |
+| 10 | **設定画面** | 文字サイズ・EPD 品質・文字送り速度 | `system/settings.json` の器はある（[7章](#7-システム設定)） |
+| 11 | **自動リフレッシュ間隔** | N シーンごとに自動でフルリフレッシュ。今は `refresh` を作者が置く必要がある | `settings.json` にキーを足す |
 
 ### 11.4 将来（Wi-Fi 前提、記法のみ予約）
 
 | # | 機能 | 内容 |
 |---|---|---|
-| 11 | **シナリオのサーバ配信** | `meta.update_url` を予約済み |
-| 12 | **Wi-Fi 接続チェック・電池残量表示** | システムメニュー側の機能 |
+| 12 | **シナリオのサーバ配信** | `meta.update_url` を予約済み |
+| 13 | **時計合わせ** | セーブに実時刻を入れる（今は `uptime_ms`） |
 
 ---
 
@@ -1516,6 +1812,9 @@ I (xxx) SCENARIO: Parsed 1520 bytes. Tree: 2432 bytes in PSRAM (x1.60 of source)
 | **コマンド** | シーン内の 1 命令。`type` で種類を表す |
 | **論理名** | `assets` で定義する画像の別名。コマンドはこれで参照する |
 | **スロット** | セーブの保存枠。`slot01.json` 〜 と `auto.json` |
+| **控え（checkpoint）** | 保存する状態をあらかじめ記録しておくこと。`save` / `suspend` はこれを書き出す |
+| **栞** | `suspend` が残した再開情報。メニューの「続きから」で使い、**一度使うと消える** |
+| **テキストボックス** | 本文を出す矩形。外枠に下地を敷き、`padding` の分だけ内側に本文を置く |
 | **フルリフレッシュ** | 全画素に波形を掛け直し、薄くなった表示のコントラストを戻す操作 |
 | **残像（ゴースト）** | 電子ペーパーに前の像が薄く残る現象 |
 | **LUT ステップ** | 電子ペーパーの走査回数。多いほど濃く、遅い |

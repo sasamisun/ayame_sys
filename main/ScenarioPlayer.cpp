@@ -478,6 +478,7 @@ void ScenarioPlayer::buildTextBoxes()
         // 位置と大きさだけ書けば使えるようにしてある。
         const std::string dir = getString(box, "direction", "VERTICAL");
         const std::string align = getString(box, "align", "LEFT");
+        const bool vertical = (dir != "HORIZONTAL");
 
         TextAlignment a = TextAlignment::LEFT;
         if (align == "CENTER") { a = TextAlignment::CENTER; }
@@ -493,10 +494,14 @@ void ScenarioPlayer::buildTextBoxes()
                              getInt(box, "y", 0),
                              getInt(box, "w", 0),
                              getInt(box, "h", 0),
-                             dir != "HORIZONTAL",
+                             vertical,
                              fontSize,
                              getInt(box, "line_spacing", 6),
-                             getInt(box, "char_spacing", 0),
+                             // 字間の既定値は向きで変える。
+                             // 縦書きは送りが 1em ちょうどで隙間がほぼ無く、
+                             // 0 のままだと既定のボックスより詰まって見える。
+                             getInt(box, "char_spacing",
+                                    vertical ? DEFAULT_VERTICAL_CHAR_SPACING : 0),
                              a,
                              parsePadding(cJSON_GetObjectItemCaseSensitive(box, "padding")));
     }

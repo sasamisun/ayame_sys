@@ -120,6 +120,10 @@ private:
     // 外枠と本文領域のあいだの余白
     int _padTop, _padRight, _padBottom, _padLeft;
 
+    // rotatedBandOffset() の結果。フォント／サイズを変えるまで使い回す
+    float _rotatedBandOffset = 0.0f;
+    bool _rotatedBandOffsetValid = false;
+
     uint16_t _color;                    // テキスト色
     uint16_t _bgColor;                  // 背景色
     bool _transparentBg;                // 背景透明フラグ
@@ -558,6 +562,25 @@ private:
      * @param emH 高さの出力先
      */
     void getEmBoxSize(int &emW, int &emH);
+
+    /**
+     * @brief 縦書きで90度回した半角文字の横位置の補正量
+     *
+     * 半角の英数記号の字面が em ボックスの縦のどこに乗るかを調べ、
+     * その帯の中心を em ボックスの中心へ寄せる差分を返す。
+     * 回転すると縦の位置がそのまま横の位置になるため、この値を
+     * 横方向のずらし量として使う。
+     *
+     * **フォントごとに1つの定数。** 文字ごとに中央へ寄せると
+     * g と T でベースラインが揃わなくなる。
+     *
+     * 走査は 94 文字ぶんなので、結果はフォント／サイズが変わるまで持ち回す。
+     *
+     * @return `_fontSize` を掛けた後の画素数。
+     *         呼び出し側は pushRotateZoom に渡す倍率だけを追加で掛けること。
+     *         **素の値と混ぜると、倍率を変えたときだけずれる。**
+     */
+    float rotatedBandOffset();
 
     /**
      * @brief 文字描画用スプライトを指定サイズで用意する

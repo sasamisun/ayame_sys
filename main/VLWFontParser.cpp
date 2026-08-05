@@ -253,6 +253,11 @@ void VLWFontParser::calculateFontMetrics() {
     // 最大サイズの初期化
     _fontMetrics.maxCharWidth = 0;
     _fontMetrics.maxCharHeight = 0;
+
+    // 実効アセントはヘッダ値から始めて、グリフの topExtent で押し上げる。
+    // M5GFX の VLWfont::loadFont() と同じ規則にすること。
+    // ここがずれると、縦書きで回転した半角文字の位置補正が狂う。
+    _fontMetrics.maxAscent = _fontMetrics.ascent;
     
     // 全角スペース（U+3000）を代表的な文字として探す
     uint32_t representativeWidth = _fontMetrics.fontSize; // デフォルト値
@@ -267,6 +272,13 @@ void VLWFontParser::calculateFontMetrics() {
         }
         if (glyph.height > _fontMetrics.maxCharHeight) {
             _fontMetrics.maxCharHeight = glyph.height;
+        }
+
+        // U+3000 を除くのは M5GFX に合わせるため。
+        // 全角スペースは字面が無く、topExtent が実態を表さない。
+        if (glyph.unicode != 0x3000 &&
+            static_cast<int32_t>(glyph.topExtent) > _fontMetrics.maxAscent) {
+            _fontMetrics.maxAscent = static_cast<int32_t>(glyph.topExtent);
         }
         
         // 代表的な文字の幅を取得
@@ -291,6 +303,8 @@ void VLWFontParser::calculateFontMetrics() {
              _fontMetrics.fontHeight, (long)_fontMetrics.ascent, (long)abs(_fontMetrics.descent));
     ESP_LOGI(TAG, "  Font width: %lu", _fontMetrics.fontWidth);
     ESP_LOGI(TAG, "  Max char size: %lux%lu", _fontMetrics.maxCharWidth, _fontMetrics.maxCharHeight);
+    ESP_LOGI(TAG, "  Max ascent: %ld (header ascent %ld)",
+             (long)_fontMetrics.maxAscent, (long)_fontMetrics.ascent);
 }
 
 const VLWFontParser::GlyphInfo* VLWFontParser::findGlyph(uint16_t unicode) const {

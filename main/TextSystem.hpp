@@ -25,6 +25,20 @@ struct TextBoxPadding {
 };
 
 /**
+ * @brief 縦書きの字間の既定値
+ *
+ * 縦書きの送りは全角なら 1em ちょうど（16px フォントなら 16px）で、
+ * そのままだと字面どうしの隙間が 1px しか空かず詰まって見える。
+ * この値を足して読みやすい間隔にする。
+ *
+ * 既定のボックスと `textboxes` の両方で同じ値を使うこと。
+ * 片方だけ違うと、同じ画面の中で行の詰まり方が変わる。
+ *
+ * 横書きは送りがプロポーショナルで元から隙間があるため 0。
+ */
+static constexpr int DEFAULT_VERTICAL_CHAR_SPACING = 2;
+
+/**
  * @brief VLW フォントと TypoWrite をまとめて用意する
  *
  * フォント解析と描画器の生成は重い。
@@ -68,6 +82,37 @@ public:
 
     /// ボタンのラベルなど、TypoWrite を通さず直接描く場合に使うフォントデータ
     const uint8_t* fontData() const;
+
+    // ========================================
+    // シナリオ独自のフォント
+    // ========================================
+
+    /**
+     * @brief SD の VLW を読み込んで本文フォントを差し替える
+     *
+     * シナリオが `meta.font` で指定したときに使う。
+     * **シナリオを読み込んだ直後、テキストボックスを組む前に呼ぶこと。**
+     * 後から呼ぶと、既に作ったボックスのメトリクスが古いままになる。
+     *
+     * フォントは**丸ごと PSRAM へ読む**。SD から流し読みにすると、
+     * 1文字描くたびに SD を占有して画像が描けなくなる
+     * （`SDCardWrapper` は同時に1ファイルしか開けない）。
+     * そのぶん 1MB 前後を食うので、シナリオ本文に使えるメモリは減る。
+     *
+     * @param path `/sdcard` からのフルパス
+     * @return 差し替えられたか。**失敗時は内蔵フォントのまま**再生を続けられる
+     */
+    bool loadScenarioFont(const std::string& path);
+
+    /**
+     * @brief 内蔵フォントへ戻し、シナリオのフォントを解放する
+     *
+     * シナリオを閉じるときに呼ぶ。呼ばないと 1MB 前後を抱えたままになる。
+     */
+    void useBuiltinFont();
+
+    /// いま使っているフォントの名前（ログ・情報表示用）
+    const std::string& fontName() const { return _fontName; }
 
     /// 既定を含む全ての描画器のルビ解釈をまとめて切り替える
     void setRubyEnabled(bool enabled);
@@ -126,6 +171,22 @@ public:
 private:
     // TypoWrite を1つ作って共通設定を入れる
     TypoWrite* createWriter();
+
+    /**
+     * @brief パーサと全描画器を指定のフォントデータへ向け直す
+     *
+     * 既定の2つに加え、シナリオが定義したボックスにも配る。
+     * 配り忘れると、そのボックスだけ前のフォントのメトリクスで組まれる。
+     */
+    bool applyFont(const uint8_t* data, size_t size, const std::string& name);
+
+    // 今使っているフォント。内蔵なら _scenarioFont は nullptr
+    const uint8_t* _activeFont = nullptr;
+    size_t _activeFontSize = 0;
+    std::string _fontName;
+
+    // SD から読んだシナリオ独自のフォント（PSRAM）。内蔵のときは nullptr
+    uint8_t* _scenarioFont = nullptr;
 
     bool _ready = false;
     bool _rubyEnabled = false;

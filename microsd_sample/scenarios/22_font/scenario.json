@@ -1,0 +1,111 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "22_font",
+    "title": "シナリオ独自フォントの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "meta.font でシナリオごとに書体を変える",
+    "text_direction": "VERTICAL",
+    "font": "fonts/maruminya_18.vlw",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "paper": "images/bg/paper.png"
+    },
+    "characters": {}
+  },
+  "variables": {},
+  "textboxes": {
+    "title": {
+      "x": 40,
+      "y": 40,
+      "w": 460,
+      "h": 60,
+      "direction": "HORIZONTAL",
+      "align": "CENTER",
+      "background_color": "WHITE"
+    },
+    "main": {
+      "x": 300,
+      "y": 130,
+      "w": 200,
+      "h": 700,
+      "direction": "VERTICAL",
+      "padding": 12,
+      "background_color": "WHITE"
+    },
+    "note": {
+      "x": 40,
+      "y": 860,
+      "w": 460,
+      "h": 70,
+      "direction": "HORIZONTAL",
+      "padding": {
+        "top": 8,
+        "right": 12,
+        "bottom": 8,
+        "left": 12
+      },
+      "background_color": "WHITE"
+    }
+  },
+  "start": "p1",
+  "scenes": {
+    "p1": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "WHITE"
+        },
+        {
+          "type": "bg",
+          "image": "paper",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "MaruMinya 18px",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "note",
+          "body": "meta.font: fonts/maruminya_18.vlw",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "main",
+          "body": "このシナリオは |独自<どくじ>のフォントを同梱しています。本文がドット系の書体で出ていれば、`meta.font` が効いています。"
+        }
+      ],
+      "next": "p2"
+    },
+    "p2": {
+      "commands": [
+        {
+          "type": "text",
+          "box": "main",
+          "body": "フォントはシナリオフォルダの fonts/ に置いた VLW ファイルです。起動時に丸ごとメモリへ読み込むので、そのぶん本文に使えるメモリは減ります。"
+        }
+      ],
+      "next": "p3"
+    },
+    "p3": {
+      "commands": [
+        {
+          "type": "text",
+          "box": "main",
+          "body": "メニューへ戻ると内蔵フォントに戻ります。他のシナリオには影響しません。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

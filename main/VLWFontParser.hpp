@@ -31,6 +31,16 @@ struct VLWFontMetrics {
     int32_t descent;            // ディセント（ベースラインから下部までの距離、負の値）
     uint32_t maxCharWidth;      // 最大文字幅（全グリフ中の最大値）
     uint32_t maxCharHeight;     // 最大文字高（全グリフ中の最大値）
+
+    /**
+     * 描画時に M5GFX が使う実効アセント。
+     *
+     * M5GFX は VLW を読むとき、ヘッダの ascent と
+     * **全グリフの topExtent の最大**の大きい方を採る（U+3000 は除く）。
+     * グリフを置く位置は `maxAscent - topExtent` で決まるため、
+     * 描画位置を計算する側はヘッダの ascent ではなくこちらを見る必要がある。
+     */
+    int32_t maxAscent;
     uint32_t fontHeight;        // フォント高（アセント + |ディセント|）
     uint32_t fontWidth;         // フォント幅（代表的な文字幅）
     bool isValid;               // フォントデータが有効か
@@ -190,6 +200,17 @@ public:
      * @return 最大文字高（ピクセル）
      */
     uint32_t getMaxCharHeight() const { return _fontMetrics.maxCharHeight; }
+
+    /**
+     * @brief 描画時に M5GFX が使う実効アセントを取得する
+     *
+     * スプライト内でのグリフの縦位置は `maxAscent - topExtent` で決まる。
+     * 縦書きで半角文字を90度回すとき、この縦位置がそのまま横位置になるので、
+     * 位置を補正する側はこの値が要る。
+     *
+     * @return 実効アセント（ピクセル）
+     */
+    int32_t getMaxAscent() const { return _fontMetrics.maxAscent; }
     
     /**
      * @brief 指定された文字の幅を取得する

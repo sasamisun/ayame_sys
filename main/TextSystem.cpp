@@ -2,8 +2,11 @@
 
 #include "TextSystem.hpp"
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "fonts/shippori_16.h"
+#include "fonts/active_font.h"
+
+#include "SDcard.hpp"
 
 static const char* TAG = "TEXTSYS";
 
@@ -15,13 +18,18 @@ TextSystem::~TextSystem()
     clearBoxes();
     delete _vertical;
     delete _horizontal;
+
+    if (_scenarioFont) {
+        heap_caps_free(_scenarioFont);
+        _scenarioFont = nullptr;
+    }
 }
 
 TypoWrite* TextSystem::createWriter()
 {
     TypoWrite* w = new TypoWrite(_display);
     w->setVLWParser(&_parser);
-    w->loadFontFromArray(shippori);
+    w->loadFontFromArray(_activeFont);
     w->setColor(TFT_WHITE);
     w->setBackgroundColor(TFT_TRANSPARENT);
     w->setRubyEnabled(_rubyEnabled);
@@ -88,7 +96,9 @@ void TextSystem::clearBoxes()
 
 const uint8_t* TextSystem::fontData() const
 {
-    return shippori;
+    // 内蔵とは限らない。シナリオが差し替えていればそちらを返す。
+    // ボタンのラベルもシナリオのフォントで描かれるほうが揃う。
+    return _activeFont ? _activeFont : AYAME_FONT_DATA;
 }
 
 bool TextSystem::begin(M5GFX* display)
@@ -104,18 +114,26 @@ bool TextSystem::begin(M5GFX* display)
 
     _display = display;
 
-    if (!_parser.init(shippori, sizeof(shippori))) {
+    // 内蔵フォントで始める。描画器はまだ無いので applyFont() は使わない。
+    _activeFont = AYAME_FONT_DATA;
+    _activeFontSize = sizeof(AYAME_FONT_DATA);
+    _fontName = AYAME_FONT_LABEL;
+
+    if (!_parser.init(_activeFont, _activeFontSize)) {
         ESP_LOGE(TAG, "Failed to initialize VLW font");
         return false;
     }
 
-    ESP_LOGI(TAG, "VLW font initialized successfully");
+    // どのフォントでビルドされたかをログに残す。
+    // 見え方の違いを試している最中、書き込んだものが分からなくなるため。
+    ESP_LOGI(TAG, "Font: %s (%u bytes)", _fontName.c_str(),
+             static_cast<unsigned>(_activeFontSize));
     _parser.debugPrintFontInfo();
 
     // --- 縦書き（画面右側の帯） ---
     _vertical = new TypoWrite(display);
     _vertical->setVLWParser(&_parser);
-    _vertical->loadFontFromArray(shippori);
+    _vertical->loadFontFromArray(_activeFont);
     _vertical->setColor(TFT_WHITE);
     _vertical->setBackgroundColor(TFT_TRANSPARENT);
     _vertical->setDirection(TextDirection::VERTICAL);
@@ -124,13 +142,24 @@ bool TextSystem::begin(M5GFX* display)
 
     // 縦書きの字間。
     //
-    // 送りは em 固定（setWidth = 17px）なので、0 で「ベタ組み」になる。
-    // shippori_16 の実測では、あ(h=15/topExtent=13) を並べたとき
-    //   charSpacing=0  -> 送り17px, インク間隔 2px（適正）
-    //   charSpacing=-4 -> 送り13px, 2px 重なる
-    //   charSpacing=-8 -> 送り 9px, 6px 重なる
-    // 詰めたい場合でも -4 程度までにとどめること。
-    _vertical->setCharSpacing(0);
+    // 送りは全角なら em 固定（16px フォントなら 16px）で、
+    // ここに setCharSpacing() の値が足される。**負値は文字を重ねる方向。**
+    //
+    // 0 ではなく 2 にしてあるのは、送りが 1em ちょうどだと
+    // 字面どうしの隙間が 1px しか空かず、縦書きが詰まって見えるため。
+    //
+    // 実測（shippori_16 / あ は h=15, topExtent=13）:
+    //   charSpacing=0 -> 送り16px, インク間隔 1px（詰まって見える）
+    //   charSpacing=1 -> 送り17px, インク間隔 2px
+    //   charSpacing=2 -> 送り18px, インク間隔 3px（読みやすい）
+    //   charSpacing=4 -> 送り20px, インク間隔 5px（間延びし始める）
+    //
+    // 旧フォント（`AYAME_FONT 9`）は送りが 17px あったので、
+    // 0 でもインク間隔 2px が取れていた。16px のフォントに替えたぶん、
+    // ここで足して補う形にしてある。
+    //
+    // ボックスごとに変えたい場合は `textboxes` の `char_spacing`。
+    _vertical->setCharSpacing(DEFAULT_VERTICAL_CHAR_SPACING);
 
     // --- 横書き（画面下側の帯） ---
     //
@@ -139,7 +168,7 @@ bool TextSystem::begin(M5GFX* display)
     // 縦書きと違い小文字の変位・回転を通らないため、切り分けにも使える。
     _horizontal = new TypoWrite(display);
     _horizontal->setVLWParser(&_parser);
-    _horizontal->loadFontFromArray(shippori);
+    _horizontal->loadFontFromArray(_activeFont);
     _horizontal->setColor(TFT_WHITE);
     _horizontal->setBackgroundColor(TFT_TRANSPARENT);
     _horizontal->setDirection(TextDirection::HORIZONTAL);
@@ -190,6 +219,105 @@ void TextSystem::layoutDefaultBoxes()
              _vertical->areaWidth(), _vertical->areaHeight(),
              _horizontal->areaX(), _horizontal->areaY(),
              _horizontal->areaWidth(), _horizontal->areaHeight());
+}
+
+bool TextSystem::applyFont(const uint8_t* data, size_t size, const std::string& name)
+{
+    if (!_parser.init(data, size)) {
+        ESP_LOGE(TAG, "Failed to parse font '%s'", name.c_str());
+        return false;
+    }
+
+    _activeFont = data;
+    _activeFontSize = size;
+    _fontName = name;
+
+    // 既定の2つに加え、シナリオが定義したボックスにも配る。
+    // 配り忘れると、そのボックスだけ前のフォントのメトリクスで組まれる。
+    if (_vertical)   { _vertical->loadFontFromArray(data); }
+    if (_horizontal) { _horizontal->loadFontFromArray(data); }
+    for (auto& kv : _boxes) {
+        kv.second->loadFontFromArray(data);
+    }
+
+    ESP_LOGI(TAG, "Font: %s (%u bytes)", name.c_str(), static_cast<unsigned>(size));
+    _parser.debugPrintFontInfo();
+    return true;
+}
+
+bool TextSystem::loadScenarioFont(const std::string& path)
+{
+    if (!_ready) {
+        ESP_LOGE(TAG, "Not initialized");
+        return false;
+    }
+
+    // 読む前に今のものを捨てる。
+    // 1MB 級を2つ同時に抱えると PSRAM が苦しく、
+    // シナリオ本文の展開に回すぶんが足りなくなる。
+    useBuiltinFont();
+
+    size_t len = 0;
+    char* raw = SD.readFileToBuffer(path.c_str(), &len);
+    if (!raw) {
+        // SD 無し・USB MSC 中・パス違いなど。理由は SD 側のログに出ている。
+        ESP_LOGW(TAG, "Could not read the scenario font: %s", path.c_str());
+        return false;
+    }
+
+    uint8_t* data = reinterpret_cast<uint8_t*>(raw);
+
+    // VLW かどうかを先に見る。
+    // 別形式を渡されたまま解析へ進むと、でたらめなグリフ数で
+    // 巨大な確保を試みることになる。
+    if (len < 24) {
+        ESP_LOGE(TAG, "Font file is too small to be a VLW: %s", path.c_str());
+        heap_caps_free(data);
+        return false;
+    }
+    const uint32_t version = (static_cast<uint32_t>(data[4]) << 24)
+                           | (static_cast<uint32_t>(data[5]) << 16)
+                           | (static_cast<uint32_t>(data[6]) << 8)
+                           | static_cast<uint32_t>(data[7]);
+    if (version != 11) {
+        ESP_LOGE(TAG, "Not a VLW font (version %lu, expected 11): %s",
+                 static_cast<unsigned long>(version), path.c_str());
+        heap_caps_free(data);
+        return false;
+    }
+
+    if (!applyFont(data, len, path)) {
+        // 解析に失敗した。内蔵へ戻して再生は続けられるようにする。
+        heap_caps_free(data);
+        applyFont(AYAME_FONT_DATA, sizeof(AYAME_FONT_DATA), AYAME_FONT_LABEL);
+        return false;
+    }
+
+    // ここで初めて所有権を持つ。applyFont が成功した後に代入するのは、
+    // 失敗経路で二重解放しないため。
+    _scenarioFont = data;
+
+    ESP_LOGI(TAG, "Scenario font in use (%u KB, PSRAM free %u KB)",
+             static_cast<unsigned>(len / 1024),
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+    return true;
+}
+
+void TextSystem::useBuiltinFont()
+{
+    if (!_scenarioFont) {
+        return;   // 既に内蔵
+    }
+
+    // 解放する前に描画器の参照を内蔵へ戻す。
+    // 順番を逆にすると、解放済みの領域を指したまま1回でも描画が走ると落ちる。
+    applyFont(AYAME_FONT_DATA, sizeof(AYAME_FONT_DATA), AYAME_FONT_LABEL);
+
+    heap_caps_free(_scenarioFont);
+    _scenarioFont = nullptr;
+
+    ESP_LOGI(TAG, "Back to the built-in font (PSRAM free %u KB)",
+             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 }
 
 void TextSystem::setRubyEnabled(bool enabled)
