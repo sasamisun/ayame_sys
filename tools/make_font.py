@@ -74,6 +74,46 @@ except ImportError:
     sys.exit("Pillow が要る: pip install Pillow")
 
 
+# ---------------------------------------------------------------- 縦書き用字形
+
+# **縦書きの句読点・括弧は別のコードポイントで描かれる。**
+#
+#     、 U+3001 -> ︑ U+FE11        「 U+300C -> ﹁ U+FE41
+#     。 U+3002 -> ︒ U+FE12        」 U+300D -> ﹂ U+FE42
+#
+# 差し替えは TypoWrite::convertToVerticalGlyph() が行い、
+# **差し替え先がフォントに無ければ元の文字に戻す**（豆腐にしないため）。
+# 戻された文字は回転もされないので、縦書きなのに横向きのまま出る。
+#
+# 本文に出てくる文字だけを集めると、これらは literal では現れないので
+# 1つも入らない。だから **どの文字集合にも必ず足す。**
+#
+# 正本は main/TypoWrite.cpp の _verticalGlyphMap。
+VERTICAL_FORMS = [
+    0xFE11, 0xFE12,                    # ︑ ︒   、。
+    0xFE41, 0xFE42, 0xFE43, 0xFE44,    # ﹁﹂﹃﹄  「」『』
+    0xFE35, 0xFE36, 0xFE47, 0xFE48,    # ︵︶﹇﹈  ()[]
+    0xFE37, 0xFE38,                    # ︷︸      {}
+    0xFE3F, 0xFE40, 0xFE3D, 0xFE3E,    # ︿﹀︽︾  〈〉《》
+    0xFE3B, 0xFE3C, 0xFE39, 0xFE3A,    # ︻︼︹︺  【】〔〕
+    0xFE31, 0xFE32, 0xFE33,            # ︱︲︳    — – _
+    0xFE30, 0xFE19,                    # ︰︙      ‥ …
+]
+
+# 元の文字 -> 縦書き用字形。警告で「何が横向きになるか」を出すのに使う
+VERTICAL_SOURCE = {
+    0x3001: 0xFE11, 0x3002: 0xFE12,
+    0x300C: 0xFE41, 0x300D: 0xFE42, 0x300E: 0xFE43, 0x300F: 0xFE44,
+    0x0028: 0xFE35, 0x0029: 0xFE36, 0x005B: 0xFE47, 0x005D: 0xFE48,
+    0x007B: 0xFE37, 0x007D: 0xFE38,
+    0x3008: 0xFE3F, 0x3009: 0xFE40, 0x300A: 0xFE3D, 0x300B: 0xFE3E,
+    0x3010: 0xFE3B, 0x3011: 0xFE3C, 0x3014: 0xFE39, 0x3015: 0xFE3A,
+    0x2014: 0xFE31, 0x2013: 0xFE32, 0x2015: 0xFE31, 0x005F: 0xFE33,
+    0x2025: 0xFE30, 0x2026: 0xFE19,
+    0xFF0D: 0xFE32, 0x30FC: 0xFE31,
+}
+
+
 # ---------------------------------------------------------------- 文字集合
 
 def charset_ascii():
@@ -335,6 +375,23 @@ def verify(vlw_path, size):
         print("  %s : %s" % (label,
                              "収録あり（送り %dpx）" % g[3] if g else "*** 欠落 ***"))
 
+    # 縦書き用字形。
+    #
+    # **欠けると縦書きで 、。「」 が横向きのまま出る。**
+    # TypoWrite は差し替え先が無いと元の文字に戻し、回転もしないため。
+    have = {g[0] for g in glyphs}
+    want = set(VERTICAL_FORMS)
+    lack = sorted(want - have)
+    print("  縦書き用字形 : %d/%d 収録%s"
+          % (len(want) - len(lack), len(want),
+             "" if not lack else "  *** 縦書きで 、。「」 が横向きになる ***"))
+    if lack:
+        src = {v: k for k, v in VERTICAL_SOURCE.items()}
+        print("      横向きになる文字: %s"
+              % " ".join(chr(src[c]) for c in lack if c in src))
+        print("      元のフォントにこれらの字が無い。"
+              "縦書きで使うなら別の書体にすること。")
+
     print("  最大グリフ   : %d x %d"
           % (max(g[2] for g in glyphs), max(g[1] for g in glyphs)))
     print("  ファイル     : %.2f MB" % (len(data) / 1024 / 1024))
@@ -368,6 +425,8 @@ def main():
     p.add_argument("--symbol", help="ヘッダ内の配列名（既定はヘッダのファイル名）")
     p.add_argument("--no-antialias", action="store_true",
                    help="アンチエイリアスを切る（2値化）")
+    p.add_argument("--no-vertical", action="store_true",
+                   help="縦書き用字形（U+FE19〜FE48）を入れない。欧文専用のとき")
     args = p.parse_args()
 
     if not os.path.isfile(args.ttf):
@@ -414,8 +473,20 @@ def main():
                  % args.charset)
 
     # 空白は必ず入れる（字面が無いので落ちやすい）
-    chars = sorted(set(chars) | {chr(c) for c in BLANK_CHARS}, key=ord)
-    print("文字集合 : %s （%d 字）" % (args.charset, len(chars)))
+    extra = {chr(c) for c in BLANK_CHARS}
+
+    # **縦書き用字形も必ず入れる。**
+    # 本文から集める文字集合には literal では現れないので、
+    # ここで足さないと縦書きの句読点・括弧が横向きのまま出る。
+    if not args.no_vertical:
+        extra |= {chr(c) for c in VERTICAL_FORMS}
+
+    before = len(set(chars))
+    chars = sorted(set(chars) | extra, key=ord)
+    print("文字集合 : %s （%d 字%s）"
+          % (args.charset, len(chars),
+             "" if len(chars) == before else "、うち補い %d 字"
+             % (len(chars) - before)))
 
     # フォントに無い文字を先に除く。
     # 残すとフォントが返す .notdef（□）がそのまま埋め込まれ、

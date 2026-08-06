@@ -221,6 +221,7 @@ class Stats(object):
         self.bare_marks = 0
         self.braces = 0
         self.missing = []       # フォントに無い文字
+        self.missing_vertical = []   # 縦書き用字形が無い文字（元の文字のほう）
         self.font_name = ""
 
 
@@ -722,12 +723,21 @@ def report(path, enc, header, blocks, pages, page, stats, scenes, opts):
         warns.append("本文に ｜ か | が %d 個ある。"
                      "後ろに 《 》 が続くとルビとして誤読される" % stats.bare_marks)
     if stats.missing:
-        rel = os.path.relpath(opts.out_dir).replace("\\", "/")
         warns.append("%s に無い字が %d 種ある: %s"
                      % (stats.font_name, len(stats.missing),
                         "".join(stats.missing)))
         warns.append("    収録されていない字は何も描かれない（豆腐にもならない）。")
-        warns.append("    この作品用のフォントを作り、--font で指し直すこと:")
+
+    if stats.missing_vertical:
+        warns.append("%s に縦書き用字形が無い字が %d 種ある: %s"
+                     % (stats.font_name, len(stats.missing_vertical),
+                        "".join(stats.missing_vertical)))
+        warns.append("    縦書きなのに横書きの向き・位置のまま出る。")
+
+    if stats.missing or stats.missing_vertical:
+        rel = os.path.relpath(opts.out_dir).replace("\\", "/")
+        warns.append("    この作品用のフォントを作り、--font で指し直すこと"
+                     "（縦書き用字形は自動で入る）:")
         # **ゴシックを勧める。** 明朝はこの寸法だと横線が落ちる
         # （tools/README.md の make_font.py の節を参照）。
         warns.append("      python tools/make_font.py append/font/ipaexg.ttf "
@@ -870,6 +880,19 @@ def main():
                     ch for ch in used
                     if ord(ch) not in cps and ch not in "\n\r\t")
                 stats.font_name = os.path.basename(font_path)
+
+                # **縦書き用字形も見る。**
+                #
+                # 句読点と括弧は縦書きだと別のコードポイントで描かれる
+                # （、U+3001 -> ︑ U+FE11）。本文には literal で現れないので、
+                # 使う文字だけを数えていると素通りしてしまう。
+                # 無いと横書きの向き・位置のまま出る。
+                if vertical:
+                    import make_font
+                    stats.missing_vertical = sorted(
+                        ch for ch in used
+                        if ord(ch) in make_font.VERTICAL_SOURCE
+                        and make_font.VERTICAL_SOURCE[ord(ch)] not in cps)
             except (ConvertError, OSError, ValueError) as e:
                 print("収録字を照合できなかった: %s" % e, file=sys.stderr)
 
