@@ -100,11 +100,70 @@ void onChoiceButtonReleased(Button *btn)
         {
             ESP_LOGI(TAG, "Choice %u tapped", static_cast<unsigned>(i));
             clearChoiceButtons();
-            display.fillScreen(TFT_BLACK);
+
+            // 画面は塗らない。ボタンと問いかけを消して元へ戻すのは
+            // selectChoice() の仕事（下に何があったかを知っているのは
+            // プレイヤー側だけなので）。ここで黒く塗ると背景まで消える。
             scenarioPlayer.selectChoice(i);
             return;
         }
     }
+}
+
+/**
+ * @brief 選択肢の問いかけ（`choice` の `prompt`）をボタンの上に出す
+ *
+ * ボタンと同じ幅の帯にして、**下端が `bottom` に来るように**置く。
+ * 何行になるかは文言と画面の向きで変わるので、
+ * 先に高さを測ってから上端を決める。
+ *
+ * 帯は不透明で塗る。電子ペーパーは前の描画が消えずに残るので、
+ * 透過のまま重ねると下の本文と混ざって読めなくなる。
+ *
+ * @param x      帯の左端（ボタンと揃える）
+ * @param bottom 帯の下端。ここから上へ伸ばす
+ * @param width  帯の幅（ボタンと揃える）
+ */
+void showChoicePrompt(int x, int bottom, int width)
+{
+    const std::string &prompt = scenarioPlayer.choicePrompt();
+    if (prompt.empty())
+    {
+        return;
+    }
+
+    TypoWrite *writer = textSystem.choicePrompt();
+    if (!writer)
+    {
+        return;
+    }
+
+    constexpr int PAD = 8;
+
+    // **測る前に幅を入れる。** 折り返しの位置は幅で決まるので、
+    // 幅を入れないまま測ると行数が変わって高さが合わない。
+    // 高さは仮に画面いっぱいにしておく（折り返しには効かない）。
+    writer->setPosition(x, 0);
+    writer->setArea(width, static_cast<int>(display.height()));
+    writer->setPadding(PAD, PAD, PAD, PAD);
+
+    int h = writer->getTextHeight(prompt) + PAD * 2;
+    int y = bottom - h;
+    if (y < 0)
+    {
+        // 長すぎて画面に収まらない。上で切る（描画側が行単位で打ち切る）
+        y = 0;
+        h = bottom;
+    }
+    if (h <= PAD * 2)
+    {
+        return;
+    }
+
+    writer->setPosition(x, y);
+    writer->setArea(width, h);
+    display.fillRect(x, y, width, h, TFT_BLACK);
+    writer->drawText(prompt);
 }
 
 void showChoiceButtons()
@@ -122,7 +181,17 @@ void showChoiceButtons()
     const int screenW = static_cast<int>(display.width());
     const int width = std::min(320, screenW - 40);
     const int x = (screenW - width) / 2;
-    const int startY = display.height() - 40 - static_cast<int>(labels.size()) * (height + gap);
+    const int startY = static_cast<int>(display.height()) - 40
+                       - static_cast<int>(labels.size()) * (height + gap);
+
+    // **問いかけとボタンをまとめて1回で出す。**
+    // 電子ペーパーは1回の書き換えに 100ms 以上かかるので、
+    // 別々に出すと問いかけ→ボタンが1つずつ現れる様子が見えてしまう。
+    display.startWrite();
+
+    // 問いかけを先に描く。ボタンの下敷きにならないよう、
+    // ボタンの並びの上端（startY）から間隔ぶん空けた位置を下端にする。
+    showChoicePrompt(x, startY - gap, width);
 
     for (size_t i = 0; i < labels.size(); ++i)
     {
@@ -143,7 +212,7 @@ void showChoiceButtons()
     }
 
     choiceButtonManager->drawButtons();
-    SimpleTransition::refreshScreen(&display);
+    display.endWrite();
 
     ESP_LOGI(TAG, "Showing %u choice button(s)", static_cast<unsigned>(labels.size()));
 }

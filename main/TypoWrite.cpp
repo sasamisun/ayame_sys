@@ -2292,17 +2292,27 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
 
     if (lineCount == 0) { lineCount = 1; }
 
+    // **ルビ帯も数に入れる。**
+    //
+    // 描画側はルビの有無にかかわらず全行（全列）に同じ帯を確保している
+    // （drawHorizontalTextEnhanced / drawVerticalTextEnhanced）。
+    // ここで抜くと1行あたり em の半分だけ小さい値を返すことになり、
+    //   ・getTextHeight() で高さを測って枠を作ると本文が入りきらない
+    //   ・drawTextCentered() の中央位置が上（左）へずれる
+    // という食い違いになる。
+    const int rubyStrip = getRubyStripSize();
+
     if (vertical)
     {
         // 列幅は描画側の columnWidth に合わせる（描画は em ボックスで列を取る）
         int emW = 0;
         int emH = 0;
         getEmBoxSize(emW, emH);
-        width = lineCount * (emW + _lineSpacing) - _lineSpacing;
+        width = lineCount * (emW + rubyStrip + _lineSpacing) - _lineSpacing;
     }
     else
     {
-        height = lineCount * (getLineHeight() + _lineSpacing) - _lineSpacing;
+        height = lineCount * (getLineHeight() + rubyStrip + _lineSpacing) - _lineSpacing;
     }
 }
 

@@ -19,6 +19,7 @@ TextSystem::~TextSystem()
     delete _vertical;
     delete _horizontal;
     delete _backlog;
+    delete _prompt;
 
     if (_scenarioFont) {
         heap_caps_free(_scenarioFont);
@@ -35,6 +36,15 @@ TypoWrite* TextSystem::createWriter()
     w->setBackgroundColor(TFT_TRANSPARENT);
     w->setRubyEnabled(_rubyEnabled);
     return w;
+}
+
+std::vector<TypoWrite*> TextSystem::systemWriters()
+{
+    std::vector<TypoWrite*> out;
+    for (TypoWrite* w : {_vertical, _horizontal, _backlog, _prompt}) {
+        if (w) { out.push_back(w); }
+    }
+    return out;
 }
 
 bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
@@ -210,6 +220,26 @@ TypoWrite* TextSystem::backlog()
     return _backlog;
 }
 
+TypoWrite* TextSystem::choicePrompt()
+{
+    if (!_ready) {
+        return nullptr;
+    }
+
+    if (!_prompt) {
+        _prompt = createWriter();
+        _prompt->setDirection(TextDirection::HORIZONTAL);
+        _prompt->setFontSize(1.0);
+        _prompt->setLineSpacing(6);
+        _prompt->setCharSpacing(0);
+        _prompt->setAlignment(TextAlignment::CENTER);
+        _prompt->setColor(TFT_WHITE);
+    }
+
+    // 位置と大きさは入れない。ボタンの個数で決まるので呼び出し側の仕事。
+    return _prompt;
+}
+
 void TextSystem::layoutDefaultBoxes()
 {
     if (!_display || !_vertical || !_horizontal) {
@@ -258,10 +288,13 @@ bool TextSystem::applyFont(const uint8_t* data, size_t size, const std::string& 
     _activeFontSize = size;
     _fontName = name;
 
-    // 既定の2つに加え、シナリオが定義したボックスにも配る。
-    // 配り忘れると、そのボックスだけ前のフォントのメトリクスで組まれる。
-    if (_vertical)   { _vertical->loadFontFromArray(data); }
-    if (_horizontal) { _horizontal->loadFontFromArray(data); }
+    // **生成済みの描画器すべてに配る。**
+    // 配り忘れると、その描画器だけ前のフォントのメトリクスで組まれる。
+    // さらに悪いことに、シナリオ独自フォントを解放したあとは
+    // 解放済みのメモリを指したままになる。
+    for (TypoWrite* w : systemWriters()) {
+        w->loadFontFromArray(data);
+    }
     for (auto& kv : _boxes) {
         kv.second->loadFontFromArray(data);
     }
@@ -350,15 +383,11 @@ void TextSystem::setRubyEnabled(bool enabled)
 {
     _rubyEnabled = enabled;
 
-    if (_vertical) {
-        _vertical->setRubyEnabled(enabled);
+    // 生成済みの描画器すべてと、シナリオが定義したボックスに配る。
+    // ここを忘れると、その描画器だけルビが出ない。
+    for (TypoWrite* w : systemWriters()) {
+        w->setRubyEnabled(enabled);
     }
-    if (_horizontal) {
-        _horizontal->setRubyEnabled(enabled);
-    }
-
-    // シナリオが定義したボックスにも同じ設定を配る。
-    // ここを忘れると、名前付きボックスだけルビが出ない。
     for (auto& kv : _boxes) {
         kv.second->setRubyEnabled(enabled);
     }

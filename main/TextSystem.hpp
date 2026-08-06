@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include <M5GFX.h>
 
@@ -88,6 +89,18 @@ public:
      * 画面の向きが変わっても呼ぶたびに大きさを合わせ直す。
      */
     TypoWrite* backlog();
+
+    /**
+     * @brief 選択肢の問いかけ（`choice` の `prompt`）用の描画器
+     *
+     * 中央揃えの横書き。**位置と大きさは呼び出し側が決める。**
+     * ボタンの並びの上に置くため、ボタンの個数と画面の向きで変わるので
+     * ここでは決められない。
+     *
+     * 初回だけ生成し、以後は使い回す。
+     */
+    TypoWrite* choicePrompt();
+
     VLWFontParser* parser() { return &_parser; }
 
     /// ボタンのラベルなど、TypoWrite を通さず直接描く場合に使うフォントデータ
@@ -187,6 +200,18 @@ private:
     TypoWrite* createWriter();
 
     /**
+     * @brief `_boxes` 以外の描画器を全部返す（生成済みのものだけ）
+     *
+     * **フォントの差し替えとルビ設定は全ての描画器に配る必要がある。**
+     * 配り忘れた描画器は前のフォントを指したままになり、
+     * シナリオ独自フォントを解放したあとは解放済みのメモリを読む。
+     *
+     * 既定の2つだけを名指しで配っていたときに `backlog()` が漏れていた。
+     * 数え上げを1箇所にまとめて、増やしたときの漏れを防ぐ。
+     */
+    std::vector<TypoWrite*> systemWriters();
+
+    /**
      * @brief パーサと全描画器を指定のフォントデータへ向け直す
      *
      * 既定の2つに加え、シナリオが定義したボックスにも配る。
@@ -209,6 +234,7 @@ private:
     TypoWrite* _vertical = nullptr;
     TypoWrite* _horizontal = nullptr;
     TypoWrite* _backlog = nullptr;   // バックログ表示用（遅延生成）
+    TypoWrite* _prompt = nullptr;    // 選択肢の問いかけ用（遅延生成）
 
     // シナリオが定義したボックス。名前で引く
     std::map<std::string, TypoWrite*> _boxes;

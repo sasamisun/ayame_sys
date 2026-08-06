@@ -703,7 +703,53 @@ void ScenarioPlayer::fillTextBoxBackground(const std::string& boxName, TypoWrite
     writer->clearArea(color);
 }
 
+void ScenarioPlayer::beginBatch()
+{
+    if (_batchOpen || !_display) {
+        return;
+    }
+    _display->startWrite();
+    _batchOpen = true;
+}
+
+void ScenarioPlayer::endBatch()
+{
+    if (!_batchOpen || !_display) {
+        return;
+    }
+    _batchOpen = false;
+    _display->endWrite();
+}
+
+void ScenarioPlayer::markRefresh(lgfx::v1::epd_mode_t mode)
+{
+    _needRefresh = true;
+    _refreshMode = mode;
+}
+
+void ScenarioPlayer::flushScreen()
+{
+    if (_needRefresh) {
+        _needRefresh = false;
+
+        // **バッチは開けたまま渡す。**
+        // 先に閉じると「描いた範囲の部分更新」と「全画面の走査」で
+        // 2回書き換わる。refreshScreen() は更新範囲を全画面へ広げてから
+        // 積むので、開けたまま呼べば1回で済む。
+        SimpleTransition::refreshScreen(_display, _refreshMode);
+        _refreshMode = lgfx::v1::epd_mode_t::epd_quality;
+    }
+    endBatch();
+}
+
 void ScenarioPlayer::run()
+{
+    beginBatch();
+    runUntilWait();
+    flushScreen();
+}
+
+void ScenarioPlayer::runUntilWait()
 {
     int steps = 0;
 
@@ -861,6 +907,9 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeCommand(const cJSON* cmd)
         _charas.clear();
         _currentBackground.clear();
         _foreground = ForegroundState{};
+
+        // 画面全体が変わったので、出すときは全画面の走査で
+        markRefresh();
         return CmdResult::Next;
     }
     if (type == "wait") {
@@ -899,9 +948,15 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeCommand(const cJSON* cmd)
     if (type == "refresh") {
         const lgfx::v1::epd_mode_t mode = parseEpdMode(getString(cmd, "mode", "epd_quality"));
         if (getBool(cmd, "clear_ghost", false)) {
+            // 反転を伴うので、**ここまでの描画を先に出しておく**。
+            // 残像消去は「今パネルに出ている絵」を反転させる処理なので、
+            // 溜めたままだと反転の対象が古い絵になる。
+            endBatch();
             SimpleTransition::clearGhosting(_display, mode);
+            _needRefresh = false;
+            beginBatch();
         } else {
-            SimpleTransition::refreshScreen(_display, mode);
+            markRefresh(mode);
         }
         return CmdResult::Next;
     }
@@ -930,7 +985,7 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeCommand(const cJSON* cmd)
             if (writer) {
                 fillTextBoxBackground("", writer);
                 writer->drawTextPaged(message, 0);
-                SimpleTransition::refreshScreen(_display);
+                markRefresh();
             }
             _endPending = true;
             return CmdResult::NextAndWaitTap;
@@ -1006,8 +1061,9 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeText(const cJSON* cmd)
         _lastTypedMs = esp_timer_get_time() / 1000;
         _typingWaitAfter = getBool(cmd, "wait", true);
 
+        // 送っているあいだは最速モード。以後 tickTyping() が1文字ずつ出す。
         _display->setEpdMode(lgfx::v1::epd_mode_t::epd_fastest);
-        SimpleTransition::refreshScreen(_display, lgfx::v1::epd_mode_t::epd_fastest);
+        markRefresh(lgfx::v1::epd_mode_t::epd_fastest);
 
         ESP_LOGI(TAG, "text: typing %u chars at %d ms/char",
                  static_cast<unsigned>(_typingPageChars), speed);
@@ -1021,7 +1077,7 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeText(const cJSON* cmd)
              static_cast<unsigned>(result.nextOffset),
              static_cast<int>(result.hasMore));
 
-    SimpleTransition::refreshScreen(_display);
+    markRefresh();
 
     if (result.hasMore) {
         // 続きがある。同じコマンドのまま次のページを待つ。
@@ -1268,24 +1324,37 @@ bool ScenarioPlayer::emergencySave()
     return ok;
 }
 
-void ScenarioPlayer::redrawCurrentScreen()
+void ScenarioPlayer::restoreStageAndText()
 {
     renderStage(_display);
 
-    if (!_lastBody.empty()) {
-        TypoWrite* writer = _lastBoxName.empty()
-            ? (_vertical ? _vertical : _horizontal)
-            : textSystem.box(_lastBoxName);
-        if (!writer) {
-            writer = _vertical ? _vertical : _horizontal;
-        }
-        if (writer) {
-            fillTextBoxBackground(_lastBoxName, writer);
-            writer->drawTextPaged(_lastBody, _lastPageOffset);
-        }
+    if (_lastBody.empty()) {
+        return;
     }
 
-    SimpleTransition::refreshScreen(_display);
+    // **戻せるのは直近に書いた1つの枠だけ。**
+    // どの枠に何を書いたかを全部覚えてはいない。
+    // 名前や見出しの枠も残したい場合は、シナリオ側で書き直すこと。
+    TypoWrite* writer = _lastBoxName.empty()
+        ? (_vertical ? _vertical : _horizontal)
+        : textSystem.box(_lastBoxName);
+    if (!writer) {
+        writer = _vertical ? _vertical : _horizontal;
+    }
+    if (writer) {
+        fillTextBoxBackground(_lastBoxName, writer);
+        writer->drawTextPaged(_lastBody, _lastPageOffset);
+    }
+}
+
+void ScenarioPlayer::redrawCurrentScreen()
+{
+    // 舞台と本文をまとめて1回で出す。
+    // バックログを閉じた直後なので、画面全体が変わっている。
+    beginBatch();
+    restoreStageAndText();
+    markRefresh();
+    flushScreen();
 }
 
 void ScenarioPlayer::renderStage(lgfx::LovyanGFX* target)
@@ -1293,6 +1362,14 @@ void ScenarioPlayer::renderStage(lgfx::LovyanGFX* target)
     if (!target) {
         return;
     }
+
+    // **描き終わるまで画面へ出さない。**
+    // 塗りつぶし → 背景 PNG → 立ち絵の順に何度も描くので、
+    // そのまま出すと「黒 → 背景だけ → 立ち絵1体」と段階が見えてしまう。
+    //
+    // startWrite() は入れ子になる（_start_count）。run() が既に開いていれば
+    // ここでは増減するだけで、実際に出るのは run() が閉じたときになる。
+    target->startWrite();
 
     // 背景から描き直す。
     // 立ち絵だけを描くと前の立ち絵が消えずに重なってしまう。
@@ -1388,6 +1465,8 @@ void ScenarioPlayer::renderStage(lgfx::LovyanGFX* target)
             }
         }
     }
+
+    target->endWrite();
 }
 
 ScenarioPlayer::CmdResult ScenarioPlayer::executeChara(const cJSON* cmd)
@@ -1409,7 +1488,7 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeChara(const cJSON* cmd)
             ESP_LOGI(TAG, "chara '%s' hidden", id.c_str());
         }
         renderStage(_display);
-        SimpleTransition::refreshScreen(_display);
+        markRefresh();   // 背景から描き直したので全画面
         return CmdResult::Next;
     }
 
@@ -1504,7 +1583,8 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeChara(const cJSON* cmd)
     if (moved || !layerDefs || !drawCharaCached(_display, *existing, layerDefs)) {
         renderStage(_display);
     }
-    SimpleTransition::refreshScreen(_display);
+
+    markRefresh();
     return CmdResult::Next;
 }
 
@@ -1539,7 +1619,7 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeBackground(const cJSON* cmd)
         // 背景だけでなく立ち絵も一緒に描き直す。
         // 背景だけ描くと、表示中の立ち絵が消えてしまう。
         renderStage(_display);
-        SimpleTransition::refreshScreen(_display);
+        markRefresh();
         return CmdResult::Next;
     }
 
@@ -1548,11 +1628,18 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeBackground(const cJSON* cmd)
     if (!canvas) {
         ESP_LOGE(TAG, "Transition canvas unavailable. Drawing directly");
         renderStage(_display);
-        SimpleTransition::refreshScreen(_display);
+        markRefresh();
         return CmdResult::Next;
     }
 
     renderStage(canvas);
+
+    // **溜めた分をここで出しておく。**
+    // このあとは SimpleTransition が自分でパネルを動かす。
+    // 開いたままにすると、遷移が終わったあとで
+    // 遷移前の更新範囲が積まれ、一瞬前の絵に戻る。
+    _needRefresh = false;
+    endBatch();
 
     _transition->startTransition(type, 16);
     ESP_LOGI(TAG, "bg '%s' with transition %s", image.c_str(), transitionName.c_str());
@@ -1721,7 +1808,7 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeImage(const cJSON* cmd)
         _foreground.image.clear();
         ESP_LOGI(TAG, "image cleared");
         renderStage(_display);
-        SimpleTransition::refreshScreen(_display);
+        markRefresh();
         return CmdResult::Next;
     }
 
@@ -1742,7 +1829,7 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeImage(const cJSON* cmd)
              image.c_str(), _foreground.x, _foreground.y);
 
     renderStage(_display);
-    SimpleTransition::refreshScreen(_display);
+    markRefresh();
     return CmdResult::Next;
 }
 
@@ -1751,6 +1838,13 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeSuspend(const cJSON* cmd)
     const int slot = getInt(cmd, "slot", 0);
 
     ESP_LOGI(TAG, "Suspending (slot %d)", slot);
+
+    // **溜めた描画をここで出し切る。**
+    // このあとは残像消去としおり画面を自分でパネルへ出し、
+    // 走査の完了を待ってから電源を切る。溜めたままだと
+    // 電源が落ちるまでに出せず、直前の画面が残る。
+    _needRefresh = false;
+    endBatch();
 
     // 1. 控えが無いときのために、実行位置を1つ進めておく。
     //
@@ -2169,7 +2263,7 @@ bool ScenarioPlayer::loadFromSlot(int slot)
 
     // 画面を復元する
     renderStage(_display);
-    SimpleTransition::refreshScreen(_display);
+    markRefresh();
 
     ESP_LOGI(TAG, "Loaded %s (scene='%s', index=%d, charas=%u)",
              path.c_str(), _sceneId.c_str(), _frames[0].index,
@@ -2244,9 +2338,24 @@ void ScenarioPlayer::selectChoice(size_t index)
     _choiceEnabled.clear();
     _choicePrompt.clear();
 
+    // **ボタンと問いかけを消す。**
+    //
+    // 描いたのは main.cpp だが、その下に何があったかを知っているのはこちら。
+    // 以前は呼び出し側が画面全体を黒く塗っていたが、それでは背景も立ち絵も
+    // 消えてしまい、飛び先のシーンが `bg` を書き直していないと
+    // 真っ黒な画面に本文だけが乗ることになっていた。
+    //
+    // **バッチは開けたまま次のシーンへ渡す。**
+    // 復元と飛び先の描画がひとつの更新にまとまり、
+    // 「黒くなってから描き直す」ちらつきが出ない。
+    beginBatch();
+    restoreStageAndText();
+    markRefresh();
+
     if (!gotoScene(target)) {
         ESP_LOGE(TAG, "Choice leads to undefined scene '%s'", target.c_str());
         _state = State::Finished;
+        flushScreen();
         return;
     }
 
@@ -2272,6 +2381,9 @@ void ScenarioPlayer::tickTyping()
 
     // 1文字増やすたびに下地から敷き直す。
     // 前の文字を消さずに重ねると、送りが進むほど滲んでいく。
+    //
+    // 敷き直しと描画で2回出さないよう、ここも溜めてから出す。
+    beginBatch();
     fillTextBoxBackground(_typingBoxName, _typingWriter);
 
     const TypoWrite::DrawResult result =
@@ -2279,13 +2391,15 @@ void ScenarioPlayer::tickTyping()
 
     if (!done) {
         // 途中は最速モードで出す。遅さが致命的になるため画質は諦める。
-        SimpleTransition::refreshScreen(_display, lgfx::v1::epd_mode_t::epd_fastest);
+        markRefresh(lgfx::v1::epd_mode_t::epd_fastest);
+        flushScreen();
         return;
     }
 
     // 出し切った。最速モードのままだと薄いので、本来のモードで描き直して定着させる。
     _display->setEpdMode(lgfx::v1::epd_mode_t::epd_quality);
-    SimpleTransition::refreshScreen(_display);
+    markRefresh();
+    flushScreen();
 
     _typingWriter = nullptr;
     _typingBody.clear();

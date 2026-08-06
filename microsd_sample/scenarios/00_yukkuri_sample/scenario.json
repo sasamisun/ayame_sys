@@ -172,6 +172,8 @@
     "resume": {
       "commands": [
         { "type": "load", "slot": 1 },
+        { "type": "text", "box": "title",
+          "body": "AYAME ってなんだぜ", "wait": false },
         { "type": "text", "box": "name", "body": "霊夢", "wait": false },
         { "type": "text", "box": "main",
           "body": "まだ続きが無いわ。「はじめから」を選んでね。" },

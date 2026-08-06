@@ -285,8 +285,79 @@ private:
         size_t pageOffset;
     };
 
-    // 待ちに入るまでコマンドを進める
+    /**
+     * @brief 待ちに入るまでコマンドを進め、**最後に一度だけ画面へ出す**
+     *
+     * ## なぜまとめるか
+     *
+     * 電子ペーパーは1回の書き換えに 117〜351ms かかる。
+     * 1つの場面はふつう複数のコマンドで組み立てる（立ち絵2体＋名前＋本文で4個）。
+     * コマンドごとに画面へ出していると、**読者は組み立ての途中を全部見せられる**。
+     * 待ちに入るまでは誰も見ていないのだから、そこまで溜めて1回で出せばよい。
+     *
+     * ## やり方
+     *
+     * `startWrite()` を開いたままコマンドを進める。
+     * `Panel_EPD` は `_auto_display` が立っているので、
+     * **`endWrite()` で `_start_count` が 0 に戻った時にだけ**
+     * それまでの更新範囲をまとめて1つの矩形として積む。
+     * 描画そのものはパネルのバッファへ直接行われるので、
+     * 溜めているあいだも内容は失われない。
+     *
+     * 走査は `markRefresh()` の印を見て `flushScreen()` が1回だけ行う。
+     *
+     * ## まとめない場所
+     *
+     * 溜めている途中でも、自分でパネルを動かす処理の前には出し切る。
+     *
+     * | 場所 | 理由 |
+     * |---|---|
+     * | `suspend` | 電源を切るまでに出し切らないと前の画面が残る |
+     * | `refresh` の `clear_ghost` | 「今出ている絵」を反転させる処理なので |
+     * | 演出つきの `bg` | `SimpleTransition` が自分で動かす |
+     *
+     * 選択肢のボタンは `main.cpp` が別に描く。
+     * こちらが場面を出したあと、ボタンだけが後から重なる形になる。
+     */
     void run();
+
+    /// `run()` の中身。待ちに入るか終わるまでコマンドを進める
+    void runUntilWait();
+
+    /**
+     * @brief 画面への出力を溜め始める / 溜めた分を出す
+     *
+     * 二重に開かないよう `_batchOpen` で見張る。
+     * `endBatch()` は開いていなければ何もしないので、
+     * 「念のため閉じておく」書き方ができる。
+     */
+    void beginBatch();
+    void endBatch();
+
+    /**
+     * @brief 「この場面は画面へ出す必要がある」と印を付ける
+     *
+     * **画面へ何か描いたコマンドは必ず呼ぶ。**
+     * 何度呼んでも走査は1回だけで、`run()` が待ちに入るときにまとめて行う。
+     *
+     * 呼ばなかった場合は走査そのものが起きない。
+     * 変数の代入やセーブのように画面を変えないコマンドだけが続いた
+     * ときに、無駄な書き換えを1回入れないためにこうしてある。
+     *
+     * @param mode 走査の品質。既定は `epd_quality`。
+     *             文字送り中だけ `epd_fastest` を渡す
+     */
+    void markRefresh(lgfx::v1::epd_mode_t mode = lgfx::v1::epd_mode_t::epd_quality);
+
+    /**
+     * @brief 溜めた描画を画面へ出す（走査が予約されていれば全画面で）
+     *
+     * **走査するときはバッチを開けたまま渡す。**
+     * 先に閉じると「描いた範囲の部分更新」と「全画面の走査」で
+     * 2回書き換わることになる。`refreshScreen()` は更新範囲を
+     * 全画面へ広げてから積むので、開けたまま呼べば1回で済む。
+     */
+    void flushScreen();
 
     CmdResult executeCommand(const cJSON* cmd);
     CmdResult executeText(const cJSON* cmd);
@@ -376,6 +447,17 @@ private:
      * @param target 描画先。トランジション時はキャンバス、通常は画面
      */
     void renderStage(lgfx::LovyanGFX* target);
+
+    /**
+     * @brief 舞台（背景＋立ち絵）と直近の本文を描き直す
+     *
+     * 画面へ何かを重ねて出したあと（バックログ・選択肢のボタン）、
+     * それを消して元の見た目へ戻すために使う。
+     *
+     * **画面へは出さない。** 呼び出し側が `flushScreen()` するか、
+     * 続けて描いてからまとめて出すこと。
+     */
+    void restoreStageAndText();
 
     // 表示中の立ち絵を id で探す。無ければ nullptr
     CharaState* findChara(const std::string& id);
@@ -508,6 +590,12 @@ private:
     // ---- wait ----
     int64_t _waitUntilMs = 0;
     bool _waitSkippable = true;
+
+    // ---- 画面への出力をまとめる ----
+    // `run()` の説明を参照。待ちに入るまで溜めて1回で出す。
+    bool _batchOpen = false;
+    bool _needRefresh = false;
+    lgfx::v1::epd_mode_t _refreshMode = lgfx::v1::epd_mode_t::epd_quality;
 
     // ---- end ----
     // `message` が指定されていた場合、表示してタップを待ってから終わる。
