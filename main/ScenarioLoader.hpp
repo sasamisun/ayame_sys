@@ -140,6 +140,20 @@ public:
      */
     int rotation() const;
 
+    /**
+     * @brief `meta.back_swipe`（横スワイプで前の画面へ戻れるようにするか）
+     *
+     * 読み物向けの指定。真にすると、本文を読んでいる間の横スワイプで
+     * 1画面戻れる（逆向きのスワイプは進む）。
+     *
+     * **既定は偽。** 書かなければ今までどおり、横スワイプは何もしない。
+     * 分岐のある物語では、戻れると話の筋が分かりにくくなることがあるため
+     * 作者が選べるようにしてある。
+     *
+     * 向きは `meta.text_direction` に従う（[`ScenarioPlayer::goBack()`]）。
+     */
+    bool backSwipe() const;
+
     /// `variables`（変数の初期値）。無ければ nullptr
     const cJSON* variablesNode() const;
 

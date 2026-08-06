@@ -471,6 +471,22 @@ enum class AppScreen { Menu, Playing };
 プレイヤー側だけなので、`selectChoice()` が
 `restoreStageAndText()` で戻す。
 
+**再生中の入力は `handlePlayingInput()` にまとめてある。**
+
+| 操作 | 動き |
+|---|---|
+| タップ（指を離す） | `onTap()`。本文を進める／文字送りを飛ばす |
+| 上へはらう | バックログを開く |
+| 横へはらう | `meta.back_swipe` が真なら `goBack()` ／ 逆向きは進む |
+
+**判定は「指を離したとき」。** 以前は押した瞬間（`isTouchEvent()`）で
+本文を進めていた。スワイプが成立したかは指を離すまで分からないので、
+**スワイプを始めた時点で1画面進んでしまっていた**
+（上スワイプでバックログを開くと、開く前に本文が進んでいた）。
+
+戻る向きは `meta.text_direction` で決まる（`enterPlaying()` で
+`backSwipeDirection` に入れる）。縦書きは左、横書きは右。
+
 **置き場所は画面の下端から上へ、横は中央寄せ。**
 `showChoicePrompt()` が `choicePrompt()` をその上に黒帯で描く。
 帯は `TextSystem::choicePrompt()` の描画器を使い、
@@ -638,6 +654,40 @@ enum class CmdResult {
 | `refresh` の `clear_ghost` | 「今出ている絵」を反転させる処理なので |
 | 演出つきの `bg` | `SimpleTransition` が自分で動かす |
 | `tickTyping()` | `run()` の外。1文字ごとに自分で出す |
+
+**前の画面へ戻れる**（`meta.back_swipe`）
+
+`run()` の1回が1画面なので、**その入口で状態を控えれば画面の境目になる**。
+
+```cpp
+void ScenarioPlayer::run()
+{
+    pushSnapshot();   // この画面の開始位置
+    beginBatch();
+    runUntilWait();
+    flushScreen();
+}
+```
+
+`goBack()` は控えを2つ外し（今の画面ぶんを捨て、1つ前を取る）、
+復元して `run()` をやり直す。**画面を貼り直すのではなく実行し直す**ので、
+名前欄や見出しのように「その画面を作るために描いたもの」も一緒に戻る。
+
+**セーブ用の `buildStateObject()` は使わない。** あれは `_frames[0]` しか
+持たず `call` の戻り先も落とすので、`if` の中や `call` の途中で控えると
+位置がずれる。メモリ上の控えなのでメンバをそのまま複製する（`Snapshot`）。
+`Frame` が持つのは読み込んだ JSON への生ポインタだけなので複製して構わない。
+ただし**シナリオを閉じたら必ず捨てる**（`prepare()` で `clear()`）。
+残すと解放済みの領域を指す。
+
+| 控えるもの | なぜ |
+|---|---|
+| `_frames` / `_callStack` / `_pageOffset` | 入れ子の中でも位置がずれない |
+| `_variables` | `set` の `+=` が二重に効かない |
+| 背景・立ち絵・前面絵 | 戻った先のコマンドが描くとは限らない |
+| `_history.size()` | 戻ると同じ本文をもう一度積むので切り詰める |
+
+上限 `MAX_BACK` = 20 段（1つ数百バイト）。溢れたら古いほうから捨てる。
 
 **セーブは1箇所で組む**
 

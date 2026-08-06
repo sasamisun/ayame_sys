@@ -478,6 +478,11 @@ bool ScenarioPlayer::prepare()
     _callStack.clear();
     clearCharaCache();
     _history.clear();
+
+    // **控えは必ず捨てる。**
+    // Frame は読み込んだ JSON への生ポインタなので、
+    // 前のシナリオの控えを残すと解放済みの領域を指したままになる。
+    _backStack.clear();
     _lastBody.clear();
     _lastBoxName.clear();
     _lastPageOffset = 0;
@@ -742,8 +747,104 @@ void ScenarioPlayer::flushScreen()
     endBatch();
 }
 
+void ScenarioPlayer::pushSnapshot()
+{
+    Snapshot s;
+    s.sceneId = _sceneId;
+    s.frames = _frames;
+    s.callStack = _callStack;
+    s.pageOffset = _pageOffset;
+    s.variables = _variables;
+    s.background = _currentBackground;
+    s.backgroundX = _backgroundX;
+    s.backgroundY = _backgroundY;
+    s.backgroundScale = _backgroundScale;
+    s.charas = _charas;
+    s.foreground = _foreground;
+    s.historySize = _history.size();
+
+    _backStack.push_back(std::move(s));
+
+    // 古いものから捨てる。全部持つと長編で際限なく増える。
+    if (_backStack.size() > MAX_BACK) {
+        _backStack.erase(_backStack.begin());
+    }
+}
+
+void ScenarioPlayer::restoreSnapshot(const Snapshot& s)
+{
+    _sceneId = s.sceneId;
+    _scene = _loader->findScene(_sceneId);
+    _frames = s.frames;
+    _callStack = s.callStack;
+    _pageOffset = s.pageOffset;
+    _variables = s.variables;
+    _currentBackground = s.background;
+    _backgroundX = s.backgroundX;
+    _backgroundY = s.backgroundY;
+    _backgroundScale = s.backgroundScale;
+    _charas = s.charas;
+    _foreground = s.foreground;
+
+    // 戻った先の本文をもう一度積むので、ここで切り詰めておく。
+    // やらないと履歴に同じ本文が並ぶ。
+    if (s.historySize < _history.size()) {
+        _history.resize(s.historySize);
+    }
+
+    // 文字送りの途中で戻られても続きを出さない
+    _typingWriter = nullptr;
+    _typingBody.clear();
+    _typingBoxName.clear();
+
+    // `end` のメッセージを出したあとに戻られた場合。
+    // 残したままだと、次のタップでシナリオが終わってしまう。
+    _endPending = false;
+}
+
+bool ScenarioPlayer::goBack()
+{
+    // **画面が落ち着いているときだけ戻す。**
+    // 遷移の途中や選択肢の表示中に位置を動かすと、
+    // このあと走るはずの処理（onTransitionFinished / selectChoice）と食い違う。
+    if (_state != State::WaitingTap &&
+        _state != State::Waiting &&
+        _state != State::Typing) {
+        ESP_LOGI(TAG, "Not a good moment to go back (state=%d)",
+                 static_cast<int>(_state));
+        return false;
+    }
+
+    // 積んであるのは「今の画面の開始位置」まで。
+    // 1つしか無いなら、今出ているのが最初の画面ということ。
+    if (_backStack.size() < 2) {
+        ESP_LOGI(TAG, "No screen to go back to");
+        return false;
+    }
+
+    _backStack.pop_back();                  // 今の画面の開始位置は捨てる
+    const Snapshot prev = _backStack.back();
+    _backStack.pop_back();                  // run() が押し直す
+
+    restoreSnapshot(prev);
+
+    ESP_LOGI(TAG, "Going back to scene '%s' index %d",
+             _sceneId.c_str(), _frames.empty() ? -1 : _frames[0].index);
+
+    // **舞台を戻す。**
+    // 戻った先のコマンドが背景や立ち絵を描くとは限らないので、
+    // 控えた舞台をここで作り直しておかないと今の画面のまま残る。
+    beginBatch();
+    renderStage(_display);
+    markRefresh();
+
+    run();
+    return true;
+}
+
 void ScenarioPlayer::run()
 {
+    pushSnapshot();
     beginBatch();
     runUntilWait();
     flushScreen();

@@ -315,6 +315,21 @@ int ScenarioLoader::rotation() const
     return value;
 }
 
+bool ScenarioLoader::backSwipe() const
+{
+    const cJSON* meta = cJSON_GetObjectItemCaseSensitive(_root, "meta");
+    const cJSON* item = cJSON_GetObjectItemCaseSensitive(meta, "back_swipe");
+
+    if (!item) {
+        return false;   // 指定なし。今までどおり横スワイプは何もしない
+    }
+    if (!cJSON_IsBool(item)) {
+        ESP_LOGW(TAG, "meta.back_swipe must be true or false. Ignored");
+        return false;
+    }
+    return cJSON_IsTrue(item);
+}
+
 const cJSON* ScenarioLoader::variablesNode() const
 {
     return cJSON_GetObjectItemCaseSensitive(_root, "variables");

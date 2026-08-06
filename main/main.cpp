@@ -330,6 +330,100 @@ void hideBacklog()
 }
 
 // ========================================
+// 再生中の入力
+// ========================================
+
+/// `meta.back_swipe` が真のシナリオだけ、横スワイプで前の画面へ戻れる
+bool backSwipeEnabled = false;
+
+/// 戻る側のスワイプ。`meta.text_direction` で決まる（`enterPlaying()` で設定）
+SwipeDirection backSwipeDirection = SwipeDirection::Right;
+
+/**
+ * @brief 本文を読んでいる間の入力を捌く
+ *
+ * **スワイプが分かるのは指を離したときだけ。**
+ * 以前は本文を進めるのを「押した瞬間」（`isTouchEvent()`）で見ていたので、
+ * スワイプを始めた時点で1画面進んでしまっていた。
+ * 上スワイプでバックログを開いたときも、開く前に本文が1つ進んでいた。
+ *
+ * **進めるのもリリース時に揃える。** タップで進むという操作自体は
+ * 変わらないので、既存のシナリオへの影響は「指を離した時に進む」だけ。
+ *
+ * @param hasTouchEvent この周期でタッチのイベントがあったか
+ */
+void handlePlayingInput(bool hasTouchEvent)
+{
+    const bool released = hasTouchEvent && touchHandler.isReleaseEvent();
+
+    // 選択肢の表示中はボタンが入力を持つので、ここでは何もしない
+    if (released && !scenarioPlayer.isWaitingChoice())
+    {
+        switch (touchHandler.getLastSwipe())
+        {
+        case SwipeDirection::Up:
+            showBacklog();
+            return;
+
+        case SwipeDirection::Left:
+        case SwipeDirection::Right:
+            if (backSwipeEnabled)
+            {
+                if (touchHandler.getLastSwipe() == backSwipeDirection)
+                {
+                    scenarioPlayer.goBack();
+                }
+                else
+                {
+                    scenarioPlayer.onTap();   // 逆向きは「進む」
+                }
+            }
+            // 使わないシナリオでは何も起こさない。
+            // タップとして扱うと、払っただけで話が進んでしまう。
+            return;
+
+        case SwipeDirection::Down:
+            return;   // 今は使わない
+
+        case SwipeDirection::None:
+        default:
+            // ただのタップ。文字送りの途中なら onTap() が全文表示へ飛ばす
+            scenarioPlayer.onTap();
+            return;
+        }
+    }
+
+    if (scenarioPlayer.isWaitingTransition())
+    {
+        // ここへ来た時点で遷移は終わっている（呼び出し側で確認済み）
+        scenarioPlayer.onTransitionFinished();
+    }
+    else if (scenarioPlayer.isWaitingChoice())
+    {
+        // まだ並べていなければ選択肢を出す。
+        // 入力は choiceButtonManager が拾い、
+        // onChoiceButtonReleased() から selectChoice() が呼ばれる。
+        if (choiceButtons.empty())
+        {
+            showChoiceButtons();
+        }
+        choiceButtonManager->update();
+    }
+    else if (scenarioPlayer.isWaiting())
+    {
+        // wait の経過を見る。skippable なら上のタップ判定で飛ばされる。
+        scenarioPlayer.tickWait();
+    }
+    else if (scenarioPlayer.isTyping())
+    {
+        // 文字送りを1文字進める。間隔が来ていなければ何もしない。
+        // タップの判定より後に置くのは、送っている最中の
+        // タップを取りこぼさないため。
+        scenarioPlayer.tickTyping();
+    }
+}
+
+// ========================================
 // 画面の切り替え
 // ========================================
 
@@ -439,6 +533,21 @@ void enterPlaying(const std::string &scenarioId, bool resume = false)
 
     // シナリオ本文はルビ記法を使う前提
     textSystem.setRubyEnabled(true);
+
+    // 横スワイプで前の画面へ戻れるようにするか。
+    //
+    // **戻る向きは本文の進む向きの逆。**
+    // 縦書きは右から左へ進むので、紙の本と同じく左へはらうと前へ戻る。
+    // 横書きは左から右へ進むので、右へはらうと戻る。
+    backSwipeEnabled = scenarioLoader.backSwipe();
+    backSwipeDirection = (scenarioLoader.defaultTextDirection() == "HORIZONTAL")
+                             ? SwipeDirection::Right
+                             : SwipeDirection::Left;
+    if (backSwipeEnabled)
+    {
+        ESP_LOGI(TAG, "Back swipe enabled (%s to go back)",
+                 backSwipeDirection == SwipeDirection::Left ? "left" : "right");
+    }
 
     scenarioPlayer.begin(&display, &scenarioLoader,
                          textSystem.vertical(), textSystem.horizontal(),
@@ -644,50 +753,7 @@ void loop()
             break;
         }
 
-        // 上スワイプで履歴を開く。
-        // **タップ判定より前に見ること。** スワイプは「方向を伴うタッチ終了」
-        // なので、後ろに置くと本文が1つ進んでから開くことになる。
-        if (hasTouchEvent && touchHandler.isSwipeEvent()
-            && touchHandler.getLastSwipe() == SwipeDirection::Up
-            && !scenarioPlayer.isWaitingChoice())
-        {
-            showBacklog();
-            break;
-        }
-
-        if (scenarioPlayer.isWaitingTransition())
-        {
-            // ここへ来た時点で遷移は終わっている（上の分岐を抜けたため）
-            scenarioPlayer.onTransitionFinished();
-        }
-        else if (scenarioPlayer.isWaitingChoice())
-        {
-            // まだ並べていなければ選択肢を出す。
-            // 入力は choiceButtonManager が拾い、
-            // onChoiceButtonReleased() から selectChoice() が呼ばれる。
-            if (choiceButtons.empty())
-            {
-                showChoiceButtons();
-            }
-            choiceButtonManager->update();
-        }
-        else if (hasTouchEvent && touchHandler.isTouchEvent())
-        {
-            // 文字送りの途中なら、onTap() が全文表示へ飛ばす
-            scenarioPlayer.onTap();
-        }
-        else if (scenarioPlayer.isWaiting())
-        {
-            // wait の経過を見る。skippable なら上のタップ判定で飛ばされる。
-            scenarioPlayer.tickWait();
-        }
-        else if (scenarioPlayer.isTyping())
-        {
-            // 文字送りを1文字進める。間隔が来ていなければ何もしない。
-            // タップの判定より後に置くのは、送っている最中の
-            // タップを取りこぼさないため。
-            scenarioPlayer.tickTyping();
-        }
+        handlePlayingInput(hasTouchEvent);
 
         if (scenarioPlayer.isFinished())
         {

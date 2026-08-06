@@ -243,6 +243,33 @@ public:
      */
     bool emergencySave();
 
+    // ========================================
+    // 前の画面へ戻る
+    // ========================================
+
+    /**
+     * @brief 1つ前の画面へ戻る
+     *
+     * `run()` は「待ちに入るまで」を1単位で実行する。**その1回が1画面。**
+     * だから `run()` の入口で控えておけば、それがそのまま画面の境目になる。
+     *
+     * 戻るときは、**1つ前の控えを復元してもう一度走らせる。**
+     * 画面を覚えて貼り直すのではなくコマンドを実行し直すので、
+     * 名前欄や見出しのように「その画面を作るために描いたもの」も一緒に戻る。
+     *
+     * 変数も控えから戻すため、`set` の `+=` が二重に効くことはない。
+     * `save` は再実行され、栞が戻った位置に付け直される。
+     *
+     * @return 戻れたか。**先頭まで来ていれば false**（何も起きない）
+     *
+     * @note 呼ぶのは本文を読んでいる間だけにすること。
+     *       選択肢の表示中やトランジション中は呼ばない。
+     */
+    bool goBack();
+
+    /// 戻れる先があるか
+    bool canGoBack() const { return _backStack.size() >= 2; }
+
 private:
     /// 1コマンド実行した結果、次に何をするか
     ///
@@ -284,6 +311,62 @@ private:
         std::vector<Frame> frames;
         size_t pageOffset;
     };
+
+    /**
+     * @brief 前面の一枚絵（イベントCG）
+     *
+     * 立ち絵より手前に1枚だけ出せる。
+     * 立ち絵と違って差分を持たず、`assets.backgrounds` の画像をそのまま使う。
+     *
+     * **`Snapshot` より前に置くこと。** 控えがこの型を丸ごと持つため。
+     */
+    struct ForegroundState {
+        std::string image;
+        int x = 0;
+        int y = 0;
+        float scale = 1.0f;
+        bool visible = false;
+    };
+
+    /**
+     * @brief 画面1つぶんの開始時点の状態（[`goBack()`] 用）
+     *
+     * **セーブ用の `buildStateObject()` は使えない。**
+     * あれは `_frames[0]` しか持たず `call` の戻り先も落とすので、
+     * `if` の中や `call` の途中で控えると位置がずれる。
+     * ここはメモリ上の控えなので、メンバをそのまま複製すればよい。
+     *
+     * `Frame` が持つのは読み込んだ JSON への生ポインタだけ。
+     * シナリオを開いている間は動かないので、複製して構わない。
+     */
+    struct Snapshot {
+        std::string sceneId;
+        std::vector<Frame> frames;
+        std::vector<CallSite> callStack;
+        size_t pageOffset = 0;
+        std::map<std::string, Value> variables;
+
+        // 舞台
+        std::string background;
+        int backgroundX = 0;
+        int backgroundY = 0;
+        float backgroundScale = 1.0f;
+        std::vector<CharaState> charas;
+        ForegroundState foreground;
+
+        // バックログを切り詰める位置。
+        // 戻ったあと同じ本文をもう一度積むと履歴が二重になる。
+        size_t historySize = 0;
+    };
+
+    /// 戻れる段数。1つ数百バイトなので 20 段で 5KB 程度
+    static constexpr size_t MAX_BACK = 20;
+
+    /// `run()` の入口で今の状態を積む
+    void pushSnapshot();
+
+    /// 控えを player のメンバへ書き戻す
+    void restoreSnapshot(const Snapshot& s);
 
     /**
      * @brief 待ちに入るまでコマンドを進め、**最後に一度だけ画面へ出す**
@@ -591,6 +674,10 @@ private:
     int64_t _waitUntilMs = 0;
     bool _waitSkippable = true;
 
+    // ---- 前の画面へ戻る ----
+    // 画面1つにつき1つ積む。`goBack()` の説明を参照。
+    std::vector<Snapshot> _backStack;
+
     // ---- 画面への出力をまとめる ----
     // `run()` の説明を参照。待ちに入るまで溜めて1回で出す。
     bool _batchOpen = false;
@@ -702,19 +789,6 @@ private:
     bool drawCharaCached(lgfx::LovyanGFX* target, const CharaState& c,
                          const cJSON* layerDefs);
 
-    /**
-     * @brief 前面の一枚絵（イベントCG）
-     *
-     * 立ち絵より手前に1枚だけ出せる。
-     * 立ち絵と違って差分を持たず、`assets.backgrounds` の画像をそのまま使う。
-     */
-    struct ForegroundState {
-        std::string image;
-        int x = 0;
-        int y = 0;
-        float scale = 1.0f;
-        bool visible = false;
-    };
     ForegroundState _foreground;
 
     // `call` の戻り先。入れ子にできる

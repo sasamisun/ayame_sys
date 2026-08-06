@@ -239,6 +239,12 @@ def write_vlw(path, glyphs, size, ascent, descent):
     """
     glyphs = sorted(glyphs, key=lambda g: g.cp)
 
+    # シナリオ用のフォントは scenarios/<id>/fonts/ に置くのが定石で、
+    # そのフォルダはまだ無いことが多い。作ってから書く。
+    parent = os.path.dirname(os.path.abspath(path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
     with open(path, "wb") as f:
         f.write(struct.pack(">6i", len(glyphs), 11, size, 0, ascent, -abs(descent)))
         for g in glyphs:
