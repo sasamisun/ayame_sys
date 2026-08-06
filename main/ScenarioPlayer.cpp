@@ -136,6 +136,7 @@ ScenarioPlayer::Value ScenarioPlayer::valueFromJson(const cJSON* item)
 void ScenarioPlayer::initVariables()
 {
     _variables.clear();
+    _persistentNames.clear();
 
     const cJSON* vars = _loader->variablesNode();
     if (!cJSON_IsObject(vars)) {
@@ -147,10 +148,129 @@ void ScenarioPlayer::initVariables()
         if (!item->string) {
             continue;
         }
-        _variables[item->string] = valueFromJson(item);
+
+        // 2通りの書き方を受ける。
+        //
+        //   "affection": 0
+        //   "got_end":   { "value": false, "persistent": true }
+        //
+        // オブジェクトで `persistent` を付けたものは、
+        // ニューゲームでもリセットせず周回をまたいで残す。
+        // エンディングの回収記録などがこれで書ける。
+        if (cJSON_IsObject(item)) {
+            const cJSON* value = cJSON_GetObjectItemCaseSensitive(item, "value");
+            _variables[item->string] = valueFromJson(value);
+            if (getBool(item, "persistent", false)) {
+                _persistentNames.insert(item->string);
+            }
+        } else {
+            _variables[item->string] = valueFromJson(item);
+        }
     }
 
-    ESP_LOGI(TAG, "Variables initialized: %u", static_cast<unsigned>(_variables.size()));
+    // 前回までの値を上から被せる
+    loadPersistent();
+
+    ESP_LOGI(TAG, "Variables initialized: %u (%u persistent)",
+             static_cast<unsigned>(_variables.size()),
+             static_cast<unsigned>(_persistentNames.size()));
+}
+
+std::string ScenarioPlayer::persistentPath() const
+{
+    return _loader->basePath() + "/saves/persistent.json";
+}
+
+void ScenarioPlayer::loadPersistent()
+{
+    if (_persistentNames.empty()) {
+        return;
+    }
+
+    size_t len = 0;
+    char* text = SD.readFileToBuffer(persistentPath().c_str(), &len);
+    if (!text) {
+        return;   // まだ1度も保存していない。宣言した初期値のまま
+    }
+
+    cJSON* root = cJSON_ParseWithLength(text, len);
+    free(text);
+    if (!root) {
+        ESP_LOGW(TAG, "persistent.json is malformed. Ignored");
+        return;
+    }
+
+    int restored = 0;
+    const cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, root) {
+        if (!item->string) {
+            continue;
+        }
+        // **宣言に無い名前・永続でない名前は捨てる。**
+        // シナリオ側で persistent を外したのに古い値が残り続けるのを防ぐ。
+        if (_persistentNames.find(item->string) == _persistentNames.end()) {
+            continue;
+        }
+        auto it = _variables.find(item->string);
+        if (it == _variables.end()) {
+            continue;
+        }
+        it->second = valueFromJson(item);
+        ++restored;
+    }
+    cJSON_Delete(root);
+
+    ESP_LOGI(TAG, "Restored %d persistent variable(s)", restored);
+}
+
+bool ScenarioPlayer::savePersistent()
+{
+    if (_persistentNames.empty()) {
+        return true;
+    }
+
+    cJSON* root = cJSON_CreateObject();
+    if (!root) {
+        return false;
+    }
+
+    for (const std::string& name : _persistentNames) {
+        const auto it = _variables.find(name);
+        if (it == _variables.end()) {
+            continue;
+        }
+        const Value& v = it->second;
+        switch (v.type) {
+        case Value::Type::Bool:
+            cJSON_AddBoolToObject(root, name.c_str(), v.boolValue);
+            break;
+        case Value::Type::Number:
+            cJSON_AddNumberToObject(root, name.c_str(), v.numberValue);
+            break;
+        case Value::Type::String:
+            cJSON_AddStringToObject(root, name.c_str(), v.stringValue.c_str());
+            break;
+        }
+    }
+
+    char* text = cJSON_Print(root);
+    cJSON_Delete(root);
+    if (!text) {
+        return false;
+    }
+
+    SD.mkdir((_loader->basePath() + "/saves").c_str());
+    const bool ok = SD.writeFileFromBuffer(persistentPath().c_str(),
+                                           text, strlen(text));
+    free(text);
+
+    if (ok) {
+        ESP_LOGI(TAG, "Persistent variables saved");
+    } else {
+        // USB MSC 中や SD 無し。物語は続けられる。
+        ESP_LOGW(TAG, "Could not save the persistent variables");
+    }
+    return ok;
 }
 
 std::string ScenarioPlayer::interpolate(const std::string& text) const
@@ -356,6 +476,11 @@ bool ScenarioPlayer::prepare()
     _backgroundScale = 1.0f;
     _foreground = ForegroundState{};
     _callStack.clear();
+    clearCharaCache();
+    _history.clear();
+    _lastBody.clear();
+    _lastBoxName.clear();
+    _lastPageOffset = 0;
     releaseCheckpoint();
     initVariables();
     buildTextBoxes();
@@ -515,7 +640,8 @@ void ScenarioPlayer::buildTextBoxes()
                                     vertical ? DEFAULT_VERTICAL_CHAR_SPACING : 0),
                              a,
                              parsePadding(cJSON_GetObjectItemCaseSensitive(box, "padding")),
-                             textColor);
+                             textColor,
+                             getBool(box, "kinsoku", true));
     }
 }
 
@@ -791,6 +917,11 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeCommand(const cJSON* cmd)
         _endingId = getString(cmd, "ending");
         ESP_LOGI(TAG, "Scenario finished (ending='%s')", _endingId.c_str());
 
+        // 周回をまたぐ変数を書き出す。
+        // `set` のたびに書くと SD への書き込みが増えすぎるので、
+        // 区切りのここと `suspend` だけで書く。
+        savePersistent();
+
         // message があれば見せてから終わる。
         // 即座に終わるとメニューへ戻ってしまい、読む間が無い。
         const std::string message = interpolate(getString(cmd, "message"));
@@ -841,6 +972,20 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeText(const cJSON* cmd)
     // ボックスに背景画像があれば敷き、無ければ色で塗る。
     const std::string boxName = getString(cmd, "box");
     fillTextBoxBackground(boxName, writer);
+
+    // 描き直し用に控える。バックログを閉じたとき、
+    // 舞台だけ描き直しても本文が戻らないため。
+    _lastBody = body;
+    _lastBoxName = boxName;
+    _lastPageOffset = _pageOffset;
+
+    // 履歴。ページ送りの2ページ目以降は同じ本文なので積まない。
+    if (_pageOffset == 0) {
+        _history.push_back(body);
+        if (_history.size() > MAX_HISTORY) {
+            _history.erase(_history.begin());
+        }
+    }
 
     const int speed = getInt(cmd, "speed", 0);
 
@@ -898,6 +1043,251 @@ ScenarioPlayer::CharaState* ScenarioPlayer::findChara(const std::string& id)
     return nullptr;
 }
 
+std::string ScenarioPlayer::charaBgKey(const CharaState& c) const
+{
+    // 背景のその部分がどこかを表す。位置と倍率が変われば切り出す場所も変わる。
+    char buf[160];
+    snprintf(buf, sizeof(buf), "%s,%d,%d,%.3f|%d,%d,%.3f",
+             _currentBackground.c_str(), _backgroundX, _backgroundY,
+             _backgroundScale, c.x, c.y, c.scale);
+    return buf;
+}
+
+std::string ScenarioPlayer::charaCacheKey(const CharaState& c) const
+{
+    std::string key = charaBgKey(c);
+    key += "|";
+    for (const auto& kv : c.layers) {
+        key += kv.first;
+        key += "=";
+        key += kv.second;
+        key += ",";
+    }
+    return key;
+}
+
+bool ScenarioPlayer::charaBounds(const CharaState& c, int& w, int& h) const
+{
+    const cJSON* size = _loader->characterSize(c.id.c_str());
+    if (!cJSON_IsObject(size)) {
+        return false;
+    }
+    w = static_cast<int>(getInt(size, "w", 0) * c.scale);
+    h = static_cast<int>(getInt(size, "h", 0) * c.scale);
+    return w > 0 && h > 0;
+}
+
+bool ScenarioPlayer::charaOverlaps(const CharaState& c) const
+{
+    int w = 0;
+    int h = 0;
+    if (!charaBounds(c, w, h)) {
+        return true;   // 大きさが分からない。安全側に倒して直接描く
+    }
+
+    for (const CharaState& other : _charas) {
+        if (other.id == c.id || !other.visible) {
+            continue;
+        }
+        int ow = 0;
+        int oh = 0;
+        if (!charaBounds(other, ow, oh)) {
+            return true;
+        }
+        const bool apart = (c.x + w <= other.x) || (other.x + ow <= c.x) ||
+                           (c.y + h <= other.y) || (other.y + oh <= c.y);
+        if (!apart) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ScenarioPlayer::clearCharaCache()
+{
+    for (auto& kv : _charaCache) {
+        if (kv.second.bgSlice) {
+            kv.second.bgSlice->deleteSprite();
+            delete kv.second.bgSlice;
+        }
+        if (kv.second.composite) {
+            kv.second.composite->deleteSprite();
+            delete kv.second.composite;
+        }
+    }
+    _charaCache.clear();
+}
+
+M5Canvas* ScenarioPlayer::ensureCharaComposite(const CharaState& c,
+                                               const cJSON* layerDefs)
+{
+    int cw = 0;
+    int ch = 0;
+    if (!charaBounds(c, cw, ch)) {
+        CharaCache& cache = _charaCache[c.id];
+        if (!cache.warned) {
+            cache.warned = true;
+            ESP_LOGI(TAG, "chara '%s': no 'size' in assets. "
+                          "Drawing directly (add {\"w\",\"h\"} to speed it up)",
+                     c.id.c_str());
+        }
+        return nullptr;
+    }
+
+    CharaCache& cache = _charaCache[c.id];
+
+    // 倍率が変わると要る大きさも変わる。
+    // 作り直さないと、前の倍率のままの1枚を貼り続けることになる。
+    if (cache.bgSlice && (cache.w != cw || cache.h != ch)) {
+        cache.bgSlice->deleteSprite();
+        cache.composite->deleteSprite();
+        delete cache.bgSlice;
+        delete cache.composite;
+        cache.bgSlice = nullptr;
+        cache.composite = nullptr;
+    }
+
+    if (!cache.bgSlice) {
+        cache.bgSlice = new M5Canvas(_display);
+        cache.bgSlice->setPsram(true);
+        cache.composite = new M5Canvas(_display);
+        cache.composite->setPsram(true);
+
+        if (!cache.bgSlice->createSprite(cw, ch) ||
+            !cache.composite->createSprite(cw, ch)) {
+            ESP_LOGW(TAG, "Could not hold a composite for '%s' (%dx%d x2)",
+                     c.id.c_str(), cw, ch);
+            cache.bgSlice->deleteSprite();
+            cache.composite->deleteSprite();
+            delete cache.bgSlice;
+            delete cache.composite;
+            _charaCache.erase(c.id);
+            return nullptr;
+        }
+        cache.w = cw;
+        cache.h = ch;
+        cache.bgKey.clear();
+        cache.key.clear();
+    }
+
+    // --- 背景のその部分 ---
+    //
+    // **背景が変わっていなければ読み直さない。**
+    // 背景 PNG の読み込みは実測 900ms あり、描画全体の 86% を占めていた。
+    // 表情を変えるたびに読み直しては、控えを持つ意味が無い。
+    const std::string bgKey = charaBgKey(c);
+    if (cache.bgKey != bgKey) {
+        cache.bgSlice->fillSprite(TFT_BLACK);
+        if (!_currentBackground.empty()) {
+            std::string bgPath;
+            if (_loader->resolveBackgroundPath(_currentBackground.c_str(), bgPath)) {
+                cache.bgSlice->drawPngFile(&SD, bgPath.c_str(),
+                                           _backgroundX - c.x, _backgroundY - c.y,
+                                           0, 0, 0, 0,
+                                           _backgroundScale, _backgroundScale);
+            }
+        }
+        cache.bgKey = bgKey;
+        cache.key.clear();   // 下地が変わったので重ね直す
+        ESP_LOGI(TAG, "chara '%s': background slice rebuilt", c.id.c_str());
+    }
+
+    // --- レイヤーを重ねる ---
+    const std::string key = charaCacheKey(c);
+    if (cache.key != key) {
+        // 下地を写してから重ねる。ここは SD を読まない。
+        cache.bgSlice->pushSprite(cache.composite, 0, 0);
+
+        const cJSON* lay = nullptr;
+        cJSON_ArrayForEach(lay, layerDefs) {
+            const std::string name = getString(lay, "name");
+            if (name.empty()) {
+                continue;
+            }
+            const auto it = c.layers.find(name);
+            const std::string variant = (it != c.layers.end())
+                ? it->second
+                : ScenarioLoader::defaultVariant(lay);
+
+            std::string path;
+            if (!_loader->resolveLayerPath(c.id.c_str(), name.c_str(),
+                                           variant.c_str(), path)) {
+                continue;
+            }
+            cache.composite->drawPngFile(&SD, path.c_str(),
+                                         static_cast<int>(getInt(lay, "x", 0) * c.scale),
+                                         static_cast<int>(getInt(lay, "y", 0) * c.scale),
+                                         0, 0, 0, 0, c.scale, c.scale);
+        }
+        cache.key = key;
+    }
+
+    return cache.composite;
+}
+
+bool ScenarioPlayer::drawCharaCached(lgfx::LovyanGFX* target,
+                                     const CharaState& c,
+                                     const cJSON* layerDefs)
+{
+    // 控えが使えるのは画面へ直接描くときだけ。
+    // トランジションのキャンバスには別の背景が乗っているので食い違う。
+    if (target != _display) {
+        return false;
+    }
+    if (charaOverlaps(c)) {
+        // 背景ごと貼るので、下にいる立ち絵を消してしまう
+        return false;
+    }
+
+    M5Canvas* composite = ensureCharaComposite(c, layerDefs);
+    if (!composite) {
+        return false;
+    }
+
+    composite->pushSprite(target, c.x, c.y);
+    return true;
+}
+
+bool ScenarioPlayer::emergencySave()
+{
+    if (!_loader || !_loader->isLoaded()) {
+        return false;
+    }
+
+    ESP_LOGW(TAG, "Battery is low. Saving to the auto slot");
+
+    const bool ok = saveToSlot(0);
+    savePersistent();
+
+    if (ok) {
+        // 次に電源を入れたとき「続きから」で拾えるようにする
+        settings.setLastScenario(_loader->scenarioId().c_str());
+        settings.setResumeSlot(0);
+        settings.save();
+    }
+    return ok;
+}
+
+void ScenarioPlayer::redrawCurrentScreen()
+{
+    renderStage(_display);
+
+    if (!_lastBody.empty()) {
+        TypoWrite* writer = _lastBoxName.empty()
+            ? (_vertical ? _vertical : _horizontal)
+            : textSystem.box(_lastBoxName);
+        if (!writer) {
+            writer = _vertical ? _vertical : _horizontal;
+        }
+        if (writer) {
+            fillTextBoxBackground(_lastBoxName, writer);
+            writer->drawTextPaged(_lastBody, _lastPageOffset);
+        }
+    }
+
+    SimpleTransition::refreshScreen(_display);
+}
+
 void ScenarioPlayer::renderStage(lgfx::LovyanGFX* target)
 {
     if (!target) {
@@ -927,15 +1317,63 @@ void ScenarioPlayer::renderStage(lgfx::LovyanGFX* target)
         if (!c.visible) {
             continue;
         }
-        std::string path;
-        if (!_loader->resolveCharacterPath(c.id.c_str(), c.expression.c_str(), path)) {
-            ESP_LOGE(TAG, "Character '%s/%s' is not in assets",
-                     c.id.c_str(), c.expression.c_str());
+
+        const cJSON* layerDefs = _loader->characterLayers(c.id.c_str());
+
+        if (!layerDefs) {
+            // 単一画像方式（従来）
+            std::string path;
+            if (!_loader->resolveCharacterPath(c.id.c_str(), c.expression.c_str(), path)) {
+                ESP_LOGE(TAG, "Character '%s/%s' is not in assets",
+                         c.id.c_str(), c.expression.c_str());
+                continue;
+            }
+            if (!target->drawPngFile(&SD, path.c_str(), c.x, c.y,
+                                     0, 0, 0, 0, c.scale, c.scale)) {
+                ESP_LOGE(TAG, "Failed to draw character %s", path.c_str());
+            }
             continue;
         }
-        if (!target->drawPngFile(&SD, path.c_str(), c.x, c.y,
-                                 0, 0, 0, 0, c.scale, c.scale)) {
-            ESP_LOGE(TAG, "Failed to draw character %s", path.c_str());
+
+        // 合成の控えが使えるなら貼るだけで済ませる
+        if (drawCharaCached(target, c, layerDefs)) {
+            continue;
+        }
+
+        // レイヤー方式。**配列の順に描く**（先が奥）。
+        //
+        // 透過はここでの直描きが背景と正しく混ぜてくれる。
+        // スプライトへ展開して重ねると透過が色キー1色に落ちるので、
+        // 反転や回転が要る場合も素材側で用意すること。
+        const cJSON* layer = nullptr;
+        cJSON_ArrayForEach(layer, layerDefs) {
+            const std::string name = getString(layer, "name");
+            if (name.empty()) {
+                continue;
+            }
+
+            const auto it = c.layers.find(name);
+            const std::string variant = (it != c.layers.end())
+                                            ? it->second
+                                            : ScenarioLoader::defaultVariant(layer);
+
+            std::string path;
+            if (!_loader->resolveLayerPath(c.id.c_str(), name.c_str(),
+                                           variant.c_str(), path)) {
+                ESP_LOGE(TAG, "Layer '%s/%s/%s' is not in assets",
+                         c.id.c_str(), name.c_str(), variant.c_str());
+                continue;
+            }
+
+            // レイヤーの位置はキャラの左上からの相対。
+            // 倍率もオフセットに掛けないと、拡大したとき目や口がずれる。
+            const int lx = c.x + static_cast<int>(getInt(layer, "x", 0) * c.scale);
+            const int ly = c.y + static_cast<int>(getInt(layer, "y", 0) * c.scale);
+
+            if (!target->drawPngFile(&SD, path.c_str(), lx, ly,
+                                     0, 0, 0, 0, c.scale, c.scale)) {
+                ESP_LOGE(TAG, "Failed to draw layer %s", path.c_str());
+            }
         }
     }
 
@@ -975,6 +1413,18 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeChara(const cJSON* cmd)
         return CmdResult::Next;
     }
 
+    const cJSON* layerDefs = _loader->characterLayers(id.c_str());
+
+    // 変更前の位置と倍率を控える。
+    //
+    // **位置か倍率が変わったら、控えは使えない。**
+    // 控えは「その矩形だけ」を貼るので、元いた場所の画素が残ってしまう。
+    // 背景を描き直せるのは renderStage() だけ。
+    const bool isNew = (existing == nullptr);
+    const int prevX = existing ? existing->x : 0;
+    const int prevY = existing ? existing->y : 0;
+    const float prevScale = existing ? existing->scale : 1.0f;
+
     if (existing) {
         // 同じ id を再指定したら差し替える（新しく積まない）。
         // 表情だけ変えたいときに位置を書かなくて済むよう、
@@ -992,15 +1442,68 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeChara(const cJSON* cmd)
         c.y = getInt(cmd, "y", 0);
         c.scale = getFloat(cmd, "scale", 1.0f);
         c.visible = true;
+
+        // 初めて出すときは全レイヤーを既定の差分で埋めておく。
+        // 埋めないと、書かれなかったレイヤーが描かれない。
+        if (layerDefs) {
+            const cJSON* layer = nullptr;
+            cJSON_ArrayForEach(layer, layerDefs) {
+                const std::string name = getString(layer, "name");
+                if (!name.empty()) {
+                    c.layers[name] = ScenarioLoader::defaultVariant(layer);
+                }
+            }
+        }
+
         _charas.push_back(c);
         existing = &_charas.back();
     }
 
-    ESP_LOGI(TAG, "chara '%s/%s' at (%d,%d)",
-             existing->id.c_str(), existing->expression.c_str(),
-             existing->x, existing->y);
+    // 書かれたレイヤーだけ差し替える。
+    // 書かなかったものは今の差分のまま（「目だけ変える」を書けるように）。
+    if (layerDefs) {
+        const cJSON* wanted = cJSON_GetObjectItemCaseSensitive(cmd, "layers");
+        const cJSON* item = nullptr;
+        cJSON_ArrayForEach(item, wanted) {
+            if (!item->string || !cJSON_IsString(item) || !item->valuestring) {
+                continue;
+            }
+            if (!ScenarioLoader::findLayer(layerDefs, item->string)) {
+                // レイヤー名の書き間違い。気づけるように残す。
+                ESP_LOGW(TAG, "chara '%s' has no layer '%s'",
+                         id.c_str(), item->string);
+                continue;
+            }
+            existing->layers[item->string] = item->valuestring;
+        }
+    }
 
-    renderStage(_display);
+    if (layerDefs) {
+        ESP_LOGI(TAG, "chara '%s' at (%d,%d) with %u layer(s)",
+                 existing->id.c_str(), existing->x, existing->y,
+                 static_cast<unsigned>(existing->layers.size()));
+    } else {
+        ESP_LOGI(TAG, "chara '%s/%s' at (%d,%d)",
+                 existing->id.c_str(), existing->expression.c_str(),
+                 existing->x, existing->y);
+    }
+
+    // **この立ち絵の矩形だけ貼り直せるなら、背景は描き直さない。**
+    //
+    // renderStage() は毎回そこから背景 PNG を読む。実測で 900ms あり、
+    // 表情を変えるだけの場面では描画時間の 86% がそれだった。
+    // 控えが使えるなら、下地は既にスプライトの中にある。
+    //
+    // **動かした・拡大縮小したときは使えない。**
+    // 貼るのは新しい矩形だけなので、元いた場所に前の姿が残る。
+    // その場合は従来どおり全部描き直す。
+    const bool moved = !isNew && (existing->x != prevX ||
+                                  existing->y != prevY ||
+                                  existing->scale != prevScale);
+
+    if (moved || !layerDefs || !drawCharaCached(_display, *existing, layerDefs)) {
+        renderStage(_display);
+    }
     SimpleTransition::refreshScreen(_display);
     return CmdResult::Next;
 }
@@ -1273,6 +1776,10 @@ ScenarioPlayer::CmdResult ScenarioPlayer::executeSuspend(const cJSON* cmd)
     //    保存先と栞の指す先がずれ、再開すると必ず冒頭から始まっていた。
     saveToSlot(slot);
 
+    // 周回をまたぐ変数もここで書き出す。
+    // 電源が落ちるので、書き残せる機会はここが最後。
+    savePersistent();
+
     // 3. 「続きから」の情報を残す
     settings.setLastScenario(_loader->scenarioId().c_str());
     settings.setResumeSlot(slot);
@@ -1412,6 +1919,16 @@ cJSON* ScenarioPlayer::buildStateObject() const
         cJSON_AddNumberToObject(item, "y", c.y);
         cJSON_AddNumberToObject(item, "scale", c.scale);
         cJSON_AddBoolToObject(item, "visible", c.visible);
+
+        // レイヤー方式のときだけ書く。
+        // 単一画像方式のセーブに空のオブジェクトが増えないようにする。
+        if (!c.layers.empty()) {
+            cJSON* layers = cJSON_AddObjectToObject(item, "layers");
+            for (const auto& kv : c.layers) {
+                cJSON_AddStringToObject(layers, kv.first.c_str(), kv.second.c_str());
+            }
+        }
+
         cJSON_AddItemToArray(charas, item);
     }
 
@@ -1609,6 +2126,17 @@ bool ScenarioPlayer::loadFromSlot(int slot)
             s.y = getInt(c, "y", 0);
             s.scale = getFloat(c, "scale", 1.0f);
             s.visible = getBool(c, "visible", true);
+
+            // レイヤーの状態。**無ければ空**なので、
+            // レイヤー方式より前に作った古いセーブもそのまま読める。
+            const cJSON* layers = cJSON_GetObjectItemCaseSensitive(c, "layers");
+            const cJSON* kv = nullptr;
+            cJSON_ArrayForEach(kv, layers) {
+                if (kv->string && cJSON_IsString(kv) && kv->valuestring) {
+                    s.layers[kv->string] = kv->valuestring;
+                }
+            }
+
             if (!s.id.empty()) {
                 _charas.push_back(s);
             }

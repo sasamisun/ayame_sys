@@ -46,6 +46,15 @@ python tools/make_image.py photo.jpg --dither -o images/bg/photo.png
 # 立ち絵（大きさそのまま、黒地に合成）
 python tools/make_image.py chara.png --size none --pad black -o images/chara/a.png
 
+# 立ち絵（透過を残す。レイヤーで重ねる素材はこちら）
+python tools/make_image.py eye.png --size none --keep-alpha -o images/chara/eye.png
+
+# 40% に縮める
+python tools/make_image.py chara.png --scale 40% --size none -o images/chara/a.png
+
+# 左右反転（右目用の素材を作る）
+python tools/make_image.py eye.png --flip h --size none -o images/chara/eye_r.png
+
 # サムネイル（一覧に出る 56x56）
 python tools/make_image.py key.png --thumb -o thumbnail.png
 ```
@@ -54,10 +63,14 @@ python tools/make_image.py key.png --thumb -o thumbnail.png
 |---|---|---|
 | `--size WxH` | `540x960` | 出力サイズ。`none` で元のまま |
 | `--thumb` | | 56×56。`--size` より優先 |
+| `--scale N%` | | 倍率でリサイズ。**`--size` より先に効く** |
+| `--smooth` | 切 | 拡大を滑らかにする（既定は NEAREST） |
 | `--fit contain\|cover` | `contain` | `contain`=全体を収める（余白）/ `cover`=全面を埋める（切る） |
 | `--pad white\|black` | `white` | 余白と透過の下地 |
 | `--levels N` | `16` | 階調数。`2` で白黒 |
 | `--dither` | 切 | 誤差拡散ディザ |
+| `--flip h\|v\|hv` | | 反転。h=左右 / v=上下 / hv=両方 |
+| `--keep-alpha` | 切 | 透過を残す（下記） |
 | `--invert` | 切 | 白黒反転 |
 
 ### ディザを使う場面
@@ -70,11 +83,27 @@ python tools/make_image.py key.png --thumb -o thumbnail.png
 `epd_fast` / `epd_fastest` で表示するものは、実機側でどのみち 2 値へ
 落とされる。そういう画像は `--levels 2` で作った方が結果を確かめやすい。
 
-### 透過は必ず潰す
+### 透過を残すか潰すか
 
-透過 PNG は**白（または `--pad black` で黒）の上に重ねてから**落とす。
-電子ペーパーに透明は無いので、透過のまま渡すと実機の合成任せになり、
-PC で見た絵と一致しない。
+| 使い方 | 指定 |
+|---|---|
+| 背景・一枚絵・サムネイル | **潰す**（既定）。`--pad` の色の上に重ねてから落とす |
+| 立ち絵・レイヤーで重ねる部品 | **残す**（`--keep-alpha`） |
+
+背景として使う絵で透過を残すと、実機の合成任せになって
+PC で見た絵と一致しない。電子ペーパーに透明は無いため。
+
+一方、[立ち絵のレイヤー](../SCENARIO_SPEC.md#33-assets)は
+背景の上に重ねるのが前提なので透過が要る。
+`--keep-alpha` を付けると**明るさだけを 16 階調へ落とし、
+アルファはそのまま残す**（アルファを量子化すると縁がぎざつく）。
+
+```bash
+python tools/make_image.py body.png --size none --keep-alpha -o body.png
+```
+
+> **`--keep-alpha` と `--dither` は併用しない。**
+> 縁の半透明とディザの網点が重なって汚くなる。
 
 ---
 
@@ -215,11 +244,17 @@ python tools/make_image.py src/night.jpg --dither -o $S/images/bg/night.png
 # 立ち絵（原寸のまま、透過は白へ潰す）
 python tools/make_image.py src/ayame.png --size none -o $S/images/chara/ayame_normal.png
 
+# 立ち絵をレイヤーに分ける場合は透過を残し、40% に縮める
+python tools/make_image.py src/body.png --scale 40% --size none --keep-alpha \
+    -o $S/images/chara/ayame_body.png
+
 # 一覧に出るサムネイル
 python tools/make_image.py src/key.png --thumb -o $S/thumbnail.png
 ```
 
-フォントを差し替える場合は、生成してヘッダを置き換え、
-`main/TextSystem.cpp` の `#include` と配列名を合わせる。
+フォントを差し替える場合は、生成したヘッダを `main/fonts/` に置き、
+`main/fonts/active_font.h` の `#include` と `AYAME_FONT_DATA` を書き換える。
+シナリオ側だけで使うなら [`meta.font`](../SCENARIO_SPEC.md#32-meta) で
+`.vlw` を直接指せる（本体の再ビルドが要らない）。
 **送り幅が変わると1行に入る字数が変わる**ので、
 `textboxes` の寸法は実機で見て調整すること。

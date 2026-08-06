@@ -18,6 +18,7 @@ TextSystem::~TextSystem()
     clearBoxes();
     delete _vertical;
     delete _horizontal;
+    delete _backlog;
 
     if (_scenarioFont) {
         heap_caps_free(_scenarioFont);
@@ -39,7 +40,8 @@ TypoWrite* TextSystem::createWriter()
 bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
                            bool vertical, float fontSize,
                            int lineSpacing, int charSpacing, TextAlignment align,
-                           const TextBoxPadding& padding, uint16_t textColor)
+                           const TextBoxPadding& padding, uint16_t textColor,
+                           bool kinsoku)
 {
     if (!_ready) {
         ESP_LOGE(TAG, "Not initialized");
@@ -73,6 +75,7 @@ bool TextSystem::defineBox(const std::string& name, int x, int y, int w, int h,
     writer->setCharSpacing(charSpacing);
     writer->setAlignment(align);
     writer->setColor(textColor);
+    writer->setKinsoku(kinsoku);
 
     ESP_LOGI(TAG, "Text box '%s': (%d,%d) %dx%d %s x%.2f padding(%d,%d,%d,%d) -> text %dx%d",
              name.c_str(), x, y, w, h, vertical ? "vertical" : "horizontal", fontSize,
@@ -183,6 +186,28 @@ bool TextSystem::begin(M5GFX* display)
 
     _ready = true;
     return true;
+}
+
+TypoWrite* TextSystem::backlog()
+{
+    if (!_ready) {
+        return nullptr;
+    }
+
+    if (!_backlog) {
+        _backlog = createWriter();
+        _backlog->setDirection(TextDirection::HORIZONTAL);
+        _backlog->setFontSize(1.0);
+        _backlog->setLineSpacing(10);
+        _backlog->setCharSpacing(0);
+        _backlog->setColor(TFT_WHITE);
+    }
+
+    // 画面いっぱい。向きが変わっても毎回合わせ直す。
+    _backlog->setPosition(0, 0);
+    _backlog->setArea(_display->width(), _display->height());
+    _backlog->setPadding(24, 20, 24, 20);
+    return _backlog;
 }
 
 void TextSystem::layoutDefaultBoxes()

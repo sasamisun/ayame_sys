@@ -13,7 +13,7 @@ static uint32_t millis() {
 }
 
 TouchHandler::TouchHandler()
-    : _display(nullptr), _touched(false), _wasTouched(false), _calibrated(false),
+    : _display(nullptr), _touched(false), _wasTouched(false),
       _lastEvent(TouchEvent::None), _lastSwipe(SwipeDirection::None),
       _minSwipeDistance(30) {
     
@@ -27,11 +27,6 @@ TouchHandler::TouchHandler()
     _lastPoint = {0, 0, 0};
     _touchStartPoint = {0, 0, 0};
     _touchEndPoint = {0, 0, 0};
-    
-    // キャリブレーションデータ初期化
-    for (int i = 0; i < 8; i++) {
-        _touchCalibration[i] = 0;
-    }
 }
 
 bool TouchHandler::init(M5GFX* display) {
@@ -117,24 +112,6 @@ bool TouchHandler::update() {
     }
     
     return _lastEvent != TouchEvent::None;
-}
-
-void TouchHandler::calibrate(uint32_t bg_color, uint32_t fg_color) {
-    if (!_display) return;
-    
-    ESP_LOGI(TAG, "Starting touch calibration");
-    
-    _display->fillScreen(bg_color);
-    _display->calibrateTouch(_touchCalibration, fg_color, bg_color);
-    _calibrated = true;
-    
-    ESP_LOGI(TAG, "Touch calibration completed");
-    
-    // キャリブレーションデータをログに出力（保存用）
-    ESP_LOGI(TAG, "Calibration data:");
-    for (int i = 0; i < 8; i++) {
-        ESP_LOGI(TAG, "  data[%d] = 0x%04x", i, _touchCalibration[i]);
-    }
 }
 
 void TouchHandler::drawCircleAtTouch(int radius, uint32_t color) {

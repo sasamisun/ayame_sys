@@ -269,29 +269,23 @@ public:
     lgfx::LGFX_Sprite *getDrawTarget() const { return _drawTarget; }
 
     /**
-     * @brief ボタンの追加（参照を保持するだけで所有はしない）
+     * @brief ボタンを預ける（**所有権を渡す**）
      *
-     * ＝＝ 所有権について ＝＝
-     * ButtonManager は登録された Button を **所有しない**。
-     * 生成と破棄は呼び出し側の責任で、本クラスは参照を保持するだけである。
-     * デストラクタ・clearButtons()・removeButton() のいずれも delete しない。
+     * 以後の解放は `ButtonManager` が行う。
+     * `clearButtons()` / `removeButton()` / デストラクタが `delete` する。
      *
-     * 組み込みではボタンを起動時に生成して常駐させる使い方が普通であり、
-     * 実際に main も setup() で new したまま解放していない。
-     * そのため非所有を正とし、その旨をここに明記する。
-     * 所有させたい場合は unique_ptr を受け取る API に変更すること
-     * （生ポインタを保持したまま delete する設計は、
-     *   呼び出し側が同じポインタを持ち続けるため危険）。
+     * **呼び出し側で `delete` しないこと。** 二重解放になる。
      *
-     * @param button 追加するボタンオブジェクト（寿命は呼び出し側が管理）
-     * @return 成功時はtrue
+     * 画面ごとにボタンの集合を作り直す作りなので、
+     * 「manager から外す」と「解放する」を別々に書くと必ず漏れる。
+     * そのため所有させている。
      */
     bool addButton(Button *button);
 
     /**
-     * @brief ボタンの登録解除（delete はしない）
-     * @param button 解除するボタンオブジェクト
-     * @return 成功時はtrue
+     * @brief ボタンを1つ外して**解放する**
+     * @param button 外すボタン。以後そのポインタは無効
+     * @return 見つかって外せたか
      */
     bool removeButton(Button *button);
 

@@ -145,31 +145,19 @@ void SystemMenu::scanScenarios()
 
 void SystemMenu::destroyButtons()
 {
+    // **解放は ButtonManager が行う。**
+    // ここで delete すると二重解放になる。
+    // 持っているポインタは参照用なので、外した後に nullptr へ戻すだけ。
     if (_buttons) {
         _buttons->clearButtons();
     }
 
-    for (Button* btn : _scenarioButtons) {
-        delete btn;
-    }
     _scenarioButtons.clear();
-
-    delete _usbMscButton;
     _usbMscButton = nullptr;
-
-    delete _refreshButton;
     _refreshButton = nullptr;
-
-    delete _powerOffButton;
     _powerOffButton = nullptr;
-
-    delete _aboutButton;
     _aboutButton = nullptr;
-
-    delete _soundButton;
     _soundButton = nullptr;
-
-    delete _resumeButton;
     _resumeButton = nullptr;
 }
 

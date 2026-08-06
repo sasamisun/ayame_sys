@@ -156,24 +156,11 @@ bool SimpleTransition::init(bool use_psram)
         }
     }
 
-    // メインキャンバス作成
-    ESP_LOGI(TAG, "Creating main canvas (%dx%d)...", _canvasWidth, _canvasHeight);
-    _mainCanvas = new M5Canvas(_display);
-    if (!_mainCanvas) {
-        ESP_LOGE(TAG, "Failed to allocate main canvas");
-        return false;
-    }
-
-    if (_use_psram) {
-        _mainCanvas->setPsram(true);
-    }
-
-    if (!_mainCanvas->createSprite(_canvasWidth, _canvasHeight)) {
-        ESP_LOGE(TAG, "Failed to create main sprite");
-        delete _mainCanvas;
-        _mainCanvas = nullptr;
-        return false;
-    }
+    // **キャンバスはここでは作らない。**
+    //
+    // 約1MB あり、遷移を使わない間も抱えているのは無駄が大きい。
+    // シナリオ本文の展開に回すぶんを削ってしまう。
+    // 実際に要求されたとき（getMainCanvas()）に確保し、遷移が終わったら返す。
 
     _initialized = true;
     _isActive = false;
@@ -182,37 +169,105 @@ bool SimpleTransition::init(bool use_psram)
     return true;
 }
 
+M5Canvas* SimpleTransition::getMainCanvas()
+{
+    // 要求された時点で確保する。
+    // 呼び出し側は「描く直前に取る」だけでよく、寿命を意識しなくて済む。
+    if (!_mainCanvas) {
+        acquireCanvas();
+    }
+    return _mainCanvas;
+}
+
+bool SimpleTransition::acquireCanvas()
+{
+    if (!_initialized || !_display) {
+        return false;
+    }
+    if (_mainCanvas) {
+        return true;   // 既に持っている
+    }
+
+    _canvasWidth = _display->width();
+    _canvasHeight = _display->height();
+
+    const size_t need = static_cast<size_t>(_canvasWidth) * _canvasHeight * 2;
+    if (_use_psram) {
+        const size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        if (freePsram < need) {
+            ESP_LOGW(TAG, "Not enough PSRAM for the canvas (%zu KB needed, %zu KB free)",
+                     need / 1024, freePsram / 1024);
+            return false;
+        }
+    }
+
+    _mainCanvas = new M5Canvas(_display);
+    if (!_mainCanvas) {
+        return false;
+    }
+    if (_use_psram) {
+        _mainCanvas->setPsram(true);
+    }
+    if (!_mainCanvas->createSprite(_canvasWidth, _canvasHeight)) {
+        ESP_LOGE(TAG, "Failed to create the canvas at %dx%d",
+                 _canvasWidth, _canvasHeight);
+        delete _mainCanvas;
+        _mainCanvas = nullptr;
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Canvas acquired (%dx%d, %zu KB)",
+             _canvasWidth, _canvasHeight, need / 1024);
+    return true;
+}
+
+void SimpleTransition::releaseCanvas()
+{
+    if (!_mainCanvas) {
+        return;
+    }
+
+    // 遷移中に解放すると、次の update() が nullptr を触る。
+    // 呼び出し側の順序ミスをここで止める。
+    if (_isActive) {
+        ESP_LOGW(TAG, "Refusing to release the canvas while a transition is running");
+        return;
+    }
+
+    _mainCanvas->deleteSprite();
+    delete _mainCanvas;
+    _mainCanvas = nullptr;
+
+    ESP_LOGI(TAG, "Canvas released (PSRAM free %zu KB)",
+             heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
+}
+
 bool SimpleTransition::resizeToDisplay()
 {
-    if (!_initialized || !_mainCanvas || !_display) {
+    if (!_initialized || !_display) {
         return false;
+    }
+
+    // 持っていなければ何もしない。次に確保するとき今の画面から取る。
+    if (!_mainCanvas) {
+        _canvasWidth = _display->width();
+        _canvasHeight = _display->height();
+        return true;
     }
 
     const int w = _display->width();
     const int h = _display->height();
-
     if (w == _canvasWidth && h == _canvasHeight) {
-        return true;   // 回転していない。作り直す必要はない
+        return true;   // 回転していない
     }
 
-    ESP_LOGI(TAG, "Screen turned. Rebuilding the canvas: %dx%d -> %dx%d",
+    // 大きさが変わったら捨てるだけ。次に要るときに新しい寸法で確保される。
+    ESP_LOGI(TAG, "Screen turned (%dx%d -> %dx%d). Dropping the canvas",
              _canvasWidth, _canvasHeight, w, h);
-
-    // 1MB 級のスプライトを2つ同時に抱えると PSRAM が苦しいので、
-    // 先に捨ててから作り直す。
-    _mainCanvas->deleteSprite();
-
-    if (!_mainCanvas->createSprite(w, h)) {
-        // ここで失敗するとトランジションが使えなくなる。
-        // 呼び出し側は演出を諦めて即時描画へ落とすこと。
-        ESP_LOGE(TAG, "Failed to rebuild the canvas at %dx%d", w, h);
-        _initialized = false;
-        return false;
-    }
-
+    _isActive = false;
+    releaseCanvas();
     _canvasWidth = w;
     _canvasHeight = h;
-    _isActive = false;
     return true;
 }
 
@@ -315,6 +370,7 @@ bool SimpleTransition::update()
             endFastEpdMode();
             showImmediate();
             _isActive = false;
+            releaseCanvas();
             if (_onComplete) {
                 _onComplete();
             }
@@ -354,6 +410,11 @@ bool SimpleTransition::update()
             _display->waitDisplay();
             showImmediate();   // 元のモードでフルリフレッシュして確定させる
         }
+
+        // 描き終わったのでキャンバスを返す。約1MB あり、
+        // 次の遷移まで抱えているとシナリオ本文に回すぶんを削る。
+        // **_isActive を false にした後**に呼ぶこと（実行中は解放されない）。
+        releaseCanvas();
 
         if (_onComplete) {
             _onComplete();
@@ -543,6 +604,8 @@ void SimpleTransition::drawRevealCornerStepOptimized()
  */
 void SimpleTransition::drawOptimizedRegion(int x, int y, int w, int h)
 {
+    // キャンバスは遷移が終わると返される。
+    // 持っていないときに呼ばれても何もしない（落とさない）。
     if (!_mainCanvas || !_display) return;
 
     // 境界チェック
@@ -571,6 +634,9 @@ void SimpleTransition::stop()
     // 中断されてもEPDモードは必ず元へ戻す。
     // 戻し忘れると以降のアプリ全体の描画が高速モード（低画質）のままになる。
     endFastEpdMode();
+
+    // 中断でもキャンバスは返す
+    releaseCanvas();
 }
 
 /**

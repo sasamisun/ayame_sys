@@ -27,7 +27,9 @@ SD カードに置いた JSON のシナリオを読んで再生する。
 2. SD を挿して電源を入れる
 3. 一覧からシナリオを選ぶ
 
-21 本のサンプルが入っており、各機能の書き方と動作を確かめられる。
+26 本のサンプルが入っている。
+**まず一覧の先頭 `AYAME ってなんだぜ` を開くと、何ができるかが一巡で分かる。**
+残りは機能ごとの確認用で、各機能の書き方と動作を確かめられる。
 
 ---
 
@@ -83,15 +85,16 @@ ayame_sys/
 │   ├── Buzzer.*                ブザー（LEDC PWM）
 │   ├── Power.*                 電源制御と電池残量
 │   ├── Settings.*              本体設定（system/settings.json）
-│   ├── hello_world_main.cpp    旧デモ。ビルド対象外
 │   └── fonts/
-│       └── shippori_16.h       使用中のVLWフォント（4414グリフ / 約1.12MB）
-├── microsd_sample/             SDカードに入れる中身のサンプル（21本）
+│       ├── active_font.h       **使うフォントを1つ選ぶ**（include を書き換える）
+│       └── ipaexg_18.h         変換済みVLWフォント（内蔵はこの1書体）
+├── microsd_sample/             SDカードに入れる中身のサンプル（26本）
 ├── tools/                      素材を作るツール（画像の減色・フォント生成・アイコン埋め込み）
-│   ├── make_image.py           画像を16階調に落とす
+│   ├── make_image.py           画像を16階調に落とす／拡大縮小／反転する
 │   ├── make_font.py            TTF/OTF から VLW フォントを作る
 │   ├── make_icons.py           UI画像をファームウェアに埋め込む
-│   └── charset_ja.txt          フォントの標準文字集合（4416字）
+│   ├── charset_ja.txt          フォントの標準文字集合（4416字）
+│   └── font/                   変換済みフォント（.vlw と .h）
 ├── components/
 │   └── M5GFX/                  ※git管理外。消すと復元できない
 ├── managed_components/         espressif/tinyusb, espressif/esp_tinyusb

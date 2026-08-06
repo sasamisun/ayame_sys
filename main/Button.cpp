@@ -321,7 +321,10 @@ bool ButtonManager::removeButton(Button *button)
     {
         if (_buttons[i] == button)
         {
-            // ボタンを削除し、配列を詰める
+            // **所有しているので解放する。**
+            delete _buttons[i];
+
+            // 配列を詰める
             for (int j = i; j < _buttonCount - 1; j++)
             {
                 _buttons[j] = _buttons[j + 1];
@@ -338,9 +341,14 @@ bool ButtonManager::removeButton(Button *button)
 
 void ButtonManager::clearButtons()
 {
-    // ボタン配列をクリア
+    // **所有しているので解放する。**
+    //
+    // 以前は解放せず、呼び出し側が個別に delete していた。
+    // 画面ごとにボタンの集合を作り直す作りなので、
+    // 「manager から外す」と「解放する」を別々に書くと必ず漏れる。
     for (int i = 0; i < _buttonCount; i++)
     {
+        delete _buttons[i];
         _buttons[i] = nullptr;
     }
     _buttonCount = 0;

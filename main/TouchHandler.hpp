@@ -49,8 +49,6 @@ private:
     ExtendedTouchPoint _touchEndPoint;   // タッチ終了位置
     bool _touched;                       // タッチされている状態
     bool _wasTouched;                    // 前回のタッチ状態
-    bool _calibrated;                    // キャリブレーション済みフラグ
-    uint16_t _touchCalibration[8];       // タッチキャリブレーションデータ
     TouchEvent _lastEvent;               // 最後に発生したイベント
     SwipeDirection _lastSwipe;           // 最後のスワイプ方向
     uint32_t _minSwipeDistance;          // スワイプと認識する最小距離
@@ -76,8 +74,13 @@ public:
     // タッチ情報の更新
     bool update();
 
-    // タッチキャリブレーション
-    void calibrate(uint32_t bg_color = TFT_BLACK, uint32_t fg_color = TFT_WHITE);
+    // タッチキャリブレーションは削除した。
+    //
+    // M5GFX の calibrateTouch() を呼ぶだけの実装で、
+    // 結果を保存する経路が無く、そもそも一度も呼ばれていなかった。
+    // 動作も未確認だったため残さない。
+    // 必要になったら「4隅をタップ → 係数を settings.json へ保存」まで
+    // 通しで作ること（PROGRAM_SPEC.md 6.2 の TODO）。
 
     // タッチされているかを取得
     bool isTouched() const { return _touched; }
@@ -100,9 +103,6 @@ public:
 
     // 画面上のタッチ位置に円を描画（デバッグ用）
     void drawCircleAtTouch(int radius = 5, uint32_t color = TFT_RED);
-
-    // キャリブレーション済みかを取得
-    bool isCalibrated() const { return _calibrated; }
 
     // スワイプと認識する最小距離を設定
     void setMinSwipeDistance(uint32_t distance) { _minSwipeDistance = distance; }

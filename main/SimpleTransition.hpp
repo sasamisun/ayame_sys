@@ -142,7 +142,26 @@ public:
      * ここに最終的な画面状態を描画するにゃ！
      * @return メインキャンバスのポインタ
      */
-    M5Canvas* getMainCanvas() { return _mainCanvas; }
+    M5Canvas* getMainCanvas();
+
+    /**
+     * @brief キャンバスを確保する（約1MB）
+     *
+     * `init()` では確保しない。遷移を使わない間まで抱えていると、
+     * シナリオ本文の展開に回すぶんを削ってしまうため。
+     * `getMainCanvas()` が内部で呼ぶので、普段は直接使わなくてよい。
+     *
+     * @return 確保できたか。**できなければ遷移を諦めて即時描画へ落とすこと**
+     */
+    bool acquireCanvas();
+
+    /**
+     * @brief キャンバスを返す
+     *
+     * 遷移が終わったときに呼ばれる。
+     * **遷移中は無視する**（実行中に解放すると `update()` が nullptr を触る）。
+     */
+    void releaseCanvas();
     
     /**
      * @brief E-Paper最適化トランジション開始

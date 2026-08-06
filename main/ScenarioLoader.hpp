@@ -189,6 +189,52 @@ public:
     bool resolveCharacterPath(const char* id, const char* expression,
                               std::string& outPath) const;
 
+    /**
+     * @brief 立ち絵のレイヤー定義（`assets.characters.<id>.layers`）
+     *
+     * **配列。並び順がそのまま描画順**（先が奥）になる。
+     * オブジェクトにすると順序が仕様として保証されないため配列にしてある。
+     *
+     * @return レイヤー方式でなければ nullptr（従来の単一画像として扱う）
+     */
+    const cJSON* characterLayers(const char* id) const;
+
+    /**
+     * @brief 立ち絵の外接寸法（`assets.characters.<id>.size`）
+     *
+     * `{ "w": 200, "h": 320 }`。レイヤー方式の合成結果を控えるとき、
+     * どれだけの大きさを確保すればよいか知るのに使う。
+     * PNG の寸法は読み込まないと分からないため、宣言してもらう。
+     *
+     * @return 無ければ nullptr（合成の控えは使わず、毎回描き直す）
+     */
+    const cJSON* characterSize(const char* id) const;
+
+    /**
+     * @brief レイヤーの差分から画像パスを組む
+     *
+     * @param id        `assets.characters` のキー
+     * @param layerName レイヤーの `name`
+     * @param variant   `variants` のキー
+     * @param outPath   [out] 組み立てたパス
+     * @return 定義されていて、パス長にも収まったか
+     */
+    bool resolveLayerPath(const char* id, const char* layerName,
+                          const char* variant, std::string& outPath) const;
+
+    /**
+     * @brief レイヤーを名前で引く
+     * @return 見つからなければ nullptr
+     */
+    static const cJSON* findLayer(const cJSON* layers, const char* layerName);
+
+    /**
+     * @brief そのレイヤーを初めて出すときの差分名
+     *
+     * `default` があればそれ。無ければ `variants` の**最初のもの**。
+     */
+    static std::string defaultVariant(const cJSON* layer);
+
     /// 直近の検証で見つかった問題の数（0 なら健全）
     int issueCount() const { return _issueCount; }
 

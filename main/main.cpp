@@ -23,6 +23,7 @@
 #include "TextSystem.hpp"
 #include "TouchHandler.hpp"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -82,13 +83,11 @@ std::vector<Button *> choiceButtons;
 
 void clearChoiceButtons()
 {
+    // **解放は ButtonManager が行う。**
+    // choiceButtons は「何番目が押されたか」を引くための参照用。
     if (choiceButtonManager)
     {
         choiceButtonManager->clearButtons();
-    }
-    for (Button *btn : choiceButtons)
-    {
-        delete btn;
     }
     choiceButtons.clear();
 }
@@ -115,15 +114,20 @@ void showChoiceButtons()
     const std::vector<std::string> &labels = scenarioPlayer.choiceLabels();
     const std::vector<bool> &enabled = scenarioPlayer.choiceEnabled();
 
-    const int width = 320;
     const int height = 56;
     const int gap = 8;
+
+    // 横向き（960x540）だと左寄せでは立ち絵に重なる。
+    // 画面幅の中央へ寄せる。縦長でも収まりが良いので向きでは分けない。
+    const int screenW = static_cast<int>(display.width());
+    const int width = std::min(320, screenW - 40);
+    const int x = (screenW - width) / 2;
     const int startY = display.height() - 40 - static_cast<int>(labels.size()) * (height + gap);
 
     for (size_t i = 0; i < labels.size(); ++i)
     {
         const int y = startY + static_cast<int>(i) * (height + gap);
-        Button *btn = new Button(&display, 20, y, width, height, labels[i].c_str());
+        Button *btn = new Button(&display, x, y, width, height, labels[i].c_str());
         btn->setOnReleased(onChoiceButtonReleased);
 
         // 選択肢は日本語なので VLW を指定する。既定フォントでは豆腐になる。
@@ -142,6 +146,118 @@ void showChoiceButtons()
     SimpleTransition::refreshScreen(&display);
 
     ESP_LOGI(TAG, "Showing %u choice button(s)", static_cast<unsigned>(labels.size()));
+}
+
+// ========================================
+// 電池切れの手当て
+// ========================================
+
+/// これを下回ったら保存する（%）
+constexpr int LOW_BATTERY_PERCENT = 2;
+
+/// 電池を見る間隔（ミリ秒）。ADC を毎周期読む必要はない
+constexpr int64_t BATTERY_CHECK_MS = 10000;
+
+int64_t lastBatteryCheckMs = 0;
+bool lowBatterySaved = false;
+
+/**
+ * @brief 電池が残り少なければ、今の位置を残して知らせる
+ *
+ * 電子ペーパーは電源が落ちても画面が残るので、
+ * 何も出さずに切れると「止まったのか電池切れなのか」が分からない。
+ */
+void checkBattery()
+{
+    const int64_t now = esp_timer_get_time() / 1000;
+    if (now - lastBatteryCheckMs < BATTERY_CHECK_MS)
+    {
+        return;
+    }
+    lastBatteryCheckMs = now;
+
+    const int percent = power.batteryPercent();
+    if (percent < 0 || percent > LOW_BATTERY_PERCENT)
+    {
+        return;
+    }
+
+    // **一度だけ。** 何度も書くと、残り少ない電力を書き込みで使い切る。
+    if (lowBatterySaved)
+    {
+        return;
+    }
+    lowBatterySaved = true;
+
+    ESP_LOGW(TAG, "Battery at %d%%", percent);
+
+    if (currentScreen == AppScreen::Playing)
+    {
+        scenarioPlayer.emergencySave();
+    }
+
+    display.unloadFont();
+    display.setTextColor(TFT_WHITE, TFT_BLACK);
+    display.setTextSize(2);
+    display.fillRect(0, 0, display.width(), 44, TFT_BLACK);
+    display.setCursor(16, 12);
+    display.print("Battery low - please charge");
+    SimpleTransition::refreshScreen(&display);
+}
+
+// ========================================
+// バックログ（本文の履歴）
+// ========================================
+//
+// 再生中に上スワイプで開き、タップで戻る。
+// **保存はしない。** 電源を切れば消える。
+// 「さっき何を読んだか」を見返すためだけのもので、
+// 既読スキップのような周回をまたぐ記録とは別物。
+
+bool backlogOpen = false;
+
+void showBacklog()
+{
+    TypoWrite *writer = textSystem.backlog();
+    if (!writer)
+    {
+        return;
+    }
+
+    const std::vector<std::string> &history = scenarioPlayer.history();
+
+    // 新しいものを上に出す。開いた直後に直前の本文が見えるようにするため。
+    std::string text;
+    for (auto it = history.rbegin(); it != history.rend(); ++it)
+    {
+        if (!text.empty())
+        {
+            text += "\n\n";
+        }
+        text += *it;
+    }
+    if (text.empty())
+    {
+        text = "まだ何も読んでいません。";
+    }
+
+    display.fillScreen(TFT_BLACK);
+    writer->drawTextPaged(text, 0);
+    SimpleTransition::refreshScreen(&display);
+
+    backlogOpen = true;
+    ESP_LOGI(TAG, "Backlog opened (%u entries)",
+             static_cast<unsigned>(history.size()));
+}
+
+void hideBacklog()
+{
+    backlogOpen = false;
+
+    // 舞台だけ描き直すと本文が消えたままになるので、
+    // 直近の本文まで戻す。
+    scenarioPlayer.redrawCurrentScreen();
+    ESP_LOGI(TAG, "Backlog closed");
 }
 
 // ========================================
@@ -382,6 +498,31 @@ void setup()
 
     choiceButtonManager = new ButtonManager(&display, &touchHandler);
 
+    // 起動した時点で残りが少なければ、一覧を出す前に知らせる。
+    // 選んで読み始めた直後に落ちるより、先に充電してもらうほうがよい。
+    const int battery = power.batteryPercent();
+    if (battery >= 0 && battery <= LOW_BATTERY_PERCENT)
+    {
+        ESP_LOGW(TAG, "Battery at %d%% on boot", battery);
+
+        display.unloadFont();
+        display.fillScreen(TFT_BLACK);
+        display.setTextColor(TFT_WHITE, TFT_BLACK);
+        display.setTextSize(3);
+        display.setCursor(40, 400);
+        display.print("Battery low");
+        display.setTextSize(2);
+        display.setCursor(40, 460);
+        display.print("Please charge before reading");
+        SimpleTransition::refreshScreen(&display);
+
+        // ここで止める。電源ボタンで切るか、充電して入れ直してもらう。
+        for (;;)
+        {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+    }
+
     systemMenu.begin(&display, &touchHandler);
     enterMenu();
 
@@ -400,6 +541,9 @@ void loop()
         simpleTransition->update();
         return;
     }
+
+    // 電池の残りを見る。10秒に1回なので毎周期の負担はほぼ無い。
+    checkBattery();
 
     // タッチの取得はここで1回だけ。
     // TouchHandler::update() はイベントを1回しか返さない破壊的メソッドなので、
@@ -420,6 +564,28 @@ void loop()
         break;
 
     case AppScreen::Playing:
+        // バックログを開いている間は、閉じる操作だけ拾う。
+        // 本文を進めてしまうと、読み返している最中に話が動く。
+        if (backlogOpen)
+        {
+            if (hasTouchEvent && touchHandler.isReleaseEvent())
+            {
+                hideBacklog();
+            }
+            break;
+        }
+
+        // 上スワイプで履歴を開く。
+        // **タップ判定より前に見ること。** スワイプは「方向を伴うタッチ終了」
+        // なので、後ろに置くと本文が1つ進んでから開くことになる。
+        if (hasTouchEvent && touchHandler.isSwipeEvent()
+            && touchHandler.getLastSwipe() == SwipeDirection::Up
+            && !scenarioPlayer.isWaitingChoice())
+        {
+            showBacklog();
+            break;
+        }
+
         if (scenarioPlayer.isWaitingTransition())
         {
             // ここへ来た時点で遷移は終わっている（上の分岐を抜けたため）

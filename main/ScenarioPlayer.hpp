@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -71,7 +72,21 @@ public:
      */
     struct CharaState {
         std::string id;
+
+        /// 単一画像方式のときの表情。レイヤー方式では使わない
         std::string expression;
+
+        /**
+         * @brief レイヤー方式のときの「レイヤー名 → 差分名」
+         *
+         * `assets.characters.<id>.layers` がある立ち絵だけが使う。
+         * 空なら単一画像方式。
+         *
+         * `chara` で書かれなかったレイヤーはここの値が残るので、
+         * 「目だけ変える」が書ける。
+         */
+        std::map<std::string, std::string> layers;
+
         int x = 0;
         int y = 0;
         float scale = 1.0f;
@@ -193,6 +208,40 @@ public:
 
     /// `end` コマンドが指定したエンディング識別子（未到達なら空）
     const std::string& endingId() const { return _endingId; }
+
+    // ========================================
+    // 本文の履歴（バックログ）
+    // ========================================
+
+    /**
+     * @brief 直近に読んだ本文（新しいものが後ろ）
+     *
+     * **保存はしない。** 電源を切れば消える。
+     * 既読スキップのような「周回をまたぐ記録」とは別物で、
+     * 「さっき何を読んだか」を見返すためだけのもの。
+     */
+    const std::vector<std::string>& history() const { return _history; }
+
+    /// 履歴に残す件数
+    static constexpr size_t MAX_HISTORY = 30;
+
+    /**
+     * @brief 舞台と直近の本文を描き直す
+     *
+     * バックログを閉じたときなど、画面を別のもので上書きした後に呼ぶ。
+     * `renderStage()` だけだと本文が消えたままになる。
+     */
+    void redrawCurrentScreen();
+
+    /**
+     * @brief 電池切れが近いので今の位置を残す
+     *
+     * オートセーブ枠（slot 0）へ書き、周回をまたぐ変数も書き出す。
+     * 電源が落ちてから悔やんでも遅いので、**再生中に一度だけ**呼ぶ。
+     *
+     * @return 書けたか。USB MSC 中や SD 無しでは書けない
+     */
+    bool emergencySave();
 
 private:
     /// 1コマンド実行した結果、次に何をするか
@@ -369,6 +418,26 @@ private:
     // `variables` の初期値からストアを作る
     void initVariables();
 
+    // ---- 永続変数 ----
+    //
+    // `variables` で `{ "value": ..., "persistent": true }` と書いたものは、
+    // ニューゲームでもリセットせず周回をまたいで残す。
+    // エンディングの回収記録などを、専用の記法を増やさずに書けるようにするため。
+
+    /// `scenarios/<id>/saves/persistent.json`
+    std::string persistentPath() const;
+
+    /// 前回までの値を読んで上から被せる（`initVariables()` の最後で呼ぶ）
+    void loadPersistent();
+
+    /**
+     * @brief 永続変数を書き出す
+     *
+     * **`set` のたびには呼ばない。** SD への書き込みが増えすぎる。
+     * `end` と `suspend` のときだけ書く。
+     */
+    bool savePersistent();
+
     // cJSON の値から Value を作る
     static Value valueFromJson(const cJSON* item);
 
@@ -450,8 +519,100 @@ private:
     // 変数の現在値
     std::map<std::string, Value> _variables;
 
+    // そのうち周回をまたいで残すもの
+    std::set<std::string> _persistentNames;
+
+    // ---- 本文の履歴 ----
+    std::vector<std::string> _history;
+
+    // 直近に描いた本文。バックログを閉じたときに描き直すために持つ。
+    // ページ送りの途中なら、そのページの先頭位置も要る。
+    std::string _lastBody;
+    std::string _lastBoxName;
+    size_t _lastPageOffset = 0;
+
     // 表示中の立ち絵。追加順に重なる（後のものが手前）
     std::vector<CharaState> _charas;
+
+    /**
+     * @brief レイヤー合成の結果を控えておく箱
+     *
+     * レイヤー方式の立ち絵は、描き直すたびにレイヤーの数だけ PNG を読む。
+     * 表情を変えるだけでも背景から全部やり直すので、部位を細かく割るほど遅い。
+     *
+     * **「背景のその部分 → 各レイヤー」を合成した1枚**を持っておき、
+     * 組み合わせが変わるまで貼るだけにする。
+     *
+     * 背景を焼き込むのは、透過を元のアルファ合成のまま保つため。
+     * 色キーで抜くと、16階調しかない画面では縁に色が滲む。
+     *
+     * **そのぶん、他の立ち絵と重なる立ち絵には使えない。**
+     * 背景ごと貼るので、下にいる立ち絵を消してしまう。
+     * 重なりを見つけたらキャッシュを使わず直接描く。
+     */
+    struct CharaCache {
+        /**
+         * @brief 背景のその部分だけを写した1枚
+         *
+         * **背景と位置が変わったときだけ**作り直す。
+         * 実測で背景 PNG の読み込みは 900ms あり、描画全体の 86% を占めていた。
+         * 表情を変えるたびにこれを読み直しては、控えを持つ意味が無い。
+         */
+        M5Canvas* bgSlice = nullptr;
+
+        /// 背景 + レイヤーを重ねた1枚。実際に画面へ貼るのはこちら
+        M5Canvas* composite = nullptr;
+
+        /// bgSlice の内容を表す文字列（背景・位置・倍率）
+        std::string bgKey;
+
+        /// composite の内容を表す文字列（bgKey + レイヤーの組み合わせ）
+        std::string key;
+
+        /// 確保してある大きさ。倍率が変わったら作り直す
+        int w = 0;
+        int h = 0;
+
+        /// 使えないと分かった理由を1度だけ出すための印
+        bool warned = false;
+    };
+
+    /// 立ち絵の id ごとの合成結果
+    std::map<std::string, CharaCache> _charaCache;
+
+    /// 背景のその部分を表す文字列（背景名・位置・倍率）
+    std::string charaBgKey(const CharaState& c) const;
+
+    /// 合成結果を表す文字列（背景 + レイヤーの組み合わせ）
+    std::string charaCacheKey(const CharaState& c) const;
+
+    /**
+     * @brief 合成結果を用意して返す
+     *
+     * 背景が変わっていなければ**背景は読み直さない**。
+     * 控えてある1枚を写してからレイヤーだけ重ねる。
+     *
+     * @return 使えなければ nullptr（呼び出し側は直接描くこと）
+     */
+    M5Canvas* ensureCharaComposite(const CharaState& c, const cJSON* layerDefs);
+
+    /// 立ち絵の外接矩形。`assets.characters.<id>.size` から引く
+    bool charaBounds(const CharaState& c, int& w, int& h) const;
+
+    /// 他の表示中の立ち絵と重なっているか（重なっていたらキャッシュを使わない）
+    bool charaOverlaps(const CharaState& c) const;
+
+    /// 合成結果を捨てる（シナリオを閉じるとき）
+    void clearCharaCache();
+
+    /**
+     * @brief 控えてある合成結果を貼る
+     *
+     * 使えない場合（`size` の宣言が無い・他の立ち絵と重なる・
+     * 描画先がキャンバス）は false を返すので、呼び出し側は直接描くこと。
+     */
+    bool drawCharaCached(lgfx::LovyanGFX* target, const CharaState& c,
+                         const cJSON* layerDefs);
 
     /**
      * @brief 前面の一枚絵（イベントCG）

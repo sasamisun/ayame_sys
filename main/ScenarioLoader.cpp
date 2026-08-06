@@ -396,6 +396,95 @@ bool ScenarioLoader::resolveBackgroundPath(const char* logicalName,
     return true;
 }
 
+const cJSON* ScenarioLoader::characterLayers(const char* id) const
+{
+    if (!id) {
+        return nullptr;
+    }
+    const cJSON* assets = cJSON_GetObjectItemCaseSensitive(_root, "assets");
+    const cJSON* characters =
+        cJSON_GetObjectItemCaseSensitive(assets, "characters");
+    const cJSON* chara = cJSON_GetObjectItemCaseSensitive(characters, id);
+
+    const cJSON* layers = cJSON_GetObjectItemCaseSensitive(chara, "layers");
+    return cJSON_IsArray(layers) ? layers : nullptr;
+}
+
+const cJSON* ScenarioLoader::characterSize(const char* id) const
+{
+    if (!id) {
+        return nullptr;
+    }
+    const cJSON* assets = cJSON_GetObjectItemCaseSensitive(_root, "assets");
+    const cJSON* characters =
+        cJSON_GetObjectItemCaseSensitive(assets, "characters");
+    const cJSON* chara = cJSON_GetObjectItemCaseSensitive(characters, id);
+
+    const cJSON* size = cJSON_GetObjectItemCaseSensitive(chara, "size");
+    return cJSON_IsObject(size) ? size : nullptr;
+}
+
+const cJSON* ScenarioLoader::findLayer(const cJSON* layers, const char* layerName)
+{
+    if (!cJSON_IsArray(layers) || !layerName) {
+        return nullptr;
+    }
+    const cJSON* layer = nullptr;
+    cJSON_ArrayForEach(layer, layers) {
+        const cJSON* name = cJSON_GetObjectItemCaseSensitive(layer, "name");
+        if (cJSON_IsString(name) && name->valuestring &&
+            strcmp(name->valuestring, layerName) == 0) {
+            return layer;
+        }
+    }
+    return nullptr;
+}
+
+std::string ScenarioLoader::defaultVariant(const cJSON* layer)
+{
+    const std::string named = getString(layer, "default");
+    if (!named.empty()) {
+        return named;
+    }
+
+    // `default` が無ければ最初の差分。
+    // cJSON は挿入順を保つので「JSON に最初に書いたもの」になる。
+    const cJSON* variants = cJSON_GetObjectItemCaseSensitive(layer, "variants");
+    if (cJSON_IsObject(variants) && variants->child && variants->child->string) {
+        return variants->child->string;
+    }
+    return "";
+}
+
+bool ScenarioLoader::resolveLayerPath(const char* id, const char* layerName,
+                                      const char* variant,
+                                      std::string& outPath) const
+{
+    outPath.clear();
+
+    const cJSON* layer = findLayer(characterLayers(id), layerName);
+    if (!layer) {
+        return false;
+    }
+
+    const cJSON* variants = cJSON_GetObjectItemCaseSensitive(layer, "variants");
+    const cJSON* entry = cJSON_GetObjectItemCaseSensitive(
+        variants, (variant && variant[0]) ? variant : "");
+    if (!cJSON_IsString(entry) || !entry->valuestring) {
+        return false;
+    }
+
+    outPath = _basePath + "/" + entry->valuestring;
+
+    if (outPath.size() >= 200) {
+        ESP_LOGW(TAG, "Layer path too long (%u chars): %s",
+                 static_cast<unsigned>(outPath.size()), outPath.c_str());
+        outPath.clear();
+        return false;
+    }
+    return true;
+}
+
 bool ScenarioLoader::resolveCharacterPath(const char* id, const char* expression,
                                           std::string& outPath) const
 {
@@ -481,16 +570,45 @@ void ScenarioLoader::validateCommands(const cJSON* commands,
 
             if (!hiding) {
                 const std::string id = getString(cmd, "id");
-                const std::string expr = getString(cmd, "expression", "normal");
-                std::string path;
-                if (!resolveCharacterPath(id.c_str(), expr.c_str(), path)) {
-                    ESP_LOGW(TAG, "  scene '%s': character '%s/%s' is not in assets",
-                             sceneId, id.c_str(), expr.c_str());
-                    ++issues;
-                } else if (!SD.exists(path.c_str())) {
-                    ESP_LOGW(TAG, "  scene '%s': character file not found: %s",
-                             sceneId, path.c_str());
-                    ++issues;
+                const cJSON* layers = characterLayers(id.c_str());
+
+                if (layers) {
+                    // レイヤー方式。指定された差分が定義されているかを見る。
+                    // 指定が無いレイヤーは既定の差分が使われるので、
+                    // ここでは書かれたものだけ確かめれば足りる。
+                    const cJSON* wanted =
+                        cJSON_GetObjectItemCaseSensitive(cmd, "layers");
+                    const cJSON* item = nullptr;
+                    cJSON_ArrayForEach(item, wanted) {
+                        if (!item->string || !cJSON_IsString(item)) {
+                            continue;
+                        }
+                        std::string path;
+                        if (!resolveLayerPath(id.c_str(), item->string,
+                                              item->valuestring, path)) {
+                            ESP_LOGW(TAG, "  scene '%s': character '%s' has no layer "
+                                          "'%s/%s' in assets",
+                                     sceneId, id.c_str(), item->string,
+                                     item->valuestring);
+                            ++issues;
+                        } else if (!SD.exists(path.c_str())) {
+                            ESP_LOGW(TAG, "  scene '%s': layer file not found: %s",
+                                     sceneId, path.c_str());
+                            ++issues;
+                        }
+                    }
+                } else {
+                    const std::string expr = getString(cmd, "expression", "normal");
+                    std::string path;
+                    if (!resolveCharacterPath(id.c_str(), expr.c_str(), path)) {
+                        ESP_LOGW(TAG, "  scene '%s': character '%s/%s' is not in assets",
+                                 sceneId, id.c_str(), expr.c_str());
+                        ++issues;
+                    } else if (!SD.exists(path.c_str())) {
+                        ESP_LOGW(TAG, "  scene '%s': character file not found: %s",
+                                 sceneId, path.c_str());
+                        ++issues;
+                    }
                 }
             }
         } else if (type == "choice") {

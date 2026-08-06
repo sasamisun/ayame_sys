@@ -128,6 +128,7 @@ private:
     uint16_t _bgColor;                  // 背景色
     bool _transparentBg;                // 背景透明フラグ
     bool _wrap;                         // 折り返しフラグ
+    bool _kinsoku;                      // 行頭・行末の禁則とぶら下げを行うか
     
     // ========== フォント設定 ==========
     float _fontSize;                    // フォントサイズ
@@ -238,6 +239,17 @@ public:
 
     // 折り返しの設定
     void setWrap(bool wrap);
+
+    /**
+     * @brief 禁則処理の有無（既定は有効）
+     *
+     * 行頭に `、。」` が来ないよう前の行へ戻し、
+     * 行末が `「（` で終わらないよう次の行へ送る。
+     * 句読点は行からはみ出させる（ぶら下げ）。
+     *
+     * 切ると、幅で機械的に折り返すだけになる。
+     */
+    void setKinsoku(bool enabled);
 
 
     
@@ -495,6 +507,47 @@ private:
      * @return 見つかればその添字、無ければ runs.size()
      */
     size_t findRubyRunStartingAt(const std::vector<RubyRun> &runs, size_t index) const;
+
+    /**
+     * @brief 範囲の送り量を測る（末尾の字間は含めない）
+     *
+     * 横書きなら幅、縦書きなら高さ。
+     * **描画側と同じ式で計算すること。** 食い違うと
+     * `getTextWidth()` と実際の描画がずれ、揃えの位置も外れる。
+     */
+    int measureRange(const std::vector<uint16_t> &chars,
+                     size_t from, size_t to) const;
+
+    // ========== 禁則処理 ==========
+    //
+    // 行の切れ目を決めたあとで、日本語組版として不自然な位置を避ける。
+    // **縦書き・横書き・calculateTextSize() の3箇所から同じものを使う。**
+    // 別々に書くと、実際の描画と getTextWidth() がずれる。
+
+    /// 行頭に来てはいけない文字（句読点・閉じ括弧・長音・小書き仮名）
+    bool isLineStartProhibited(uint16_t c) const;
+
+    /// 行末に来てはいけない文字（開き括弧）
+    static bool isLineEndProhibited(uint16_t c);
+
+    /// 行からはみ出させてよい文字（句読点のみ）
+    static bool isHangingChar(uint16_t c);
+
+    /**
+     * @brief 行の切れ目を禁則に合わせて動かす
+     *
+     * @param chars     全文字
+     * @param lineStart この行の先頭
+     * @param lineEnd   折り返しで決まった終端（この位置は含まない）
+     * @param runs      ルビ範囲。途中で切らないために見る
+     * @param hangCount [out] ぶら下げた文字数（0 か 1）。
+     *                  **揃えの計算では幅に入れないこと**
+     * @return 調整後の終端
+     */
+    size_t applyKinsoku(const std::vector<uint16_t> &chars,
+                        size_t lineStart, size_t lineEnd,
+                        const std::vector<RubyRun> &runs,
+                        size_t &hangCount) const;
 
     // ルビ1文字あたりの送り量（本文の送りに _rubyScale を掛けた値）
     int getRubyAdvance(uint16_t unicode_char);

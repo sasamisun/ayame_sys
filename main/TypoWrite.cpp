@@ -251,6 +251,7 @@ TypoWrite::TypoWrite(M5GFX *display)
       _bgColor(TFT_BLACK),
       _transparentBg(false),
       _wrap(true),
+      _kinsoku(true),
       _fontSize(1.0f),
       _font(&fonts::lgfxJapanGothic_16),
       _vlwFont(nullptr),
@@ -792,6 +793,23 @@ size_t TypoWrite::drawHorizontalTextEnhanced(const std::vector<uint16_t> &unicod
             lineEnd = groupEnd;
         }
 
+        // --- 禁則処理 ---
+        //
+        // 切れ目が動くので、揃えに使う幅は測り直す。
+        // **ぶら下げた文字は幅に入れない。** 入れると中央/右揃えが
+        // はみ出したぶんだけ左へずれる（ぶら下げは領域の外に出す処理）。
+        if (_wrap)
+        {
+            size_t hangCount = 0;
+            const size_t adjusted =
+                applyKinsoku(unicode_chars, i, lineEnd, rubyRuns, hangCount);
+            if (adjusted != lineEnd)
+            {
+                lineEnd = adjusted;
+                lineWidth = measureRange(unicode_chars, i, lineEnd - hangCount);
+            }
+        }
+
         // 描画範囲チェック（行単位）
         // ここで抜けたとき i はこの行の先頭を指したままなので、
         // そのまま次ページの開始位置として返せる。
@@ -1051,6 +1069,23 @@ size_t TypoWrite::drawVerticalTextEnhanced(const std::vector<uint16_t> &unicode_
             }
             colHeight = groupHeight;
             colEnd = groupEnd;
+        }
+
+        // --- 禁則処理 ---
+        //
+        // 縦書きでも同じ判定を使う。列の下端が「行末」、上端が「行頭」。
+        // 切れ目が動くので、揃えに使う高さは測り直す。
+        // **ぶら下げた文字は高さに入れない**（列の下へはみ出させる処理）。
+        if (_wrap)
+        {
+            size_t hangCount = 0;
+            const size_t adjusted =
+                applyKinsoku(unicode_chars, i, colEnd, rubyRuns, hangCount);
+            if (adjusted != colEnd)
+            {
+                colEnd = adjusted;
+                colHeight = measureRange(unicode_chars, i, colEnd - hangCount);
+            }
         }
 
         // 描画範囲チェック（列単位）
@@ -1330,6 +1365,155 @@ uint16_t TypoWrite::getCorrespondingLargeChar(uint16_t small_char) const
         return it->second;
     }
     return small_char; // 見つからない場合は元の文字
+}
+
+int TypoWrite::measureRange(const std::vector<uint16_t> &chars,
+                            size_t from, size_t to) const
+{
+    // 範囲の送り量を測る。**末尾の字間は含めない。**
+    // 含めると中央・右揃えが1文字ぶんずれる。
+    //
+    // 送りの求め方は描画側と揃えること。食い違うと
+    // getTextWidth() と実際の描画がずれ、揃えの位置も外れる。
+    if (to <= from || to > chars.size()) {
+        return 0;
+    }
+
+    const bool vertical = (_direction == TextDirection::VERTICAL);
+
+    int total = 0;
+    for (size_t k = from; k < to; ++k) {
+        const uint16_t ch = chars[k];
+        const CharTypeAdjustment adjust =
+            const_cast<TypoWrite *>(this)->getCharAdjustment(ch);
+        const CharMetrics metrics =
+            const_cast<TypoWrite *>(this)->getCharMetrics(
+                vertical ? const_cast<TypoWrite *>(this)->convertToVerticalGlyph(ch)
+                         : ch);
+
+        // 縦書きの送りは em 固定（横倍率を掛けない）。横書きは倍率を掛ける。
+        const int advance = vertical
+            ? metrics.setWidth
+            : static_cast<int>(metrics.setWidth * adjust.widthScale);
+        const int spacing = _charSpacing + adjust.spacingOffset;
+
+        total = (k == from) ? advance : total + spacing + advance;
+    }
+    return total;
+}
+
+// ========== 禁則処理 ==========
+//
+// 行の切れ目を決めたあとで、日本語組版として不自然な位置を避ける。
+// 縦書き・横書き・calculateTextSize() の**3箇所から同じ判定を使う**。
+// 別々に書くと、実際の描画と getTextWidth() がずれる。
+
+bool TypoWrite::isLineStartProhibited(uint16_t c) const
+{
+    // 行頭に来てはいけない文字。
+    // 句読点・閉じ括弧・繰り返し記号・長音・小書き仮名。
+    switch (c) {
+    // 句読点・区切り
+    case 0x3001: case 0x3002:                       // 、。
+    case 0xFF0C: case 0xFF0E:                       // ，．
+    case 0x30FB: case 0xFF1A: case 0xFF1B:          // ・：；
+    case 0xFF1F: case 0xFF01:                       // ？！
+    case 0x2026: case 0x2025:                       // …‥
+    // 閉じ括弧
+    case 0xFF09: case 0x3015: case 0xFF3D: case 0xFF5D:   // ）〕］｝
+    case 0x3009: case 0x300B: case 0x300D: case 0x300F:   // 〉》」』
+    case 0x3011: case 0x3019: case 0x301F:                // 】〗〟
+    // 繰り返し・長音
+    case 0x30FC: case 0x309D: case 0x309E:          // ーゝゞ
+    case 0x30FD: case 0x30FE: case 0x3005:          // ヽヾ々
+        return true;
+    default:
+        break;
+    }
+
+    // 小書き仮名。isSmallChar() と同じ集合を使い、二重に持たない。
+    return isSmallChar(c);
+}
+
+bool TypoWrite::isLineEndProhibited(uint16_t c)
+{
+    // 行末に来てはいけない文字（開き括弧）。
+    switch (c) {
+    case 0xFF08: case 0x3014: case 0xFF3B: case 0xFF5B:   // （〔［｛
+    case 0x3008: case 0x300A: case 0x300C: case 0x300E:   // 〈《「『
+    case 0x3010: case 0x3018: case 0x301D:                // 【〖〝
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool TypoWrite::isHangingChar(uint16_t c)
+{
+    // ぶら下げてよい文字。
+    //
+    // 句読点だけに限る。閉じ括弧までぶら下げると右端が揃わず、
+    // 「はみ出した」ようにしか見えない。
+    return c == 0x3001 || c == 0x3002 || c == 0xFF0C || c == 0xFF0E;
+}
+
+size_t TypoWrite::applyKinsoku(const std::vector<uint16_t> &chars,
+                               size_t lineStart, size_t lineEnd,
+                               const std::vector<RubyRun> &runs,
+                               size_t &hangCount) const
+{
+    hangCount = 0;
+
+    if (!_kinsoku) {
+        return lineEnd;
+    }
+    // 行末が文末なら、後ろに送る文字が無いので調整は要らない
+    if (lineEnd >= chars.size() || lineEnd <= lineStart) {
+        return lineEnd;
+    }
+
+    // --- ぶら下げ ---
+    //
+    // 次が句読点なら、行からはみ出させてこの行に含める。
+    // 追い出しより先に見るのは、こちらのほうが行末が揃って読みやすいため。
+    // **1文字だけ。** 続けてぶら下げると右端が大きく崩れる。
+    if (isHangingChar(chars[lineEnd])) {
+        hangCount = 1;
+        return lineEnd + 1;
+    }
+
+    // --- 追い出し ---
+    //
+    // 行頭に来てはいけない文字が次に来る、または
+    // 行末に来てはいけない文字で終わっているなら、1文字ずつ前へ戻す。
+    //
+    // 歯止めを置くのは、禁則文字が続くと戻り続けて行が空になるため。
+    // そうなった場合は諦めてそのまま折り返す（読めないよりはよい）。
+    int guard = 8;
+    while (guard-- > 0 && lineEnd > lineStart + 1) {
+        const bool startBad = (lineEnd < chars.size())
+                              && isLineStartProhibited(chars[lineEnd]);
+        const bool endBad = isLineEndProhibited(chars[lineEnd - 1]);
+        if (!startBad && !endBad) {
+            break;
+        }
+
+        --lineEnd;
+
+        // ルビ範囲の途中に落ちたら、範囲の先頭まで戻す。
+        // 途中で切ると、そこがページ境界になったとき記法を読み直せない。
+        for (const RubyRun &run : runs) {
+            if (run.baseStart < lineEnd && lineEnd < run.baseEnd) {
+                lineEnd = run.baseStart;
+                break;
+            }
+        }
+        if (lineEnd <= lineStart) {
+            return lineStart + 1;   // 戻しすぎた。1文字は必ず置く
+        }
+    }
+
+    return lineEnd;
 }
 
 bool TypoWrite::shouldRotateInVertical(uint16_t unicode_char)
@@ -1715,6 +1899,12 @@ int TypoWrite::getRubyStripSize()
     return static_cast<int>(base * _rubyScale);
 }
 
+void TypoWrite::setKinsoku(bool enabled)
+{
+    _kinsoku = enabled;
+    ESP_LOGD(TAG, "Kinsoku %s", enabled ? "enabled" : "disabled");
+}
+
 // 折り返しの設定
 void TypoWrite::setWrap(bool wrap)
 {
@@ -2030,96 +2220,89 @@ void TypoWrite::calculateTextSize(const std::string &text, int &width, int &heig
 
     width = 0;
     height = 0;
-
-    // 送りの求め方は描画側（drawHorizontalTextEnhanced /
-    // drawVerticalTextEnhanced）と一致させること。
-    // 食い違うと getTextWidth()/getTextHeight() と実際の描画結果がずれ、
-    // drawTextCentered() の中央位置も外れる。
-    //
-    // 末尾の字間は寸法に含めない（描画側も最後の1文字の後ろには何も置かない）。
-    //
-    // 注意: 折り返し(_wrap)は考慮していない。ここが返すのは
-    //       「改行だけで区切った場合の自然な寸法」である。
-
-    if (_direction == TextDirection::HORIZONTAL)
-    {
-        int current_line_width = 0;
-        int line_count = 1;
-        bool first_in_line = true;
-
-        for (uint16_t ch : unicode_chars)
-        {
-            if (ch == '\n')
-            {
-                width = std::max(width, current_line_width);
-                current_line_width = 0;
-                first_in_line = true;
-                line_count++;
-                continue;
-            }
-
-            const CharMetrics metrics = getCharMetrics(ch);
-            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
-
-            // 描画側と同じ「setWidth × 横倍率」
-            const int advance = static_cast<int>(metrics.setWidth * adjustment.widthScale);
-            const int spacing = _charSpacing + adjustment.spacingOffset;
-
-            current_line_width += first_in_line ? advance : (spacing + advance);
-            first_in_line = false;
-        }
-
-        width = std::max(width, current_line_width);
-        height = line_count * (getLineHeight() + _lineSpacing) - _lineSpacing;
+    if (unicode_chars.empty()) {
+        return;
     }
-    else
-    { // VERTICAL
-        int current_column_height = 0;
-        int column_count = 1;
-        bool first_in_column = true;
 
-        for (uint16_t ch : unicode_chars)
+    // **折り返しと禁則を描画側と同じ手順で通す。**
+    //
+    // 以前はここだけ「改行で区切った自然な寸法」を返しており、
+    // 折り返しのある本文では getTextWidth() と実際の描画がずれていた。
+    // drawTextCentered() の中央位置もその分外れる。
+    //
+    // 行の切れ目を決める処理は measureRange() と applyKinsoku() に
+    // 出してあるので、ここはそれを呼ぶだけでよい。
+    //
+    // ルビ範囲は考慮しない（ここでは記法を解析していない）。
+    // 揃えの計算に使うぶんには、範囲が分断されても寸法は変わらない。
+    static const std::vector<RubyRun> noRuns;
+
+    const bool vertical = (_direction == TextDirection::VERTICAL);
+    const int limit = vertical ? _height : _width;
+
+    int lineCount = 0;
+    size_t i = 0;
+
+    while (i < unicode_chars.size())
+    {
+        if (unicode_chars[i] == '\n')
         {
-            if (ch == '\n')
-            {
-                height = std::max(height, current_column_height);
-                current_column_height = 0;
-                first_in_column = true;
-                column_count++;
-                continue;
-            }
-
-            // 描画側と同じ手順で表示文字を決めてから送りを取る。
-            // 小文字は大文字に変換され、さらに縦書き用グリフへ差し替えられる。
-            uint16_t work_char = ch;
-            if (needsSmallCharSubstitution(ch))
-            {
-                work_char = getCorrespondingLargeChar(ch);
-            }
-            const uint16_t display_char = convertToVerticalGlyph(work_char);
-
-            const CharMetrics metrics = getCharMetrics(display_char);
-            const CharTypeAdjustment adjustment = getCharAdjustment(ch);
-
-            // 縦書きは em 固定送り（縮小率は掛けない）。描画側と同一。
-            // 従来はここだけ metrics.height（ビットマップ高）を使っており、
-            // 描画側を em 固定に変更した後も追随していなかった。
-            const int advance = metrics.setWidth;
-            const int spacing = _charSpacing + adjustment.spacingOffset;
-
-            current_column_height += first_in_column ? advance : (spacing + advance);
-            first_in_column = false;
+            ++i;
+            ++lineCount;
+            continue;
         }
 
-        height = std::max(height, current_column_height);
+        // この行（列）に入る範囲を求める
+        size_t lineEnd = i;
+        int lineSize = 0;
+        while (lineEnd < unicode_chars.size() && unicode_chars[lineEnd] != '\n')
+        {
+            const int next = measureRange(unicode_chars, i, lineEnd + 1);
+            if (_wrap && lineEnd > i && next > limit)
+            {
+                break;
+            }
+            lineSize = next;
+            ++lineEnd;
+        }
 
-        // 列幅は描画側の columnWidth に合わせる（描画は em ボックスで列を取る）。
-        // ここが食い違うと getTextWidth() と実際の描画がずれ、
-        // drawTextCentered() の中央位置も外れる。
+        if (_wrap)
+        {
+            size_t hangCount = 0;
+            const size_t adjusted =
+                applyKinsoku(unicode_chars, i, lineEnd, noRuns, hangCount);
+            if (adjusted != lineEnd)
+            {
+                lineEnd = adjusted;
+                lineSize = measureRange(unicode_chars, i, lineEnd - hangCount);
+            }
+        }
+
+        if (lineEnd == i)
+        {
+            ++lineEnd;   // 1文字も入らない領域。無限ループを避ける
+        }
+
+        if (vertical) { height = std::max(height, lineSize); }
+        else          { width  = std::max(width,  lineSize); }
+
+        ++lineCount;
+        i = lineEnd;
+    }
+
+    if (lineCount == 0) { lineCount = 1; }
+
+    if (vertical)
+    {
+        // 列幅は描画側の columnWidth に合わせる（描画は em ボックスで列を取る）
         int emW = 0;
         int emH = 0;
         getEmBoxSize(emW, emH);
-        width = column_count * (emW + _lineSpacing) - _lineSpacing;
+        width = lineCount * (emW + _lineSpacing) - _lineSpacing;
+    }
+    else
+    {
+        height = lineCount * (getLineHeight() + _lineSpacing) - _lineSpacing;
     }
 }
 

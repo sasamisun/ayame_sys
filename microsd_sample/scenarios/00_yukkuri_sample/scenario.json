@@ -1,0 +1,485 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "00_yukkuri_sample",
+    "title": "AYAME ってなんだぜ",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "二人の掛け合いで AYAME の機能を一巡する紹介シナリオ",
+    "text_direction": "HORIZONTAL",
+    "rotation": 1,
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "room": "images/bg/room.png"
+    },
+    "characters": {
+      "marisa": {
+        "size": { "w": 160, "h": 160 },
+        "layers": [
+          {
+            "name": "base",
+            "x": 0,
+            "y": 22,
+            "default": "normal",
+            "variants": {
+              "normal": "images/chara/marisa_body_normal.png"
+            }
+          },
+          {
+            "name": "eyes",
+            "x": 60,
+            "y": 110,
+            "default": "normal",
+            "variants": {
+              "normal": "images/chara/marisa_eye_normal.png",
+              "close": "images/chara/marisa_eye_close.png",
+              "jito": "images/chara/marisa_eye_jito.png",
+              "blank": "images/chara/marisa_eye_blank.png",
+              "surprise": "images/chara/marisa_eye_surprise.png"
+            }
+          },
+          {
+            "name": "mouth",
+            "x": 75,
+            "y": 133,
+            "default": "close",
+            "variants": {
+              "close": "images/chara/marisa_mouth_close.png",
+              "smile": "images/chara/marisa_mouth_smile.png",
+              "uneasy": "images/chara/marisa_mouth_uneasy.png",
+              "open": "images/chara/marisa_mouth_open.png",
+              "shout": "images/chara/marisa_mouth_shout.png"
+            }
+          }
+        ]
+      },
+      "reimu": {
+        "size": { "w": 160, "h": 160 },
+        "layers": [
+          {
+            "name": "base",
+            "x": 16,
+            "y": 51,
+            "default": "normal",
+            "variants": {
+              "normal": "images/chara/reimu_body_normal.png"
+            }
+          },
+          {
+            "name": "eyes",
+            "x": 35,
+            "y": 96,
+            "default": "normal",
+            "variants": {
+              "normal": "images/chara/reimu_eye_normal.png",
+              "close": "images/chara/reimu_eye_close.png",
+              "jito": "images/chara/reimu_eye_jito.png",
+              "blank": "images/chara/reimu_eye_blank.png",
+              "surprise": "images/chara/reimu_eye_surprise.png"
+            }
+          },
+          {
+            "name": "mouth",
+            "x": 53,
+            "y": 120,
+            "default": "close",
+            "variants": {
+              "close": "images/chara/reimu_mouth_close.png",
+              "smile": "images/chara/reimu_mouth_smile.png",
+              "uneasy": "images/chara/reimu_mouth_uneasy.png",
+              "open": "images/chara/reimu_mouth_open.png",
+              "shout": "images/chara/reimu_mouth_shout.png"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "textboxes": {
+    "title": {
+      "x": 170,
+      "y": 110,
+      "w": 590,
+      "h": 130,
+      "direction": "HORIZONTAL",
+      "font_size": 2.0,
+      "align": "CENTER",
+      "padding": 20,
+      "background_color": "BLACK",
+      "text_color": "WHITE"
+    },
+    "name": {
+      "x": 200,
+      "y": 328,
+      "w": 200,
+      "h": 40,
+      "direction": "HORIZONTAL",
+      "padding": { "top": 8, "right": 12, "bottom": 4, "left": 12 },
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    },
+    "main": {
+      "x": 200,
+      "y": 372,
+      "w": 560,
+      "h": 150,
+      "direction": "HORIZONTAL",
+      "line_spacing": 8,
+      "padding": { "top": 12, "right": 16, "bottom": 12, "left": 16 },
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    },
+    "tate": {
+      "x": 776,
+      "y": 20,
+      "w": 168,
+      "h": 300,
+      "direction": "VERTICAL",
+      "line_spacing": 8,
+      "padding": 12,
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    }
+  },
+  "variables": {
+    "chapter": 0,
+    "quiz_tries": 0
+  },
+  "start": "title",
+  "scenes": {
+    "title": {
+      "commands": [
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "smile" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "smile" } },
+        { "type": "text", "box": "title",
+          "body": "AYAME ってなんだぜ", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "電子ペーパーで小説を読む仕組み、AYAME の紹介だぜ。\nどっちか選んでくれ。" },
+        { "type": "choice", "prompt": "どうする？", "options": [
+          { "label": "はじめから", "next": "ch1" },
+          { "label": "続きから", "next": "resume" }
+        ]}
+      ]
+    },
+
+    "resume": {
+      "commands": [
+        { "type": "load", "slot": 1 },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "まだ続きが無いわ。「はじめから」を選んでね。" },
+        { "type": "jump", "next": "title" }
+      ]
+    },
+
+    "ch1": {
+      "commands": [
+        { "type": "set", "var": "chapter", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "save", "slot": 1 },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "FADE_IN" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "open" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "text", "box": "title", "body": "第 1 章 はじめまして", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "よう、私は魔理沙だぜ。今日はこの箱、AYAME の中身を紹介する。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "close" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "open" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "霊夢よ。AYAME は電子ペーパーで小説を読むための仕組み。\n物語は全部 JSON 一枚に書いてあるの。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "open" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "close" } },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "電子ペーパーってのは、電源を切っても絵が残る画面だぜ。\n読みかけのページを出したまま鞄に放り込める。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "close" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "mouth": "open", "eyes": "jito" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "そのかわり書き換えは遅いわ。画面ぜんぶで 0.1 秒から 0.3 秒。\nぱらぱら動かす演出には向かないの。" },
+
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "smile", "eyes": "close" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "mouth": "close", "eyes": "normal" } },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "文章を読むぶんには十分だぜ。目も疲れないしな。" },
+        { "type": "jump", "next": "ch2" }
+      ]
+    },
+
+    "ch2": {
+      "commands": [
+        { "type": "set", "var": "chapter", "value": 2 },
+        { "type": "checkpoint" },
+        { "type": "save", "slot": 1 },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "open" } },
+        { "type": "text", "box": "title", "body": "第 2 章 文字を見てくれ", "wait": false },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "AYAME は縦書きで組めるわ。右の枠を見て。" },
+
+        { "type": "text", "box": "tate",
+          "body": "｜吾輩《わがはい》は猫である。名前はまだ無い。どこで生まれたか、とんと見当がつかぬ。",
+          "wait": false },
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "open", "eyes": "surprise" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "close" } },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "おっ、ルビも振れるんだな。｜吾輩《わがはい》のところだぜ。" },
+
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "close", "eyes": "normal" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "open" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "行の頭に句読点や閉じ括弧が来ないように直してあるのよ。\n禁則処理っていうの。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "open" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "mouth": "close", "eyes": "close" } },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "枠は何個でも置けるぜ。この本文は横書き、右は縦書き。\n枠ごとに向きも文字の大きさも別々にできる。" },
+        { "type": "jump", "next": "ch3" }
+      ]
+    },
+
+    "ch3": {
+      "commands": [
+        { "type": "set", "var": "chapter", "value": 3 },
+        { "type": "checkpoint" },
+        { "type": "save", "slot": 1 },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "open" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "text", "box": "title", "body": "第 3 章 顔が動くぜ", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "ところで私たちの顔、さっきから目と口が動いてるだろ。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "close" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "open" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "体・目・口を別々の絵にして重ねてるの。\n見ててね。" },
+
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "close", "mouth": "smile" } },
+        { "type": "text", "box": "main", "body": "目を閉じて、笑って。" },
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "surprise", "mouth": "shout" } },
+        { "type": "text", "box": "main", "body": "驚いて、叫んで。" },
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "jito", "mouth": "uneasy" } },
+        { "type": "text", "box": "main", "body": "呆れて、困る。ここまで絵は 11 枚だけよ。" },
+
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "open", "eyes": "blank" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "目 5 種 × 口 5 種で 25 通り。1 枚ずつ描いたら 25 枚要るぜ。" },
+
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "close", "eyes": "normal" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "mouth": "open", "eyes": "close" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "重ねた結果は覚えてあるから、表情だけ変えるのは一瞬。\n背景の読み直しが要らないの。" },
+        { "type": "jump", "next": "ch4" }
+      ]
+    },
+
+    "ch4": {
+      "commands": [
+        { "type": "set", "var": "chapter", "value": 4 },
+        { "type": "checkpoint" },
+        { "type": "save", "slot": 1 },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "open" } },
+        { "type": "text", "box": "title", "body": "第 4 章 選べるんだぜ", "wait": false },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "選択肢も出せるわ。選んだ先で話が変わるの。" },
+        { "type": "jump", "next": "quiz" }
+      ]
+    },
+
+    "quiz": {
+      "commands": [
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "smile", "eyes": "jito" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "close" } },
+        { "type": "text", "box": "title",
+          "body": "この画面は何階調だ？", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "せっかくだから問題を出すぜ。\nこの電子ペーパー、灰色を何段階まで出せる？" },
+        { "type": "choice", "prompt": "何階調？", "options": [
+          { "label": "白と黒の 2 階調", "next": "quiz_ng" },
+          { "label": "16 階調", "next": "quiz_ok" },
+          { "label": "256 階調", "next": "quiz_ng" }
+        ]}
+      ]
+    },
+
+    "quiz_ok": {
+      "commands": [
+        { "type": "beep", "melody": [
+          { "freq": 784, "duration": 120 },
+          { "freq": 1047, "duration": 220 }
+        ]},
+        { "type": "chara", "id": "marisa",
+          "layers": { "eyes": "close", "mouth": "smile" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "surprise", "mouth": "open" } },
+        { "type": "text", "box": "title", "body": "正解だぜ", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "16 階調、当たりだぜ。だから写真もそれなりに出せる。\n背景の畳を見てくれ、けっこう粘ってるだろ。" },
+        { "type": "if",
+          "cond": { "var": "quiz_tries", "op": ">", "value": 0 },
+          "then": [
+            { "type": "chara", "id": "reimu",
+              "layers": { "eyes": "jito", "mouth": "uneasy" } },
+            { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+            { "type": "text", "box": "main",
+              "body": "……{quiz_tries} 回も外したくせに。\nこういう「何回目か」も変数で数えられるのよ。" }
+          ]
+        },
+        { "type": "jump", "next": "ch5" }
+      ]
+    },
+
+    "quiz_ng": {
+      "commands": [
+        { "type": "beep", "freq": 220, "duration": 200 },
+        { "type": "set", "var": "quiz_tries", "op": "+=", "value": 1 },
+        { "type": "chara", "id": "marisa",
+          "layers": { "eyes": "jito", "mouth": "uneasy" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "close", "mouth": "smile" } },
+        { "type": "text", "box": "title", "body": "はずれだ", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "はずれだぜ。もう一回だ。" },
+        { "type": "jump", "next": "quiz" }
+      ]
+    },
+
+    "ch5": {
+      "commands": [
+        { "type": "set", "var": "chapter", "value": 5 },
+        { "type": "checkpoint" },
+        { "type": "save", "slot": 1 },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "open" } },
+        { "type": "text", "box": "title", "body": "第 5 章 切っても平気だぜ", "wait": false },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "今、この章の頭を控えておいたわ。\n章が変わるたびに控え直してるの。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "open" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "close" } },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "中断すると電源が落ちるが、画面はこのまま残るぜ。\n次に入れるとメニューの一番上に「続きから」が出る。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "close" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "mouth": "open", "eyes": "close" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "戻ってくるのは、さっき控えた第 5 章の頭。\n中断を選んだ画面じゃないわ。ここが大事なところ。" },
+        { "type": "choice", "prompt": "どうする？", "options": [
+          { "label": "ここで中断する", "next": "do_suspend" },
+          { "label": "最後まで読む", "next": "ch6" }
+        ]}
+      ]
+    },
+
+    "do_suspend": {
+      "commands": [
+        { "type": "chara", "id": "marisa",
+          "layers": { "eyes": "close", "mouth": "smile" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "eyes": "close", "mouth": "smile" } },
+        { "type": "text", "box": "title", "body": "またあとでな", "wait": false },
+        { "type": "text", "box": "name", "body": "二人", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "電源を切るぜ。この画面はそのまま残る。\nもう一度入れて「続きから」を選んでくれ。" },
+        { "type": "suspend", "message": "また読んでくれよな。", "slot": 1 }
+      ]
+    },
+
+    "ch6": {
+      "commands": [
+        { "type": "set", "var": "chapter", "value": 6 },
+        { "type": "checkpoint", "clear": true },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "REVEAL_CENTER" },
+        { "type": "chara", "id": "marisa", "x": 20, "y": 370,
+          "layers": { "eyes": "normal", "mouth": "open" } },
+        { "type": "chara", "id": "reimu", "x": 780, "y": 340,
+          "layers": { "eyes": "normal", "mouth": "close" } },
+        { "type": "text", "box": "title", "body": "第 6 章 おしまい", "wait": false },
+        { "type": "text", "box": "name", "body": "魔理沙", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "というわけで AYAME の紹介だったぜ。\n背景、立ち絵、縦書き、選択肢、中断。ひととおり出したな。" },
+
+        { "type": "chara", "id": "marisa", "layers": { "mouth": "close" } },
+        { "type": "chara", "id": "reimu", "layers": { "mouth": "open" } },
+        { "type": "text", "box": "name", "body": "霊夢", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "全部 scenario.json 一枚に書いてあるわ。\n中を開けば、今見たものがどう書かれているか分かるはず。" },
+
+        { "type": "chara", "id": "marisa",
+          "layers": { "mouth": "smile", "eyes": "close" } },
+        { "type": "chara", "id": "reimu",
+          "layers": { "mouth": "smile", "eyes": "close" } },
+        { "type": "text", "box": "name", "body": "二人", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "あとは書くだけだぜ。SCENARIO_SPEC.md を読んでくれ。" },
+        { "type": "refresh", "mode": "epd_quality", "clear_ghost": true },
+        { "type": "end", "ending": "intro_done", "message": "おしまい。" }
+      ]
+    }
+  }
+}

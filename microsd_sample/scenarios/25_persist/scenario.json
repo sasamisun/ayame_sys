@@ -1,0 +1,140 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "25_persist",
+    "title": "永続変数とエンディング回収",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "persistent な変数で周回をまたいで記録する",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {},
+    "characters": {}
+  },
+  "variables": {
+    "choice_count": 0,
+    "got_a": {
+      "value": false,
+      "persistent": true
+    },
+    "got_b": {
+      "value": false,
+      "persistent": true
+    },
+    "clears": {
+      "value": 0,
+      "persistent": true
+    }
+  },
+  "start": "title",
+  "scenes": {
+    "title": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "text",
+          "body": "これまでのクリア回数は {clears} 回です。この数はメニューへ戻っても、電源を切っても残ります。"
+        },
+        {
+          "type": "if",
+          "cond": {
+            "all": [
+              {
+                "var": "got_a",
+                "op": "==",
+                "value": true
+              },
+              {
+                "var": "got_b",
+                "op": "==",
+                "value": true
+              }
+            ]
+          },
+          "then": [
+            {
+              "type": "text",
+              "body": "両方のエンディングを見ました。おめでとうございます。"
+            }
+          ],
+          "else": [
+            {
+              "type": "text",
+              "body": "A を見た: {got_a} ／ B を見た: {got_b}"
+            }
+          ]
+        },
+        {
+          "type": "checkpoint"
+        },
+        {
+          "type": "choice",
+          "prompt": "どちらへ？",
+          "options": [
+            {
+              "label": "エンディング A へ",
+              "next": "end_a"
+            },
+            {
+              "label": "エンディング B へ",
+              "next": "end_b"
+            }
+          ]
+        }
+      ]
+    },
+    "end_a": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "got_a",
+          "value": true
+        },
+        {
+          "type": "set",
+          "var": "clears",
+          "op": "+=",
+          "value": 1
+        },
+        {
+          "type": "text",
+          "body": "エンディング A に到達しました。メニューへ戻ってもう一度開くと、記録が残っています。"
+        },
+        {
+          "type": "end",
+          "ending": "a",
+          "message": "END A"
+        }
+      ]
+    },
+    "end_b": {
+      "commands": [
+        {
+          "type": "set",
+          "var": "got_b",
+          "value": true
+        },
+        {
+          "type": "set",
+          "var": "clears",
+          "op": "+=",
+          "value": 1
+        },
+        {
+          "type": "text",
+          "body": "エンディング B に到達しました。両方見ると冒頭の表示が変わります。"
+        },
+        {
+          "type": "end",
+          "ending": "b",
+          "message": "END B"
+        }
+      ]
+    }
+  }
+}

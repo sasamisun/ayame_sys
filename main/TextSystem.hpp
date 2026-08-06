@@ -78,6 +78,16 @@ public:
 
     TypoWrite* vertical() { return _vertical; }
     TypoWrite* horizontal() { return _horizontal; }
+
+    /**
+     * @brief バックログ表示用の描画器（画面いっぱい・横書き）
+     *
+     * 既定の2つを流用すると、閉じたときに位置と大きさを戻す手間が要る。
+     * 別に1つ持たせて使い回す。初回だけ生成し、以後は使い回す。
+     *
+     * 画面の向きが変わっても呼ぶたびに大きさを合わせ直す。
+     */
+    TypoWrite* backlog();
     VLWFontParser* parser() { return &_parser; }
 
     /// ボタンのラベルなど、TypoWrite を通さず直接描く場合に使うフォントデータ
@@ -141,13 +151,15 @@ public:
      * @param padding      外枠と本文のあいだの余白。枠付きの背景画像を使うとき、
      *                     本文が枠に食い込まないようにするためのもの
      * @param textColor    本文の色。**下地と同じ色にすると当然読めない**
+     * @param kinsoku      行頭・行末の禁則とぶら下げを行うか
      * @return 作れたか
      */
     bool defineBox(const std::string& name, int x, int y, int w, int h,
                    bool vertical, float fontSize,
                    int lineSpacing, int charSpacing, TextAlignment align,
                    const TextBoxPadding& padding = TextBoxPadding{},
-                   uint16_t textColor = TFT_WHITE);
+                   uint16_t textColor = TFT_WHITE,
+                   bool kinsoku = true);
 
     /**
      * @brief 既定の2つの描画器を、今の画面の向きに合わせて置き直す
@@ -196,6 +208,7 @@ private:
     VLWFontParser _parser;
     TypoWrite* _vertical = nullptr;
     TypoWrite* _horizontal = nullptr;
+    TypoWrite* _backlog = nullptr;   // バックログ表示用（遅延生成）
 
     // シナリオが定義したボックス。名前で引く
     std::map<std::string, TypoWrite*> _boxes;

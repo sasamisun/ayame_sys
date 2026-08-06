@@ -41,11 +41,40 @@ PC の画面で見たものがそのまま実機に出る。
 余った部分は `--pad` の色で埋める（既定は白）。
 `--fit cover` にすると、はみ出す分を切って全面を埋める。
 
+## 拡大縮小（`--scale`）
+
+パーセントで指定する。`--size` より**先に**掛かるので、
+「半分にしてから 540x960 へ収める」と読める。
+
+    python tools/make_image.py chara.png --scale 50% --size none
+
+**拡大は既定で NEAREST。** ドット絵として作られた素材を滑らかに拡大すると、
+輪郭がぼやけて 16 階調では汚く見える。写真なら `--smooth`。
+縮小は常に LANCZOS。
+
+## 反転（`--flip`）
+
+**実機には画像を反転させる仕組みが無い。** ここで反転済みの素材を作る。
+
+`drawPngFile()` は拡大率と原点しか取らず、回転も反転も持たない。
+スプライトへ展開して `pushRotateZoom()` を通せばできるが、
+**透過がアルファ合成から「色キー1色」に落ちる**ため、
+16階調しかない画面では縁が汚くなる。
+立ち絵のパーツ（目・口）は小さいので、反転済みを1枚足すほうが確実。
+
 ## 透過
 
 透過 PNG は**白の上に重ねてから**落とす。
 電子ペーパーに透明は無いので、透過のまま渡すと実機側の合成に委ねることになり、
 結果が読めない。`--pad black` を付ければ黒の上に重ねる。
+
+**立ち絵だけは例外。** `--keep-alpha` を付けると透過を残す。
+背景の上に重ねる素材なので潰してはいけない。
+実機の `drawPngFile()` がアルファを見て背景と混ぜてくれる。
+
+    python tools/make_image.py chara.png --keep-alpha --scale 40% --size none
+
+アルファは量子化しない。中間の透明度が縁のなめらかさを作っているため。
 """
 import argparse
 import os
@@ -78,6 +107,40 @@ def parse_size(text):
             "サイズは 540x960 の形式か none で指定する: %r" % text)
 
 
+def parse_scale(text):
+    """'50%' / '150' / '1.5' を倍率へ直す"""
+    if text is None:
+        return None
+    t = text.strip().rstrip("%")
+    try:
+        v = float(t)
+    except ValueError:
+        raise argparse.ArgumentTypeError("倍率は 50%% のように指定する: %r" % text)
+    # % を付けても付けなくても、1 より大きければパーセントとみなす。
+    # 「--scale 50」を 50 倍と解釈すると事故になるため。
+    ratio = v / 100.0 if v > 3.0 else v
+    if ratio <= 0:
+        raise argparse.ArgumentTypeError("倍率は 0 より大きいこと: %r" % text)
+    return ratio
+
+
+def rescale(img, ratio, smooth):
+    """倍率でリサイズする。
+
+    **拡大は既定で NEAREST。** ドット絵として作られた素材を
+    滑らかに拡大すると、輪郭がぼやけて 16 階調では汚く見える。
+    写真を拡大したい場合だけ --smooth を付ける。
+    """
+    if ratio is None or ratio == 1.0:
+        return img
+    w = max(1, round(img.width * ratio))
+    h = max(1, round(img.height * ratio))
+    if smooth or ratio < 1.0:
+        # 縮小は LANCZOS がいちばん破綻が少ない
+        return img.resize((w, h), Image.LANCZOS)
+    return img.resize((w, h), Image.NEAREST)
+
+
 def flatten(img, background):
     """透過を単色の上に重ねて潰す。
 
@@ -89,6 +152,16 @@ def flatten(img, background):
         base = Image.new("RGBA", img.size, background + (255,))
         img = Image.alpha_composite(base, img)
     return img.convert("L")
+
+
+def split_alpha(img):
+    """透過を残したまま扱うため、明るさとアルファに分ける。
+
+    立ち絵は背景の上に重ねるので、透過を潰してはいけない。
+    実機の `drawPngFile()` はアルファを見て背景と混ぜてくれる。
+    """
+    rgba = img.convert("RGBA")
+    return rgba.convert("L"), rgba.getchannel("A")
 
 
 def resize(img, size, mode, pad):
@@ -180,6 +253,12 @@ def main():
 
   UI アイコン（白黒 2 値）
     python tools/make_image.py icon.png --levels 2 --size none -o icon.png
+
+  立ち絵の左右反転（右目用の素材を作る）
+    python tools/make_image.py eye.png --flip h --size none -o eye_r.png
+
+  立ち絵を半分の大きさに
+    python tools/make_image.py chara.png --scale 50% --size none -o small.png
 """)
     p.add_argument("input", help="元画像（PNG / JPEG / BMP など）")
     p.add_argument("-o", "--output", help="出力 PNG（省略時は 元名_epd.png）")
@@ -195,6 +274,14 @@ def main():
                    help="階調数（既定 16。2 で白黒）")
     p.add_argument("--dither", action="store_true",
                    help="誤差拡散ディザ。写真向け。線画には使わない")
+    p.add_argument("--scale", type=parse_scale,
+                   help="倍率でリサイズする（例 50%% / 150%%）。--size より先に効く")
+    p.add_argument("--smooth", action="store_true",
+                   help="拡大を滑らかにする（既定は NEAREST。写真向け）")
+    p.add_argument("--flip", choices=("h", "v", "hv"),
+                   help="画像を反転する。h=左右 / v=上下 / hv=両方")
+    p.add_argument("--keep-alpha", action="store_true",
+                   help="透過を残す（立ち絵など、背景に重ねる素材向け）")
     p.add_argument("--invert", action="store_true", help="白黒を反転する")
     args = p.parse_args()
 
@@ -214,10 +301,41 @@ def main():
     src = Image.open(args.input)
     print("入力  : %s  %s %s" % (args.input, src.size, src.mode))
 
-    img = flatten(src, (pad, pad, pad))
+    # 透過の扱いは2通り。
+    #   既定        … 単色の上へ重ねて潰す（背景・一枚絵）
+    #   --keep-alpha … 残す（立ち絵。背景に重ねるため）
+    alpha = None
+    if args.keep_alpha:
+        img, alpha = split_alpha(src)
+    else:
+        img = flatten(src, (pad, pad, pad))
     before = count_levels(img)
 
+    # 倍率は --size より先に掛ける。
+    # 「半分にしてから 540x960 へ収める」と読めるようにするため。
+    # **アルファにも同じ変形を掛ける。**
+    # 片方だけリサイズすると、字面と抜きがずれて縁が汚くなる。
+    img = rescale(img, args.scale, args.smooth)
+    if alpha is not None:
+        alpha = rescale(alpha, args.scale, args.smooth)
+
+    # 反転はリサイズより前。
+    # 後にすると余白の入り方まで一緒に反転してしまう。
+    if args.flip:
+        if "h" in args.flip:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+            if alpha is not None:
+                alpha = alpha.transpose(Image.FLIP_LEFT_RIGHT)
+        if "v" in args.flip:
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            if alpha is not None:
+                alpha = alpha.transpose(Image.FLIP_TOP_BOTTOM)
+
     img = resize(img, size, args.fit, pad)
+    if alpha is not None:
+        # 余白は透明で埋める（下地の色ではない）
+        alpha = resize(alpha, size, args.fit, 0)
+
     if args.invert:
         from PIL import ImageOps
         img = ImageOps.invert(img)
@@ -225,12 +343,16 @@ def main():
     img = quantize(img, args.levels, args.dither)
     after = count_levels(img)
 
+    if alpha is not None:
+        # アルファは量子化しない。中間の透明度が縁のなめらかさを作っている。
+        img = Image.merge("LA", (img, alpha))
+
     outdir = os.path.dirname(os.path.abspath(out))
     if outdir and not os.path.isdir(outdir):
         os.makedirs(outdir, exist_ok=True)
     img.save(out, "PNG", optimize=True)
 
-    print("出力  : %s  %s L" % (out, img.size))
+    print("出力  : %s  %s %s" % (out, img.size, img.mode))
     print("階調  : %d 段 -> %d 段（上限 %d%s）"
           % (before, after, args.levels, "、ディザあり" if args.dither else ""))
     print("サイズ: %.1f KB" % (os.path.getsize(out) / 1024))

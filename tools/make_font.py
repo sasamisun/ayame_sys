@@ -297,6 +297,10 @@ def verify(vlw_path, size):
         return (0x3041 <= cp <= 0x30FF) or (0x4E00 <= cp <= 0x9FFF)
 
     wide = [g for g in glyphs if is_wide(g[0])]
+    if wide and size == 0:
+        # `.vlw` からヘッダを作り直しただけの場合。
+        # 宣言サイズは引数で渡っていないので、ヘッダの値と突き合わせる。
+        size = fsize
     if wide:
         uniq = sorted(set(g[3] for g in wide))
         ok = uniq == [size]
@@ -348,7 +352,7 @@ def main():
   フォントの全収録グリフ（巨大になる）
     python tools/make_font.py font.ttf --size 16 --charset all
 """)
-    p.add_argument("ttf", help="TTF / OTF ファイル")
+    p.add_argument("ttf", help="TTF / OTF ファイル、または既存の .vlw")
     p.add_argument("-s", "--size", type=int, default=16,
                    help="フォントサイズ（px。既定 16）")
     p.add_argument("-c", "--charset", default="ja",
@@ -362,6 +366,21 @@ def main():
 
     if not os.path.isfile(args.ttf):
         sys.exit("フォントが見つからない: %s" % args.ttf)
+
+    # 既に .vlw があるならヘッダを作るだけ。
+    #
+    # 変換は数分かかるので、書体を選び直すたびに再レンダリングしたくない。
+    # `tools/font/` に .vlw だけ残しておけば、ここから .h を戻せる。
+    if args.ttf.lower().endswith(".vlw"):
+        if not args.header:
+            sys.exit("`.vlw` を入力にする場合は --header が要る")
+        symbol = args.symbol or os.path.splitext(
+            os.path.basename(args.header))[0]
+        write_header(args.header, args.ttf, symbol)
+        print("ヘッダ   : %s （配列名 %s、元 %s）"
+              % (args.header, symbol, args.ttf))
+        verify(args.ttf, 0)          # size=0 は「宣言サイズとの照合をしない」
+        return
 
     base = os.path.splitext(os.path.basename(args.ttf))[0]
     out = args.output or "%s-%d.vlw" % (base, args.size)

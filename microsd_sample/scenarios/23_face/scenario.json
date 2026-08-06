@@ -1,0 +1,178 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "23_face",
+    "title": "立ち絵レイヤーの確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "体・目・口を重ねて表情を組み立てる",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "room": "images/bg/room.png"
+    },
+    "characters": {
+      "ayame": {
+        "size": {
+          "w": 200,
+          "h": 320
+        },
+        "layers": [
+          {
+            "name": "base",
+            "x": 0,
+            "y": 0,
+            "default": "normal",
+            "variants": {
+              "normal": "images/chara/body.png"
+            }
+          },
+          {
+            "name": "eyes",
+            "x": 44,
+            "y": 74,
+            "default": "open",
+            "variants": {
+              "open": "images/chara/eye_open.png",
+              "shut": "images/chara/eye_shut.png",
+              "wink": "images/chara/eye_wink.png"
+            }
+          },
+          {
+            "name": "mouth",
+            "x": 78,
+            "y": 132,
+            "default": "close",
+            "variants": {
+              "close": "images/chara/mouth_close.png",
+              "open": "images/chara/mouth_open.png"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "variables": {},
+  "start": "p1",
+  "scenes": {
+    "p1": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "room",
+          "transition": "NONE"
+        },
+        {
+          "type": "chara",
+          "id": "ayame",
+          "x": 170,
+          "y": 300
+        },
+        {
+          "type": "text",
+          "body": "既定の顔です。layers を書かないと、assets の default にした差分が出ます。"
+        }
+      ],
+      "next": "p2"
+    },
+    "p2": {
+      "commands": [
+        {
+          "type": "chara",
+          "id": "ayame",
+          "layers": {
+            "eyes": "wink"
+          }
+        },
+        {
+          "type": "text",
+          "body": "目だけ変えました。体と口はそのままです。書かなかったレイヤーは今の差分が残ります。"
+        }
+      ],
+      "next": "p3"
+    },
+    "p3": {
+      "commands": [
+        {
+          "type": "chara",
+          "id": "ayame",
+          "layers": {
+            "mouth": "open"
+          }
+        },
+        {
+          "type": "text",
+          "body": "口だけ変えました。目はウインクのままです。"
+        }
+      ],
+      "next": "p4"
+    },
+    "p4": {
+      "commands": [
+        {
+          "type": "chara",
+          "id": "ayame",
+          "x": 60,
+          "layers": {
+            "eyes": "shut",
+            "mouth": "close"
+          }
+        },
+        {
+          "type": "text",
+          "body": "両方変えつつ、キャラごと左へ動かしました。目と口が一緒についてきていれば正解です。"
+        }
+      ],
+      "next": "p5"
+    },
+    "p5": {
+      "commands": [
+        {
+          "type": "chara",
+          "id": "ayame",
+          "x": 120,
+          "y": 240,
+          "scale": 1.5,
+          "layers": {
+            "eyes": "open",
+            "mouth": "open"
+          }
+        },
+        {
+          "type": "text",
+          "body": "1.5倍にしました。パーツの位置にも倍率が掛かるので、目や口がずれないはずです。"
+        }
+      ],
+      "next": "p6"
+    },
+    "p6": {
+      "commands": [
+        {
+          "type": "chara",
+          "id": "ayame",
+          "x": 170,
+          "y": 300,
+          "scale": 1.0,
+          "layers": {
+            "eyes": "open",
+            "mouth": "close"
+          }
+        },
+        {
+          "type": "text",
+          "body": "体1枚・目3種・口2種の6パーツで、6通りの表情を出しました。1差分1枚なら6枚描く必要があります。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

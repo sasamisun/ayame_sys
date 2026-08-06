@@ -1,0 +1,143 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "24_kinsoku",
+    "title": "禁則処理の確認",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "行頭・行末の禁則とぶら下げを縦書き・横書きで比べる",
+    "text_direction": "VERTICAL",
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "grid": "images/bg/grid.png"
+    },
+    "characters": {}
+  },
+  "variables": {},
+  "textboxes": {
+    "title": {
+      "x": 20,
+      "y": 16,
+      "w": 500,
+      "h": 40,
+      "direction": "HORIZONTAL",
+      "align": "CENTER"
+    },
+    "v_on": {
+      "x": 290,
+      "y": 70,
+      "w": 230,
+      "h": 380,
+      "direction": "VERTICAL",
+      "padding": 8
+    },
+    "v_off": {
+      "x": 30,
+      "y": 70,
+      "w": 230,
+      "h": 380,
+      "direction": "VERTICAL",
+      "padding": 8,
+      "kinsoku": false
+    },
+    "h_on": {
+      "x": 30,
+      "y": 490,
+      "w": 480,
+      "h": 210,
+      "direction": "HORIZONTAL",
+      "padding": 8
+    },
+    "h_off": {
+      "x": 30,
+      "y": 720,
+      "w": 480,
+      "h": 210,
+      "direction": "HORIZONTAL",
+      "padding": 8,
+      "kinsoku": false
+    }
+  },
+  "start": "p1",
+  "scenes": {
+    "p1": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "grid",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "縦書き 右=禁則あり 左=なし",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "v_on",
+          "body": "むかしむかし、あるところにおじいさんとおばあさんが住んでいました。おじいさんは山へ「しばかり」に、おばあさんは川へ洗濯に行きました。すると、大きな桃がどんぶらこ、どんぶらこと流れてきました。「おや、これはおいしそうな桃だこと」とおばあさんは言いました。",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "v_off",
+          "body": "むかしむかし、あるところにおじいさんとおばあさんが住んでいました。おじいさんは山へ「しばかり」に、おばあさんは川へ洗濯に行きました。すると、大きな桃がどんぶらこ、どんぶらこと流れてきました。「おや、これはおいしそうな桃だこと」とおばあさんは言いました。",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "h_on",
+          "body": "むかしむかし、あるところにおじいさんとおばあさんが住んでいました。おじいさんは山へ「しばかり」に、おばあさんは川へ洗濯に行きました。すると、大きな桃がどんぶらこ、どんぶらこと流れてきました。「おや、これはおいしそうな桃だこと」とおばあさんは言いました。",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "h_off",
+          "body": "むかしむかし、あるところにおじいさんとおばあさんが住んでいました。おじいさんは山へ「しばかり」に、おばあさんは川へ洗濯に行きました。すると、大きな桃がどんぶらこ、どんぶらこと流れてきました。「おや、これはおいしそうな桃だこと」とおばあさんは言いました。"
+        }
+      ],
+      "next": "p2"
+    },
+    "p2": {
+      "commands": [
+        {
+          "type": "clear",
+          "color": "BLACK"
+        },
+        {
+          "type": "bg",
+          "image": "grid",
+          "transition": "NONE"
+        },
+        {
+          "type": "text",
+          "box": "title",
+          "body": "見るところ",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "h_on",
+          "body": "禁則ありの側で、行の先頭に 、。」 が来ていないこと。行の終わりが 「 で終わっていないこと。句読点は行からはみ出して置かれます（ぶら下げ）。",
+          "wait": false
+        },
+        {
+          "type": "text",
+          "box": "h_off",
+          "body": "禁則なしの側では、幅で機械的に切るので行頭に句読点が来ることがあります。"
+        },
+        {
+          "type": "end",
+          "ending": "done"
+        }
+      ]
+    }
+  }
+}

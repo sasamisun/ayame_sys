@@ -5,3 +5,4 @@ build/
 build/*
 build.clang
 sdkconfig.old
+__pycache__/
