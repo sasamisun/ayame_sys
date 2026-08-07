@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 """make_font.py - TTF/OTF から AYAME 用の VLW フォントを作る
 
-    python tools/make_font.py append/font/ShipporiMincho-Regular.ttf --size 16 \
-        --charset joyo --header main/fonts/shippori_16.h --symbol shippori
+    python tools/make_font.py <明朝>.ttf --size 16 \
+        --charset ja --header main/fonts/gothic_16.h --symbol font_gothic_16
 
 `.vlw` と、それを配列にした C ヘッダを出す。
 ヘッダを `main/fonts/` に置き、`TextSystem.cpp` で `#include` すれば使える。
 
-## append/font/ttf2vlw.py との違い
+## 旧ツール（ttf2vlw.py）との違い
 
 **送り幅（setWidth）の出し方が違う。** 旧ツールは
 
@@ -35,7 +35,8 @@
 
 | `--charset` | 内容 |
 |---|---|
-| `joyo` | ASCII + かな + 常用漢字 + 記号（既定。約 3000 字） |
+| `ja` | `charset_ja.txt`（既定。4415 字。縦書き用字形を含む） |
+| `ascii` | 印字可能な ASCII のみ |
 | `all` | TTF に入っている全グリフ。**巨大になる** |
 | ファイルパス | そのテキストに出てくる文字だけ |
 
@@ -406,8 +407,8 @@ def main():
         epilog="""
 例:
   常用漢字セットで 16pt（本体組み込み用のヘッダまで作る）
-    python tools/make_font.py append/font/ShipporiMincho-Regular.ttf \\
-        --size 16 --header main/fonts/shippori_16.h --symbol shippori
+    python tools/make_font.py <明朝>.ttf \\
+        --size 16 --header main/fonts/gothic_16.h --symbol font_gothic_16
 
   シナリオの本文に出てくる文字だけ
     python tools/make_font.py font.ttf --size 20 --charset story.txt

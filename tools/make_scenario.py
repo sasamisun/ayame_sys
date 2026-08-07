@@ -60,7 +60,7 @@ import sys
 
 DEFAULT_SIZE = (540, 960)
 DEFAULT_MARGIN = 20
-DEFAULT_EM = 18            # 内蔵フォント ipaexg_18 の全角送り
+DEFAULT_EM = 18            # 内蔵フォント gothic_18 の全角送り
 DEFAULT_LINE_SPACING = 10
 DEFAULT_CHAR_SPACING = 2   # 縦書きの既定（TextSystem.hpp と同じ）
 DEFAULT_PADDING = 16
@@ -648,6 +648,30 @@ def build_scenario(header, pages, colophon, opts, boxes, stats, page=None):
 
 # ---------------------------------------------------------------- サムネイル
 
+def find_thumb_font(root):
+    """サムネイルを描く TTF を探す。
+
+    **リポジトリに TTF は同梱していない**（書体ごとに配布条件が違うため）。
+    手元にありそうなゴシックを順に当たり、無ければ諦めて None を返す。
+
+    明朝ではなくゴシックを選ぶ。細い横線は 16 階調に落とすと消える
+    （tools/README.md の「明朝はこの寸法では使えない」を参照）。
+    """
+    candidates = [
+        os.path.join(root, "fonts", "ipaexg.ttf"),
+        os.path.join(root, "tools", "font", "ipaexg.ttf"),
+        r"C:\Windows\Fonts\YuGothM.ttc",
+        r"C:\Windows\Fonts\meiryo.ttc",
+        r"C:\Windows\Fonts\msgothic.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    return None
+
+
 def make_thumbnail(title, out_path, font_path):
     """題名の先頭1〜2文字を 56x56 に描く"""
     try:
@@ -655,7 +679,9 @@ def make_thumbnail(title, out_path, font_path):
     except ImportError:
         return "Pillow が無いのでサムネイルを飛ばした"
 
-    if not font_path or not os.path.isfile(font_path):
+    if not font_path:
+        return "手元にゴシックの TTF が見つからない。--thumb-font で指定すること"
+    if not os.path.isfile(font_path):
         return "サムネイル用の TTF が見つからない: %s" % font_path
 
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -740,7 +766,10 @@ def report(path, enc, header, blocks, pages, page, stats, scenes, opts):
                      "（縦書き用字形は自動で入る）:")
         # **ゴシックを勧める。** 明朝はこの寸法だと横線が落ちる
         # （tools/README.md の make_font.py の節を参照）。
-        warns.append("      python tools/make_font.py append/font/ipaexg.ttf "
+        #
+        # TTF はリポジトリに同梱していない（配布条件が書体ごとに違うため）。
+        # 利用者が用意する前提なので、パスは <ゴシック>.ttf と書く。
+        warns.append("      python tools/make_font.py <ゴシック>.ttf "
                      "--size %d \\" % opts.em)
         warns.append("          --charset %s/scenario.json "
                      "-o %s/fonts/book.vlw" % (rel, rel))
@@ -774,7 +803,7 @@ def main():
         --rotation 1 --size 960x540
 
   独自フォントを使う（em も合わせること）
-    python tools/make_scenario.py in.html --font fonts/shippori_16.vlw --em 16
+    python tools/make_scenario.py in.html --font fonts/book.vlw --em 16
 
   書かずに集計だけ見る
     python tools/make_scenario.py in.html --dry-run
@@ -804,7 +833,8 @@ def main():
     p.add_argument("--no-back-swipe", action="store_true",
                    help="横スワイプで前の画面へ戻る機能を入れない")
     p.add_argument("--no-thumb", action="store_true", help="サムネイルを作らない")
-    p.add_argument("--thumb-font", help="サムネイルに使う TTF")
+    p.add_argument("--thumb-font",
+                   help="サムネイルに使う TTF（省略時は手元のゴシックを探す）")
     p.add_argument("--check-font",
                    help="収録字の照合に使う VLW（既定は本体の内蔵フォント）")
     p.add_argument("--no-check-font", action="store_true",
@@ -825,8 +855,7 @@ def main():
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if opts.thumb_font is None:
-        # 明朝ではなくゴシック。細い横線は 16 階調に落とすと消える
-        opts.thumb_font = os.path.join(root, "append", "font", "ipaexg.ttf")
+        opts.thumb_font = find_thumb_font(root)
 
     try:
         doc, enc = load_html(opts.input, opts.encoding)

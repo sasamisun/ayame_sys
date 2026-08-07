@@ -216,23 +216,26 @@ LFN が無いと `stat()` も `fopen()` も失敗する。
 ### 2.5 フォントリソース
 
 **使うフォントはビルド時に1つ選ぶ。** 切り替えは
-`main/fonts/active_font.h` の `AYAME_FONT` の数字を変えるだけ。
+`main/fonts/active_font.h` の `#include` と `AYAME_FONT_DATA` を書き換える。
 
 ```c
-#define AYAME_FONT 10      // IPAex ゴシック 18px
+#include "gothic_18.h"
+#define AYAME_FONT_DATA  font_gothic_18
+#define AYAME_FONT_LABEL "IPAex Gothic 18px"
 ```
 
-`#include` した1つだけがバイナリに載る。選ばなかったものは
-`main/fonts/` に置いてあるだけで容量に影響しない。
-一覧と各書体の癖は同ファイルのコメントと
+**`main/fonts/` に置くのは使う1書体だけ。** 1書体で 6〜7MB あり、
+以前 8書体を溜めて 49MB になっていた。`.vlw` はいつでもヘッダへ戻せるので、
+使わないものは `tools/font/` に `.vlw` で置いておけばよい。
+各書体の癖は `active_font.h` のコメントと
 [`tools/font/README.md`](tools/font/README.md)。
 
-**現在の設定（`AYAME_FONT 10`）**
+**現在の設定**
 
 | 項目 | 値 |
 |---|---|
-| シンボル | `const uint8_t font_ipaexg_18[]`（`.rodata.font` セクション） |
-| 生成元 | `append/font/ipaexg.ttf`（IPAex ゴシック） |
+| シンボル | `const uint8_t font_gothic_18[]`（`.rodata.font` セクション） |
+| 生成元 | IPAex ゴシック（`ipaexg.ttf`）。TTF は同梱していない |
 | フォントサイズ | 18px（**全角の送りもちょうど 18px**） |
 | グリフ数 | 4415（unicode昇順・重複なし） |
 | ascent / descent | 16 / −3（行の高さ 19） |
@@ -245,7 +248,9 @@ LFN が無いと `stat()` も `fopen()` も失敗する。
 **フォントを作る**
 
 ```
-python tools/make_font.py append/font/ipaexg.ttf --size 18     -o tools/font/ipaexg_18.vlw --header main/fonts/ipaexg_18.h     --symbol font_ipaexg_18
+python tools/make_font.py <ゴシック>.ttf --size 18 \
+    -o tools/font/gothic_18.vlw --header main/fonts/gothic_18.h \
+    --symbol font_gothic_18
 ```
 
 生成後に「全角の送りが宣言サイズと一致するか」「グリフが昇順か」
@@ -270,23 +275,21 @@ python tools/make_font.py append/font/ipaexg.ttf --size 18     -o tools/font/ipa
 SD の VLW を PSRAM へ丸ごと読み、`TextSystem::loadScenarioFont()` が
 パーサと全描画器を向け直す（[4.5](#45-textsystem--フォントと描画器の保持)）。
 
-**旧フォントは比較用に残してある**（`AYAME_FONT 9`）。
-生成に使った `append/font/ttf2vlw.py` が送り幅を
-「レイアウト矩形の幅 + サイズ×0.1」で出していたため、
-16pt と名乗りながら全角の送りが 17px ある。
-半角・全角スペースが欠落し、縦書き字形のうち 3 つは豆腐が入っている。
-経緯は [`append/font/README.md`](append/font/README.md)。
+**旧ツール（`ttf2vlw.py`）で作ったフォントは全て捨てた。**
+送り幅を「レイアウト矩形の幅 + サイズ×0.1」で出していたため、
+16pt と名乗りながら全角の送りが 17px あった。
+半角・全角スペースも欠落しており、縦書き字形には豆腐が入っていた。
+`tools/make_font.py` はこれを直したもの（違いは
+[`tools/README.md`](tools/README.md#旧ツールttf2vlwpyとの違い)）。
 
 > **注意**: フォントヘッダはファイル名にサイズが入るが**シンボル名には入らない**。
 > 同じシンボルを定義するヘッダを2つ `#include` すると重複定義になる。
 > `active_font.h` が1つだけ選ぶ形にしてあるのはこのため。
->
-> `append/font/` の生成物は**ファイル名・宣言サイズ・実際の送り幅が
-> ばらばら**なので、名前を当てにしないこと
-> （`mplus2_16.h` は名前が 16、宣言が 32、送りが 17px）。
 
-素材の TTF と過去の生成物は `append/font/` にある。
-中身の棚卸しは [`append/font/README.md`](append/font/README.md)。
+**素材の TTF/OTF はリポジトリに同梱していない。**
+書体ごとに再配布の条件が違うため、配布元から入手すること
+（[README.md の謝辞](README.md#謝辞とライセンス)）。
+変換済みの `.vlw` は `tools/font/` にある。
 
 ### 2.6 SD カードの中身
 
@@ -878,7 +881,7 @@ drawText()
 > 縦書きの送りは em 固定なので、**0 でベタ組み**になる。
 > 負値を入れすぎると文字が重なる。
 >
-> `ipaexg_18`（maxAscent=17 / あ は h=16, topExtent=15）での実測:
+> `gothic_18`（maxAscent=17 / あ は h=16, topExtent=15）での実測:
 >
 > | `charSpacing` | 送り | 隣接するインクの関係 |
 > |---|---|---|
@@ -936,7 +939,7 @@ center_y = _y + y + emH * heightScale / 2;
 
 em ボックスのサイズは代表文字のメトリクスに加え、
 VLWパーサの実測最大グリフサイズでも押し広げる
-（`ipaexg_18` は代表幅 18 に対し最大グリフ高が 19 ある）。
+（`gothic_18` は代表幅 18 に対し最大グリフ高が 19 ある）。
 
 > **経緯**: 以前はスプライトを
 > `(metrics.width * scale + 20) × (metrics.height * scale + 20)` と
@@ -1387,7 +1390,7 @@ M5Unified と同じ式にしてある。
 | 収録していない | `_smallToLargeMap`（22件）で大文字に変換し 0.75倍に縮小、`SmallCharSettings` でオフセット |
 
 専用グリフはサイズも em ボックス内の位置も適切に設計されているため、
-代用品より確実に良い結果になる。`ipaexg_18` の実測（maxAscent=17）:
+代用品より確実に良い結果になる。`gothic_18` の実測（maxAscent=17）:
 
 | 文字 | h | topExtent | インク範囲 | 次の文字までの空き |
 |---|---|---|---|---|
@@ -1404,7 +1407,7 @@ M5Unified と同じ式にしてある。
 `SmallCharSettings` の `offsetX` / `offsetY` で変位を与える。
 この変位は**専用グリフ・代用のどちらにも適用**される。
 
-| 設定 | 意味 | 既定値 | `ipaexg_18` での実効値 |
+| 設定 | 意味 | 既定値 | `gothic_18` での実効値 |
 |---|---|---|---|
 | `scale` | **代用時のみ**使う縮小率 | 0.75 | （専用グリフがあるため未使用） |
 | `offsetX` | emボックス幅に対する比率（正で右） | 0.15 | 18 × 0.15 = **+2px** |
@@ -1418,18 +1421,22 @@ M5Unified と同じ式にしてある。
 
 一方「大文字を0.75倍に縮小」で代用すると、em ボックスの左上基準で縮むため
 インク下端が上がり、次の文字との空きが **2px → 8px 程度に広がる**。
-`ipaexg_18` は22件すべての小文字を収録しているので代用は発動しない。
+`gothic_18` は22件すべての小文字を収録しているので代用は発動しない。
 
 `setSmallCharHandling(false)` で代用処理そのものを止められるが、
 上記の自動判定があるため通常は変更不要。
 
 縦書き字形への差し替えは、フォントに収録がなければ元の文字に戻す。
-`ipaexg_18` は 28 件すべてを収録しているためフォールバックは発動しない。
+`gothic_18` は 28 件すべてを収録しているためフォールバックは発動しない。
 
 `tools/make_font.py` は cmap を引いて収録を判定するので、
-**フォントに無い文字は入らない**。旧ツールは描いた結果を豆腐の見本と
-画像比較して判定しており、旧フォント（`AYAME_FONT 9`）には
-U+FE30 / FE32 / FE33 の豆腐が混入している。
+**フォントに無い文字は入らない**（旧ツールは描いた結果を豆腐の見本と
+画像比較しており、縦書き字形に豆腐が混入していた）。
+
+**本文から集めた文字集合でも縦書き字形は必ず入る。**
+`︑` `﹁` は本文に literal では現れないので、足さないと1つも入らない。
+`make_font.py` が `VERTICAL_FORMS` の 25 字をどの文字集合にも加え、
+生成後の検証に `縦書き用字形 : 25/25 収録` と出す。
 
 ### 5.2 画面の向き
 
@@ -1521,10 +1528,10 @@ PSRAM プールは 6784KB。上記を引いた**約 4762KB がシナリオの取
 
 | 項目 | 内容 |
 |---|---|
-| `hello_world_main.cpp` が残っている | ビルド対象外だが 1000 行近くある。消すか `append/` へ退避したい |
-| `calculateTextSize()` | 折り返し（`_wrap`）を考慮しない。返すのは改行だけで区切った自然な寸法 |
-| `ButtonManager` の所有権 | ボタンを `delete` しない。生成と破棄は呼び出し側の責任 |
-| `SimpleTransition` のキャンバス常駐 | 遷移を使わない間も約1MB を占有する。足りなくなったら最初に削る候補 |
+| `TypoWrite` が大きい | 2300 行。組版・グリフ描画・ルビ・禁則が1クラスに同居している |
+| `REFACTORING_LOG.md` が 140KB | 経緯の記録として有用だが、読み物としては長すぎる |
+| 縦書き字形が無いフォントへの手当て | 元の文字に戻すだけで、回転も位置の補正もしない（[7 章](#7-開発時のハマりどころ)） |
+| タッチ較正 | 未実装。生の座標をそのまま使っている |
 | `SDCardWrapper` の `FILE*` が1本 | 同時に2つのファイルを開けない（[9.1](SCENARIO_SPEC.md#91-同時に開けるファイルは-1-つだけ)） |
 | `main/fonts/` が重い | 8書体ぶんのヘッダで約 49MB。使わないものは消してよい |
 | 立ち絵レイヤーの読み込み回数 | 1体につきレイヤー数ぶん PNG を読む。割りすぎると描画が待たされる |

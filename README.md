@@ -1,10 +1,29 @@
 # ayame_sys
 
-M5Paper S3（ESP32-S3 + 電子ペーパー 540×960）向けの、
+M5PaperS3（ESP32-S3 + 電子ペーパー 540×960）向けの、
 **日本語縦書き表示を備えたアドベンチャーゲーム基盤**。
 
 SD カードに置いた JSON のシナリオを読んで再生する。
 起動するとシステムメニューが出て、`scenarios/` にあるシナリオを選べる。
+
+**物語を作る人は C++ を書かない。** JSON を SD へ置くだけで、
+ビルドもツールチェーンも要らない。
+
+---
+
+## できること
+
+| | |
+|---|---|
+| **日本語の組版** | 縦書き・ルビ・禁則処理・圏点・縦書き用字形。横書きと同じ画面に置ける |
+| **20 個のコマンド** | 本文・背景・立ち絵・選択肢・分岐・変数・セーブ・画面遷移・ブザー |
+| **立ち絵のレイヤー合成** | 体・目・口を重ねる。目5種 × 口5種の 25 通りを 11 枚で出せる |
+| **中断と再開** | 電子ペーパーは電源を切っても像が残る。**読みかけの画面がそのまま栞になる** |
+| **前の画面へ戻る** | 横スワイプ。`meta.back_swipe` で作品ごとに選ぶ |
+| **青空文庫の取り込み** | HTML をコマンド1回で読み物にする（[`tools/make_scenario.py`](tools/README.md#make_scenariopy)） |
+
+電子ペーパーは1回の書き換えに 117〜351ms かかる。動きのある演出には向かないが、
+**1つの場面ぶんをまとめて1回で出す**ようにしてあるので、読むぶんには待たされない。
 
 ---
 
@@ -85,22 +104,22 @@ ayame_sys/
 │   ├── Buzzer.*                ブザー（LEDC PWM）
 │   ├── Power.*                 電源制御と電池残量
 │   ├── Settings.*              本体設定（system/settings.json）
-│   └── fonts/
-│       ├── active_font.h       **使うフォントを1つ選ぶ**（include を書き換える）
-│       └── ipaexg_18.h         変換済みVLWフォント（内蔵はこの1書体）
+│   ├── fonts/
+│   │   ├── active_font.h       **使うフォントを1つ選ぶ**（include を書き換える）
+│   │   └── gothic_18.h         変換済みVLWフォント（内蔵はこの1書体）
+│   └── icons/                  埋め込み画像（メニューのボタン・ロゴ）
 ├── microsd_sample/             SDカードに入れる中身のサンプル（26本）
-├── tools/                      素材を作るツール（画像の減色・フォント生成・アイコン埋め込み）
+├── tools/                      素材を作るツール
+│   ├── make_scenario.py        青空文庫の HTML をシナリオに変換する
 │   ├── make_image.py           画像を16階調に落とす／拡大縮小／反転する
 │   ├── make_font.py            TTF/OTF から VLW フォントを作る
 │   ├── make_icons.py           UI画像をファームウェアに埋め込む
-│   ├── charset_ja.txt          フォントの標準文字集合（4416字）
+│   ├── charset_ja.txt          フォントの標準文字集合（4415字）
+│   ├── icons/                  メニューのボタン画像の素材
 │   └── font/                   変換済みフォント（.vlw と .h）
 ├── components/
 │   └── M5GFX/                  ※git管理外。消すと復元できない
 ├── managed_components/         espressif/tinyusb, espressif/esp_tinyusb
-├── append/                     素材の置き場（ビルド対象外）
-│   ├── font/                   TTFと過去の生成物。棚卸しは append/font/README.md
-│   └── image/                  ロゴなど、埋め込み用の画像素材
 ├── SCENARIO_SPEC.md            シナリオデータ仕様書
 ├── PROGRAM_SPEC.md             プログラム仕様書
 └── REFACTORING_LOG.md          改修記録
@@ -123,3 +142,60 @@ ayame_sys/
   載せたままだと `setTextSize()` の基準が変わる。
 
 その他のハマりどころは [PROGRAM_SPEC.md](PROGRAM_SPEC.md) の §7 にまとめてある。
+
+---
+
+## 謝辞とライセンス
+
+**このプロジェクトは、先人の書いたものの上に成り立っている。**
+とくに電子ペーパーの駆動と日本語フォントの描画は、
+自分で書いたら到底ここまで来られなかった。
+
+### ソフトウェア
+
+| | 作者 | ライセンス | 使い方 |
+|---|---|---|---|
+| **[M5GFX](https://github.com/m5stack/M5GFX)** | M5Stack | MIT | **画面のすべて。** 電子ペーパーの駆動・16階調の LUT・PNG デコード・VLW フォントの描画 |
+| [LovyanGFX](https://github.com/lovyan03/LovyanGFX) | lovyan03 | FreeBSD | M5GFX の土台。描画とスプライトの実装そのもの |
+| [ESP-IDF](https://github.com/espressif/esp-idf) v5.3.2 | Espressif | Apache-2.0 | FreeRTOS・SD/FAT・LEDC・PSRAM |
+| [cJSON](https://github.com/DaveGamble/cJSON) | Dave Gamble | MIT | シナリオ JSON の解析（ESP-IDF 同梱） |
+| [esp_tinyusb](https://components.espressif.com/components/espressif/esp_tinyusb) 1.7.2 / [tinyusb](https://github.com/hathach/tinyusb) 0.18.0 | Espressif / hathach | Apache-2.0 / MIT | USB マスストレージ（PC から SD を書き換える） |
+| [Pillow](https://python-pillow.org/) | | HPND | `tools/` の画像・フォント変換 |
+| [fontTools](https://github.com/fonttools/fonttools) | | MIT | `tools/make_font.py` の収録字判定 |
+
+M5GFX は上記のほか TJpgDec（ChaN）、Pngle（kikuchan）なども内包している。
+一覧は [`components/M5GFX/README.md`](components/M5GFX/README.md) の License 節を参照。
+
+### フォント
+
+| フォント | 作者 | ライセンス | どこで使っているか |
+|---|---|---|---|
+| **IPAex ゴシック** | 情報処理推進機構（IPA） | [IPA フォントライセンス v1.0](components/M5GFX/src/lgfx/Fonts/IPA/IPA_Font_License_Agreement_v1.0.txt) | 内蔵フォント `main/fonts/gothic_18.h`、`02_nekonojimusyo` の `fonts/book.vlw` |
+| x12y12pxMaruMinya | Fontopo | 配布元の条件による | `22_font` の `fonts/maruminya_18.vlw`（独自フォントの実演用） |
+
+**同梱しているのは元のフォントではなく、`tools/make_font.py` で
+VLW 形式へ変換した派生物**（ビットマップとメトリクスだけを抜き出したもの）。
+
+元のフォントに戻したい場合、および別の書体で作り直したい場合は、
+配布元から TTF を入手して次を実行する。
+
+```bash
+python tools/make_font.py <入手した>.ttf --size 18 \
+    -o tools/font/gothic_18.vlw \
+    --header main/fonts/gothic_18.h --symbol font_gothic_18
+```
+
+IPAex フォントは [IPA のサイト](https://moji.or.jp/ipafont/)から入手できる。
+IPA フォントライセンスの全文は M5GFX にも同梱されている（上表のリンク先）。
+
+### 素材
+
+| | 出典 |
+|---|---|
+| 「猫の事務所」宮沢賢治 | [青空文庫](https://www.aozora.gr.jp/cards/000081/card464.html)（入力: 細川みづ穂 / 校正: 瀬戸さえ子）。本文は著作権保護期間満了 |
+| ゆっくり立ち絵（`00_yukkuri_sample`） | 配布元の規約に従うこと（原作: 東方Project / 上海アリス幻樂団） |
+
+### このリポジトリ
+
+上記の第三者の成果物を除く部分について、`ayame_sys` 自体のライセンスは
+まだ決めていない。利用したい場合は連絡してほしい。

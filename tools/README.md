@@ -18,11 +18,15 @@ pip install Pillow fonttools
 
 | その他のファイル | 内容 |
 |---|---|
-| `charset_ja.txt` | `make_font.py` の標準の文字集合（4416 字） |
+| `charset_ja.txt` | `make_font.py` の標準の文字集合（4415 字） |
 | `icons/` | メニューのボタン画像の素材（108×80） |
+| `images/` | ロゴなど、寸法の決まっていない埋め込み画像 |
+| `font/` | 変換済みの VLW と、その C ヘッダ |
 
-古い作業用スクリプトは [`append/font/`](../append/font/README.md) にある。
-**そちらは使わないこと**（理由はそのフォルダの README）。
+**TTF/OTF はリポジトリに同梱していない。** 書体ごとに再配布の条件が違うため、
+使う人が配布元から入手すること。以下の例で `<ゴシック>.ttf` と書いてあるのは
+そのつもり。本文に使うならゴシックを選ぶこと（理由は
+[make_font.py の節](#明朝はこの寸法では使えない)）。
 
 ---
 
@@ -96,12 +100,12 @@ python tools/make_scenario.py 464_19941.html \
 
 ```
 警告  :
-  - ipaexg_18.h に無い字が 3 種ある: 炯竃繻
+  - gothic_18.h に無い字が 3 種ある: 炯竃繻
     収録されていない字は何も描かれない（豆腐にもならない）。
   - book.vlw に縦書き用字形が無い字が 8 種ある: …、。《》「」ー
     縦書きなのに横書きの向き・位置のまま出る。
     この作品用のフォントを作り、--font で指し直すこと（縦書き用字形は自動で入る）:
-      python tools/make_font.py append/font/ipaexg.ttf --size 18 \
+      python tools/make_font.py <ゴシック>.ttf --size 18 \
           --charset .../scenario.json -o .../fonts/book.vlw
       python tools/make_scenario.py .../464_19941.html \
           -o ... --font fonts/book.vlw
@@ -140,7 +144,7 @@ python tools/make_scenario.py 464_19941.html \
 | `--no-save` | 切 | ページごとの `save` を入れない |
 | `--no-back-swipe` | 切 | 横スワイプで戻る機能を入れない |
 | `--no-thumb` | 切 | サムネイルを作らない |
-| `--thumb-font` | `append/font/ipaexg.ttf` | サムネイルに使う TTF |
+| `--thumb-font` | 手元から探す | サムネイルに使う TTF。見つからなければ飛ばす |
 | `--check-font` | 内蔵フォント | 収録字の照合に使う VLW |
 | `--no-check-font` | 切 | 収録字の照合をしない |
 | `--dry-run` | 切 | 書かずに集計だけ出す |
@@ -244,8 +248,8 @@ python tools/make_image.py body.png --size none --keep-alpha -o body.png
 
 ```bash
 # 標準の文字集合で 16pt。本体組み込み用のヘッダまで作る
-python tools/make_font.py append/font/ShipporiMincho-Regular.ttf \
-    --size 16 --header main/fonts/shippori_16.h --symbol shippori
+python tools/make_font.py <明朝>.ttf \
+    --size 16 --header main/fonts/gothic_16.h --symbol font_gothic_16
 
 # シナリオの本文に出てくる文字だけ（軽いフォントになる）
 python tools/make_font.py font.ttf --size 20 --charset story.txt
@@ -318,7 +322,7 @@ python tools/make_font.py font.ttf --size 16 --charset all
       元のフォントにこれらの字が無い。縦書きで使うなら別の書体にすること。
 ```
 
-`append/font/` の TTF の収録状況（実測）:
+よく使う書体の収録状況（実測）:
 
 | TTF | 縦書き用字形 |
 |---|---|
@@ -385,7 +389,7 @@ pt の約 1.56 乗で増える（pt² ではない。グリフの多くが小さ
 ビットマップが正方形にならないため）。
 アプリ領域は 10.5MB、現在の使用は約 2MB。
 
-### 旧 `append/font/ttf2vlw.py` との違い
+### 旧ツール（`ttf2vlw.py`）との違い
 
 **送り幅の出し方が違う。** 旧ツールは
 
@@ -422,7 +426,7 @@ python tools/make_icons.py
 | 入力 | 出力 | 用途 |
 |---|---|---|
 | `tools/icons/*.png` | `main/icons/menu_icons.h` | メニュー下段のボタン（108×80 固定） |
-| `append/image/*.png` | `main/icons/images.h` | ロゴなど（寸法は自由） |
+| `tools/images/*.png` | `main/icons/images.h` | ロゴなど（寸法は自由） |
 
 SD に置かずに埋め込むのは、**USB MSC が有効な間は SD が読めない**ため。
 その状態でメニューのボタンが真っ白になると、
@@ -449,7 +453,7 @@ S=microsd_sample/scenarios/my_book
 python tools/make_scenario.py 手元のファイル.html -o $S
 
 # 2. 警告が出たら、この作品用のフォントを作る
-python tools/make_font.py append/font/ipaexg.ttf --size 18 \
+python tools/make_font.py <ゴシック>.ttf --size 18 \
     --charset $S/scenario.json -o $S/fonts/book.vlw
 
 # 3. そのフォントを指して作り直す（警告が消えれば完成）

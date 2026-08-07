@@ -15,11 +15,18 @@
  * そこからヘッダを起こして、下の `#include` と `AYAME_FONT_DATA` を差し替える。
  *
  * ```
- * python tools/make_font.py tools/font/shippori_16.vlw \
- *     --header main/fonts/shippori_16.h --symbol font_shippori
+ * python tools/make_font.py tools/font/gothic_18.vlw \
+ *     --header main/fonts/gothic_18.h --symbol font_gothic_18
  * ```
  *
  * TTF から作り直す場合は `tools/README.md` を参照。
+ *
+ * **ファイル名とシンボル名に元の書体名を入れないこと。**
+ * `gothic_18` の中身は IPAex ゴシックの派生物だが、
+ * IPA フォントライセンス第3条1項(4) が
+ * 「派生プログラムに許諾プログラムと同一・またはそれを含む名称を
+ * 使ってはならない」と定めているため、書体名では呼べない。
+ * 出所は `README.md` の謝辞に書いてある。
  *
  * **使わないヘッダを `main/fonts/` に溜めないこと。**
  * 1書体で 6〜7MB あり、以前 8書体で 49MB になっていた。
@@ -42,10 +49,10 @@
  * 自分の書体を持てる（`SCENARIO_SPEC.md` 3.2）。
  */
 
-#include "ipaexg_18.h"
+#include "gothic_18.h"
 
 /// 描画に使うフォントデータ
-#define AYAME_FONT_DATA  font_ipaexg_18
+#define AYAME_FONT_DATA  font_gothic_18
 
 /// 起動ログに出す名前
-#define AYAME_FONT_LABEL "IPAex Gothic 18px"
+#define AYAME_FONT_LABEL "Gothic 18px"

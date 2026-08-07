@@ -9,7 +9,7 @@
 | 入力 | 出力 | 用途 |
 |---|---|---|
 | `tools/icons/*.png` | `main/icons/menu_icons.h` | メニュー下段のボタン（108x80 固定） |
-| `append/image/*.png` | `main/icons/images.h` | ロゴなど（寸法は自由） |
+| `tools/images/*.png` | `main/icons/images.h` | ロゴなど（寸法は自由） |
 
 ## なぜ埋め込むのか
 
@@ -62,7 +62,10 @@ ROOT = os.path.normpath(os.path.join(HERE, ".."))
 ICON_SRC_DIR = os.path.join(HERE, "icons")
 ICON_OUT_PATH = os.path.join(ROOT, "main", "icons", "menu_icons.h")
 
-IMAGE_SRC_DIR = os.path.join(ROOT, "append", "image")
+# ロゴなど、寸法の決まっていない埋め込み画像。
+# 素材置き場（append/）を廃したのでここへ移した。
+# `icons/` はサブフォルダなので、この直下を読んでも混ざらない。
+IMAGE_SRC_DIR = os.path.join(HERE, "images")
 IMAGE_OUT_PATH = os.path.join(ROOT, "main", "icons", "images.h")
 
 ICON_WIDTH = 108

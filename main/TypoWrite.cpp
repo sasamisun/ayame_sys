@@ -1308,9 +1308,13 @@ uint16_t TypoWrite::convertToVerticalGlyph(uint16_t unicode_char)
     // 豆腐や空白として描かれてしまう。元の文字なら向きは正しくないが
     // 少なくとも読める。
     //
-    // 現在使用中の shippori_16 は登録28件すべての縦書き字形を収録しているため
+    // 内蔵の gothic_18 は登録28件すべての縦書き字形を収録しているため
     // このフォールバックは発動しない（実測で確認済み）。
-    // 他フォントに差し替えたときの保険として入れてある。
+    //
+    // **シナリオ独自のフォント（`meta.font`）では発動しうる。**
+    // 本文に出てくる文字だけを集めた文字集合には U+FExx が現れないので、
+    // 足さずに作ると1つも入らない。`tools/make_font.py` は
+    // どの文字集合にもこの25字を必ず足すようにしてある。
     if (_useVLWParser && _vlwParser && _vlwParser->isInitialized() &&
         !_vlwParser->hasChar(vertical_char))
     {
