@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """画像をファームウェア埋め込み用の C ヘッダに変換する。
 
-使い方:
-    python tools/make_icons.py
+**引数は取らない。** 入出力はフォルダで決まっている。
 
-変換するもの:
+    python tools/make_icons.py
 
 | 入力 | 出力 | 用途 |
 |---|---|---|
 | `tools/icons/*.png` | `main/icons/menu_icons.h` | メニュー下段のボタン（108x80 固定） |
 | `tools/images/*.png` | `main/icons/images.h` | ロゴなど（寸法は自由） |
+
+**画像を1枚だけ変換したいなら `make_image.py`。** 名前が似ていて紛らわしいが、
+別のツール。こちらは「フォルダの中身をまとめて C の配列にする」だけで、
+拡大縮小も減色もしない（貼る前に整えておくもの）。
 
 ## なぜ埋め込むのか
 
@@ -49,6 +52,7 @@ UI の部品はファームウェア側に持たせる。
 ボタンは下地が描かれないので、背景も画像に含めること。
 """
 
+import argparse
 import io
 import os
 import re
@@ -205,7 +209,53 @@ def emit_header(src_dir, out_path, prefix, expect_size, extra_lines, title):
     return True
 
 
+class Parser(argparse.ArgumentParser):
+    """引数を渡されたときに、行き先を示して止まる。
+
+    **黙って無視しないこと。** このツールは引数を一切取らないので、
+    以前は `--scale` でも `-o` でも素通りして同じヘッダを再生成していた。
+    利用者から見ると「オプションが効かない」ではなく
+    「正しく指定したのに結果が変わらない」に見えて、原因に辿り着けない。
+
+    標準の "unrecognized arguments" だけでは、なぜ効かないのか分からない。
+    取り違えやすい相手（make_image.py）まで書く。
+    """
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print("\n%s は引数を取らない（%s）。" % (self.prog, message),
+              file=sys.stderr)
+        print("  このツールは tools/icons/ と tools/images/ の中身をまとめて",
+              file=sys.stderr)
+        print("  ヘッダにするもので、入出力はフォルダで決まっている。",
+              file=sys.stderr)
+
+        # 画像を渡していたなら、それを使った例をそのまま出す。
+        #
+        # **「-」で始まらない引数、では拾えない。**
+        # `--scale 40%` の `40%` のようなオプションの値まで引っかかる。
+        # 拡張子で絞る。
+        exts = (".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp")
+        target = next((a for a in sys.argv[1:]
+                       if a.lower().endswith(exts)), None)
+        print("\n  画像を1枚変換したいなら make_image.py:", file=sys.stderr)
+        print("    python tools/make_image.py %s \\"
+              % (target or "<画像>"), file=sys.stderr)
+        # この行は % 書式を通さないので、% はそのまま1つ書く
+        print("        --scale 40% --size none --keep-alpha -o <出力先>.png",
+              file=sys.stderr)
+        sys.exit(2)
+
+
 def main():
+    # オプションは足さない。**引数を取らないことを機械に言わせる。**
+    # parse_args() を通すだけで --help が効き、知らない引数はエラーになる。
+    Parser(
+        description="tools/icons/ と tools/images/ の PNG を "
+                    "ファームウェア埋め込み用の C ヘッダに変換する（引数は取らない）",
+        epilog="画像を1枚変換したいなら make_image.py を使うこと。",
+    ).parse_args()
+
     ok = emit_header(
         ICON_SRC_DIR, ICON_OUT_PATH, "icon_", (ICON_WIDTH, ICON_HEIGHT),
         ["constexpr int MENU_ICON_WIDTH  = %d;" % ICON_WIDTH,

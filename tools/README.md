@@ -9,12 +9,16 @@ pip install Pillow fonttools
 `fonttools` は `make_font.py` だけが使う（無くても動くが、
 フォントに無い文字が豆腐として埋め込まれる）。
 
-| ツール | 何をするか | 出力先 |
-|---|---|---|
-| [`make_scenario.py`](#make_scenariopy) | 青空文庫の HTML を**シナリオ**に変換する | `scenarios/<id>/scenario.json` |
-| [`make_image.py`](#make_imagepy) | 画像を **16 階調**に落とす | SD カードへ置く PNG |
-| [`make_font.py`](#make_fontpy) | TTF/OTF から **VLW フォント**を作る | `.vlw` と `main/fonts/*.h` |
-| [`make_icons.py`](#make_iconspy) | 画像をファームウェアに埋め込む | `main/icons/*.h` |
+| ツール | 何をするか | 引数 | 出力先 |
+|---|---|---|---|
+| [`make_scenario.py`](#make_scenariopy) | 青空文庫の HTML を**シナリオ**に変換する | HTML 1つ | `scenarios/<id>/scenario.json` |
+| [`make_image.py`](#make_imagepy) | 画像を **16 階調**に落とす | 画像 1枚 | SD カードへ置く PNG |
+| [`make_font.py`](#make_fontpy) | TTF/OTF から **VLW フォント**を作る | TTF 1つ | `.vlw` と `main/fonts/*.h` |
+| [`make_icons.py`](#make_iconspy) | 画像をファームウェアに埋め込む | **取らない** | `main/icons/*.h` |
+
+> **画像を1枚変換したいなら `make_image.py`。**
+> `make_icons.py` はフォルダの中身をまとめてヘッダにするだけのもので、
+> 拡大縮小も減色もしない。名前が似ているので取り違えやすい。
 
 | その他のファイル | 内容 |
 |---|---|
@@ -335,21 +339,6 @@ python tools/make_font.py font.ttf --size 16 --charset all
 
 **IPAex 明朝を 18px でラスタライズすると、細い横線が丸ごと落ちる。**
 
-```
-IPAex 明朝 18px「三」            IPAex ゴシック 18px「三」
-
-              .                  +############+
-             +#.
-                                    +##########+
-             .
-            +#.
-   +##########+
-                                 +##############+
-              +#.
- +##############+
-```
-
-上の横線が消えている。**大きくすると悪化する。**
 
 | サイズ | 「三」の横線 3 本 |
 |---|---|
@@ -417,7 +406,10 @@ set_width = getbbox(char) の幅 + int(font_size * 0.1)
 
 ## make_icons.py
 
-**UI の画像をファームウェアに埋め込む。** 引数は取らない。
+**UI の画像をファームウェアに埋め込む。**
+
+**引数は取らない。入出力はフォルダで決まっている。**
+素材を差し替えてから、引数なしで回す。
 
 ```bash
 python tools/make_icons.py
@@ -427,6 +419,9 @@ python tools/make_icons.py
 |---|---|---|
 | `tools/icons/*.png` | `main/icons/menu_icons.h` | メニュー下段のボタン（108×80 固定） |
 | `tools/images/*.png` | `main/icons/images.h` | ロゴなど（寸法は自由） |
+
+**拡大縮小も減色もしない。** 貼る前に整えておくこと（`make_image.py`）。
+引数を渡すとエラーになり、`make_image.py` の使い方を出す。
 
 SD に置かずに埋め込むのは、**USB MSC が有効な間は SD が読めない**ため。
 その状態でメニューのボタンが真っ白になると、
@@ -473,8 +468,7 @@ python tools/make_image.py src/night.jpg --dither -o $S/images/bg/night.png
 python tools/make_image.py src/ayame.png --size none -o $S/images/chara/ayame_normal.png
 
 # 立ち絵をレイヤーに分ける場合は透過を残し、40% に縮める
-python tools/make_image.py src/body.png --scale 40% --size none --keep-alpha \
-    -o $S/images/chara/ayame_body.png
+python tools/make_image.py src/body.png --scale 40% --size none --keep-alpha -o $S/images/chara/ayame_body.png
 
 # 一覧に出るサムネイル
 python tools/make_image.py src/key.png --thumb -o $S/thumbnail.png
