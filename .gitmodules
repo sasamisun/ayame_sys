@@ -1,0 +1,4 @@
+[submodule "components/M5GFX"]
+	path = components/M5GFX
+	url = https://github.com/m5stack/M5GFX.git
+	branch = develop

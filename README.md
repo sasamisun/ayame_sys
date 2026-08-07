@@ -54,6 +54,20 @@ SD カードに置いた JSON のシナリオを読んで再生する。
 
 ## ビルド
 
+### 取ってくる
+
+**サブモジュールを忘れないこと。** `components/M5GFX` が空だとビルドが通らない。
+
+```
+git clone --recursive https://github.com/sasamisun/ayame_sys.git
+```
+
+クローン済みなら:
+
+```
+git submodule update --init
+```
+
 ### ESP-IDF は v5.3.2 を使うこと
 
 **v5.4.3 でビルドすると画面が1ラインおきの白黒縞模様になり、正常に表示できない。**
@@ -118,7 +132,7 @@ ayame_sys/
 │   ├── icons/                  メニューのボタン画像の素材
 │   └── font/                   変換済みフォント（.vlw と .h）
 ├── components/
-│   └── M5GFX/                  ※git管理外。消すと復元できない
+│   └── M5GFX/                  サブモジュール（m5stack/M5GFX）
 ├── managed_components/         espressif/tinyusb, espressif/esp_tinyusb
 ├── SCENARIO_SPEC.md            シナリオデータ仕様書
 ├── PROGRAM_SPEC.md             プログラム仕様書
@@ -129,8 +143,8 @@ ayame_sys/
 
 ## 注意事項
 
-- `components/M5GFX` は **git 管理外**（untracked かつ `.gitignore` にも無い）。
-  `git clean` や `git stash -u` で消えると復元できないので、操作前に退避すること。
+- `components/M5GFX` は**サブモジュール**。クローンしたら
+  `git submodule update --init` を忘れないこと（無いとビルドが通らない）。
 - 実機の表示は**16階調（4bpp）**。白黒2値ではない。
   `display.setColorDepth()` は `Panel_EPD` 側で引数が無視されるため呼ぶ意味がない。
   ソース中の `TFT_BLUE` などのカラー指定もグレーに変換される。
@@ -198,5 +212,17 @@ IPA フォントライセンスの全文は M5GFX にも同梱されている（
 
 ### このリポジトリ
 
-上記の第三者の成果物を除く部分について、`ayame_sys` 自体のライセンスは
-まだ決めていない。利用したい場合は連絡してほしい。
+**ソースコードは [MIT](LICENSE)。** 自由に使い、改造し、配ってよい。
+
+ただし**同梱物のうちフォントと絵は条件が違う。**
+
+| 対象 | ライセンス |
+|---|---|
+| `main/` `tools/` のコード、文書、機能確認用サンプルの JSON | [MIT](LICENSE) |
+| 内蔵フォント `gothic_18`、`02_nekonojimusyo` の `book.vlw` | [IPA フォントライセンス v1.0](LICENSES/IPA_Font_License_Agreement_v1.0.txt) |
+| `maruminya_18.vlw` | Fontopo の配布条件による |
+| **`00_ayame_sample` の絵**（あやめ・背景・アイキャッチ） | **見本としてのみ。転載・再配布不可** |
+| `00_yukkuri_sample` の絵 | 配布元の規約による |
+
+内訳と、フォントを元に戻す手順は [`LICENSES/README.md`](LICENSES/README.md)。
+
