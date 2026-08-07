@@ -1,0 +1,443 @@
+{
+  "format_version": 1,
+  "meta": {
+    "id": "00_ayame_sample",
+    "title": "ようこそ AYAME へ",
+    "author": "ayame_sys",
+    "version": "1.0.0",
+    "description": "ナビゲータのあやめが AYAME の機能をひととおり案内します",
+    "text_direction": "HORIZONTAL",
+    "rotation": 1,
+    "update_url": null
+  },
+  "assets": {
+    "backgrounds": {
+      "room": "images/bg/room.png",
+      "city": "images/bg/city.png",
+      "park": "images/bg/park.png",
+      "eyecatch": "images/bg/eyecatch.png"
+    },
+    "characters": {
+      "ayame": {
+        "normal": "images/chara/ayame_nomal.png",
+        "warai": "images/chara/ayame_warai.png",
+        "odoroki": "images/chara/ayame_odoroki.png",
+        "kanasimi": "images/chara/ayame_kanasimi.png"
+      }
+    }
+  },
+  "textboxes": {
+    "cover": {
+      "x": 40,
+      "y": 150,
+      "w": 600,
+      "h": 140,
+      "direction": "HORIZONTAL",
+      "align": "CENTER",
+      "line_spacing": 10,
+      "padding": 16,
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    },
+    "title": {
+      "x": 40,
+      "y": 36,
+      "w": 380,
+      "h": 96,
+      "direction": "HORIZONTAL",
+      "align": "CENTER",
+      "font_size": 2.0,
+      "line_spacing": 10,
+      "padding": 16,
+      "background_color": "BLACK",
+      "text_color": "WHITE"
+    },
+    "tate": {
+      "x": 450,
+      "y": 30,
+      "w": 180,
+      "h": 300,
+      "direction": "VERTICAL",
+      "line_spacing": 10,
+      "padding": 14,
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    },
+    "name": {
+      "x": 40,
+      "y": 322,
+      "w": 200,
+      "h": 40,
+      "direction": "HORIZONTAL",
+      "padding": { "top": 8, "right": 12, "bottom": 4, "left": 12 },
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    },
+    "main": {
+      "x": 40,
+      "y": 368,
+      "w": 600,
+      "h": 150,
+      "direction": "HORIZONTAL",
+      "line_spacing": 8,
+      "padding": { "top": 12, "right": 16, "bottom": 12, "left": 16 },
+      "background_color": "WHITE",
+      "text_color": "BLACK"
+    }
+  },
+  "variables": {
+    "kimochi": "まだ聞いていません",
+    "yonda": 0
+  },
+  "start": "title",
+  "scenes": {
+    "title": {
+      "commands": [
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "FADE_IN" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "cover",
+          "body": "ようこそ AYAME へ\n\n案内役 あやめ", "wait": false },
+        { "type": "choice", "prompt": "どちらから始めますか", "options": [
+          { "label": "はじめから", "next": "ch1" },
+          { "label": "つづきから", "next": "resume" }
+        ]}
+      ]
+    },
+
+    "resume": {
+      "commands": [
+        { "type": "load", "slot": 1 },
+        { "type": "chara", "id": "ayame", "expression": "kanasimi" },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "まだ栞がありませんでした。\n「はじめから」を選んでくださいね。" },
+        { "type": "jump", "next": "title" }
+      ]
+    },
+
+    "ch1": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "ayame", "expression": "warai",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "1 はじめまして", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "はじめまして。AYAME の案内役、あやめと申します。\nこれから、この道具でできることをご覧に入れますね。" },
+
+        { "type": "chara", "id": "ayame", "expression": "normal" },
+        { "type": "text", "box": "title", "body": "1 はじめまして", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "いま読んでいただいているこの枠が、本文です。\n画面のどこを触っても先へ進みます。" },
+
+        { "type": "text", "box": "main",
+          "body": "枠は好きな数だけ置けます。左上の見出し、名前、本文。\nこの画面には三つ出ていますね。" },
+
+        { "type": "text", "box": "main",
+          "body": "長い文章は、枠に入りきらなければ自動で次のページへ回ります。\n書き手が行数を数える必要はありません。" },
+
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "1 はじめまして", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "ルビも振れますよ。｜菖蒲《あやめ》、これがわたしの名前です。" },
+        { "type": "jump", "next": "ch2" }
+      ]
+    },
+
+    "ch2": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "2 縦書き", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "日本語は縦にも組めます。右の枠をご覧ください。" },
+
+        { "type": "text", "box": "tate",
+          "body": "　やまと歌は、人の心を種として、よろづの言の葉とぞなれりける。",
+          "wait": false },
+        { "type": "text", "box": "main",
+          "body": "句読点も括弧も、縦書きの形に入れ替わります。\n横に寝たままにはなりません。" },
+
+        { "type": "text", "box": "main",
+          "body": "行の頭に「、」や「。」が来ないよう、切れ目もずらしています。\n禁則処理といいます。" },
+
+        { "type": "text", "box": "main",
+          "body": "縦と横は同じ画面に並べられます。\n枠ごとに向きを決めるだけですから。" },
+        { "type": "jump", "next": "ch3" }
+      ]
+    },
+
+    "ch3": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "park", "transition": "NONE" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "3 おぼえています", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "公園に出てみました。\nところで、ひとつうかがってもよろしいですか。" },
+
+        { "type": "text", "box": "main",
+          "body": "散歩はお好きですか。\nお答えは、この先ずっと覚えております。" },
+        { "type": "choice", "prompt": "散歩はお好きですか", "options": [
+          { "label": "好きです", "next": "suki" },
+          { "label": "そうでもない", "next": "futsuu" }
+        ]}
+      ]
+    },
+
+    "suki": {
+      "commands": [
+        { "type": "set", "var": "kimochi", "value": "散歩がお好き" },
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "3 おぼえています", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "わたしもです。うれしい。" },
+        { "type": "jump", "next": "oboeta" }
+      ]
+    },
+
+    "futsuu": {
+      "commands": [
+        { "type": "set", "var": "kimochi", "value": "散歩はほどほど" },
+        { "type": "chara", "id": "ayame", "expression": "kanasimi" },
+        { "type": "text", "box": "title", "body": "3 おぼえています", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "そうですか。今度いっしょに歩いてみましょう。" },
+        { "type": "jump", "next": "oboeta" }
+      ]
+    },
+
+    "oboeta": {
+      "commands": [
+        { "type": "chara", "id": "ayame", "expression": "normal" },
+        { "type": "text", "box": "title", "body": "3 おぼえています", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "覚えました。あなたは「{kimochi}」。\nこの値は変数といって、栞にも一緒に残ります。" },
+
+        { "type": "text", "box": "main",
+          "body": "数も数えられます。ここまで {yonda} 章ご覧いただきました。\n好感度や既読の記録も、同じ仕組みで作れます。" },
+
+        { "type": "if",
+          "cond": { "var": "kimochi", "op": "==", "value": "散歩がお好き" },
+          "then": [
+            { "type": "text", "box": "main",
+              "body": "覚えた値で話を分けることもできます。\nいまのこの一言が、その分かれ道の先ですよ。" }
+          ],
+          "else": [
+            { "type": "text", "box": "main",
+              "body": "覚えた値で話を分けることもできます。\nお答えが違えば、あやめの返事も変わっていました。" }
+          ]
+        },
+        { "type": "jump", "next": "ch4" }
+      ]
+    },
+
+    "ch4": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "park", "transition": "NONE" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "4 音", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "音も鳴らせます。小さなブザーが一つ入っているだけですが。" },
+
+        { "type": "beep", "melody": [
+          { "freq": 523, "duration": 150 },
+          { "freq": 659, "duration": 150 },
+          { "freq": 784, "duration": 300 }
+        ]},
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "4 音", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "いまのが音列です。高さと長さを並べて書きます。\n和音は出せませんので、一音ずつ。" },
+
+        { "type": "chara", "id": "ayame", "expression": "normal" },
+        { "type": "text", "box": "title", "body": "4 音", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "鳴らしたまま本文は進みます。待たせないためです。\n場面転換の合図には、鳴り終わりを待たせることもできます。" },
+
+        { "type": "text", "box": "main",
+          "body": "メニューで音を切ってあると、何を書いても鳴りません。\n読む場所を選ばずに済むように。" },
+        { "type": "jump", "next": "ch5" }
+      ]
+    },
+
+    "ch5": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "city", "transition": "SLIDE_LEFT" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "5 立ち絵", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "町へ出ました。背景は横から滑り込ませています。" },
+
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "5 立ち絵", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "顔は差し替えられます。これは笑ったところ。" },
+
+        { "type": "chara", "id": "ayame", "expression": "odoroki" },
+        { "type": "text", "box": "title", "body": "5 立ち絵", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "驚いたところ。" },
+
+        { "type": "chara", "id": "ayame", "expression": "kanasimi" },
+        { "type": "text", "box": "title", "body": "5 立ち絵", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "しょんぼりしたところ。四枚の絵を入れ替えているだけです。" },
+
+        { "type": "chara", "id": "ayame", "expression": "normal", "x": 330 },
+        { "type": "text", "box": "title", "body": "5 立ち絵", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "立ち位置も動かせます。少し左へ移ってみました。" },
+
+        { "type": "chara", "id": "ayame", "expression": "warai", "x": 680 },
+        { "type": "text", "box": "title", "body": "5 立ち絵", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "戻ります。二人以上を並べて、会話させることもできますよ。" },
+        { "type": "jump", "next": "ch6" }
+      ]
+    },
+
+    "ch6": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "city", "transition": "NONE" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "6 しおり", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "続きから読めるようにしておきましょう。\nいまこの場所を書き留めます。" },
+
+        { "type": "save", "slot": 1 },
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "6 しおり", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "書き留めました。場所と、さきほどの「{kimochi}」も一緒に。\n背景と立ち絵も残るので、開くと同じ画面から始まります。" },
+
+        { "type": "chara", "id": "ayame", "expression": "normal" },
+        { "type": "text", "box": "title", "body": "6 しおり", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "読み込むときは、最初の画面で「つづきから」を選びます。\n栞が無ければ、そう申し上げて戻ります。" },
+
+        { "type": "text", "box": "main",
+          "body": "どこを書き留めるかは、書き手が決められます。\n中断の案内を出す前の場所、というふうに。" },
+        { "type": "jump", "next": "ch7" }
+      ]
+    },
+
+    "ch7": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint" },
+        { "type": "save", "slot": 1 },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "room", "transition": "NONE" },
+        { "type": "chara", "id": "ayame", "expression": "normal",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "7 中断", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "この画面は、電源を切っても消えません。\n電子ペーパーは、電気を止めても像が残るのです。" },
+
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "7 中断", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "ですから中断するときに、好きな絵を出してから終われます。\n次に手に取るまで、その絵が出たままになります。" },
+
+        { "type": "chara", "id": "ayame", "expression": "normal" },
+        { "type": "text", "box": "title", "body": "7 中断", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "栞は残しました。中断しても、ここから続けられます。\n試してみますか。" },
+        { "type": "choice", "prompt": "どうなさいますか", "options": [
+          { "label": "中断してみる", "next": "chudan" },
+          { "label": "最後まで見る", "next": "ch8" }
+        ]}
+      ]
+    },
+
+    "chudan": {
+      "commands": [
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "7 中断", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "では、いったんお預かりします。\n絵を出して電源を切りますね。またお会いしましょう。" },
+        { "type": "suspend", "image": "eyecatch", "slot": 1 }
+      ]
+    },
+
+    "ch8": {
+      "commands": [
+        { "type": "set", "var": "yonda", "op": "+=", "value": 1 },
+        { "type": "checkpoint", "clear": true },
+        { "type": "clear", "color": "BLACK" },
+        { "type": "bg", "image": "park", "transition": "REVEAL_CENTER" },
+        { "type": "chara", "id": "ayame", "expression": "warai",
+          "x": 680, "y": 175 },
+        { "type": "text", "box": "title", "body": "8 おしまい", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "ご覧いただいたのは {yonda} 章。\n本文、縦書き、変数、音、立ち絵、栞、中断でした。" },
+
+        { "type": "chara", "id": "ayame", "expression": "normal" },
+        { "type": "text", "box": "title", "body": "8 おしまい", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "これらは全部、SD カードに置いた一枚の JSON に書いてあります。\nプログラムを書き換える必要はありません。" },
+
+        { "type": "text", "box": "main",
+          "body": "この作品の scenario.json を開いてみてください。\nいま見たものが、どう書かれているか分かります。" },
+
+        { "type": "chara", "id": "ayame", "expression": "warai" },
+        { "type": "text", "box": "title", "body": "8 おしまい", "wait": false },
+        { "type": "text", "box": "name", "body": "あやめ", "wait": false },
+        { "type": "text", "box": "main",
+          "body": "あなたの物語も、ここから始められます。\nお付き合いくださり、ありがとうございました。" },
+        { "type": "refresh", "mode": "epd_quality", "clear_ghost": true },
+        { "type": "end", "ending": "intro_done", "message": "おしまい。" }
+      ]
+    }
+  }
+}
